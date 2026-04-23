@@ -28,6 +28,9 @@ const runtimes = new Map<string, Entry>();
  * runtime を取得 or 初回 init。
  * - 初回呼び出し: init() を呼び、refs=1 で登録
  * - 2 回目以降: refs を増やして既存 runtime を返す（StrictMode の再 mount 対策）
+ *
+ * 注意: init() が throw した場合、Map に登録されず例外が呼び出し元に伝播する。
+ * 呼び出し側（TerminalPane の useEffect 等）で try/catch しても良い。
  */
 export function acquireRuntime(
   tabId: string,
@@ -51,7 +54,13 @@ export function releaseRuntime(tabId: string): void {
   const entry = runtimes.get(tabId);
   if (!entry) return;
   entry.refs--;
-  if (entry.refs === 0) {
+  if (entry.refs <= 0) {
+    if (entry.refs < 0) {
+      console.warn(
+        `[terminalRegistry] refs went negative for ${tabId}. acquire/release asymmetry bug?`,
+      );
+      entry.refs = 0;
+    }
     queueMicrotask(() => {
       const e = runtimes.get(tabId);
       if (e && e.refs === 0) {
@@ -86,3 +95,9 @@ export function getRuntimeCount(): number {
 export function getRefs(tabId: string): number {
   return runtimes.get(tabId)?.refs ?? 0;
 }
+
+/**
+ * TODO (Unit H): HMR 時の xterm/PTY リーク対策として forceDisposeAll() を追加予定。
+ * Vite の import.meta.hot.dispose フックから呼ぶことで、HMR 更新時に全 runtime を
+ * 強制 dispose して、ゾンビ xterm が残るのを防ぐ。
+ */

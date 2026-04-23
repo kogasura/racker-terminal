@@ -22,7 +22,7 @@ interface AppActions {
 
 type Store = AppState & AppActions;
 
-export const useAppStore = create<Store>((set) => ({
+export const useAppStore = create<Store>()((set) => ({
   // 初期状態
   groups: [],
   tabs: {},
@@ -37,7 +37,12 @@ export const useAppStore = create<Store>((set) => ({
   stopEditing: () => set({ editingId: null }),
 }));
 
-// Phase 3 persist partialize の計画コメント:
-// persist 対象 ON: groups, tabs[*].{id, groupId, title, shell, cwd, env}, favorites, settings
-// persist 対象 OFF: activeTabId, editingId, tabs[*].status, tabs[*].ptyId
-// Unit D+E で partialize 実装のコメントを追加予定。
+// Phase 3 persist 方針の詳細は src/types/index.ts の AppState JSDoc を参照。
+// partialize で OFF にすべきランタイム状態: activeTabId, editingId, tabs[*].status, tabs[*].ptyId
+//
+// Phase 3 persist 追加時:
+//   create<Store>()(persist((set) => ({ ... }), {
+//     name: 'racker-terminal',
+//     partialize: (state) => ({ groups: state.groups, tabs: state.tabs, ... }),
+//   }))
+// 現状の curried 記法からスムーズに移行できる。

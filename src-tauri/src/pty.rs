@@ -3,8 +3,9 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use portable_pty::{Child, CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -44,11 +45,41 @@ pub enum PtyError {
     Resize(String),
 }
 
+// ─── FlushState（read / flush スレッド間共有） ────────────────────────────────
+
+struct FlushState {
+    /// read スレッドが書き込む生バイトバッファ
+    raw_buf: Vec<u8>,
+    /// UTF-8 境界の持ち越しバッファ（flush スレッドが管理）
+    pending: Vec<u8>,
+    /// 前回 flush 完了時刻（tiny read 即 flush ショートパス用）
+    last_flush: Instant,
+    /// read スレッドが EOF を受信したフラグ
+    eof: bool,
+    /// read スレッドがエラーを受信した場合のメッセージ
+    error: Option<String>,
+}
+
+/// read / flush スレッド間で共有する状態 + Condvar の型エイリアス
+type SharedFlushState = Arc<(Mutex<FlushState>, Condvar)>;
+
 // ─── PtySession ──────────────────────────────────────────────────────────────
 
-// Phase 1 では即 flush のため使用しないが、Phase 2 で独立タイマースレッド導入時に再利用する
+// SF-B1 参照: 0 clamp に使用するため定数は残しておく（Phase 2 でも流用）
 #[allow(dead_code)]
 const FLUSH_BYTES: usize = 64 * 1024;
+
+/// PtySession 生成時の引数をまとめた構造体（clippy too_many_arguments 対策）
+struct PtySessionArgs {
+    id: String,
+    writer: Box<dyn Write + Send>,
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn Child + Send + Sync>,
+    stop_flag: Arc<AtomicBool>,
+    reader_handle: JoinHandle<()>,
+    flush_handle: JoinHandle<()>,
+    flush_state: SharedFlushState,
+}
 
 pub struct PtySession {
     #[allow(dead_code)]
@@ -60,24 +91,23 @@ pub struct PtySession {
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
     stop_flag: Arc<AtomicBool>,
     reader_handle: Mutex<Option<JoinHandle<()>>>,
+    flush_handle: Mutex<Option<JoinHandle<()>>>,
+    /// Drop 時に flush スレッドを即時起床させるための Condvar 共有参照
+    /// （flush スレッドが wait_timeout で待機中でも stop_flag チェックに誘導できる）
+    flush_state: SharedFlushState,
 }
 
 impl PtySession {
-    fn new(
-        id: String,
-        writer: Box<dyn Write + Send>,
-        master: Box<dyn MasterPty + Send>,
-        child: Box<dyn Child + Send + Sync>,
-        stop_flag: Arc<AtomicBool>,
-        reader_handle: JoinHandle<()>,
-    ) -> Self {
+    fn new(args: PtySessionArgs) -> Self {
         Self {
-            id,
-            writer: Mutex::new(writer),
-            master: Mutex::new(Some(master)),
-            child: Mutex::new(Some(child)),
-            stop_flag,
-            reader_handle: Mutex::new(Some(reader_handle)),
+            id: args.id,
+            writer: Mutex::new(args.writer),
+            master: Mutex::new(Some(args.master)),
+            child: Mutex::new(Some(args.child)),
+            stop_flag: args.stop_flag,
+            reader_handle: Mutex::new(Some(args.reader_handle)),
+            flush_handle: Mutex::new(Some(args.flush_handle)),
+            flush_state: args.flush_state,
         }
     }
 
@@ -115,6 +145,11 @@ impl PtySession {
 
     pub fn kill(&self) {
         self.stop_flag.store(true, Ordering::Relaxed);
+
+        // flush スレッドを即時起床させる（wait_timeout(16ms) で待機中のものを解放）
+        let (_, cvar) = &*self.flush_state;
+        cvar.notify_one();
+
         // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
         if let Some(mut child) = self.child.lock().take() {
             let _ = child.kill();
@@ -128,6 +163,11 @@ impl Drop for PtySession {
         // stop_flag をセット
         self.stop_flag.store(true, Ordering::Relaxed);
 
+        // flush スレッドを即時起床させる（wait_timeout(16ms) で待機中のものを解放）
+        // これにより stop_flag チェックが即座に走り、flush スレッドが終了できる
+        let (_, cvar) = &*self.flush_state;
+        cvar.notify_one();
+
         // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
         if let Some(mut child) = self.child.lock().take() {
             let _ = child.kill();
@@ -137,9 +177,14 @@ impl Drop for PtySession {
         // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
         drop(self.master.lock().take());
 
-        // reader thread を join する。ただしアプリ終了をブロックしないよう
+        // reader / flush thread を join する。ただしアプリ終了をブロックしないよう
         // バックグラウンドスレッドに投げる
         if let Some(h) = self.reader_handle.lock().take() {
+            std::thread::spawn(move || {
+                let _ = h.join();
+            });
+        }
+        if let Some(h) = self.flush_handle.lock().take() {
             std::thread::spawn(move || {
                 let _ = h.join();
             });
@@ -147,127 +192,235 @@ impl Drop for PtySession {
     }
 }
 
-// ─── reader スレッド起動 ─────────────────────────────────────────────────────
+// ─── reader / flush 2 スレッド構成 ──────────────────────────────────────────
+//
+// Phase 2 (Unit D+E) で地雷 #4 を根本解決するための設計:
+//
+//   read スレッド  : PTY.read() blocking → raw_buf (Mutex<FlushState>) に追記 → Condvar notify
+//   flush スレッド : Condvar.wait_timeout(16ms) で待機 → 起床したら raw_buf drain →
+//                   UTF-8 検証 → channel.send
+//
+// tiny read 即 flush ショートパス:
+//   read スレッドが 1 回で受け取ったバイト数が 256 byte 未満 かつ
+//   前回 flush から 2ms 以上経過している場合は notify_one() を呼んで flush スレッドを即時起床。
+//   これにより DSR-CPR 応答の初期 hang を解消する。
+//
+// burst 時は flush スレッドの 16ms wait_timeout が自然に drain → IPC 回数削減。
+// parking_lot::Condvar を使用（既存コードで parking_lot::Mutex 使用済みのため統一）。
 
-fn spawn_reader_thread(
+/// read / flush 2 スレッドの起動結果
+struct ReaderThreads {
+    read_handle: JoinHandle<()>,
+    flush_handle: JoinHandle<()>,
+    flush_state: SharedFlushState,
+}
+
+fn spawn_reader_threads(
     mut reader: Box<dyn Read + Send>,
     channel: Channel<PtyEvent>,
     stop_flag: Arc<AtomicBool>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        // 読み込みバッファ（1 read あたり最大 4096 bytes）
+) -> ReaderThreads {
+    // read / flush スレッド間共有状態
+    let flush_state = Arc::new((
+        Mutex::new(FlushState {
+            raw_buf: Vec::with_capacity(8192),
+            pending: Vec::new(),
+            last_flush: Instant::now(),
+            eof: false,
+            error: None,
+        }),
+        Condvar::new(),
+    ));
+
+    // ── read スレッド ──────────────────────────────────────────────────────
+    // blocking read のみ担当。UTF-8 検証は行わず raw bytes を raw_buf に追記する。
+    let read_state = Arc::clone(&flush_state);
+    let read_stop = Arc::clone(&stop_flag);
+    let read_handle = std::thread::spawn(move || {
         let mut read_buf = [0u8; 4096];
-
-        // 未送信の積算バッファ（UTF-8 整合済みの byte が溜まる）
-        let mut flush_buf: Vec<u8> = Vec::with_capacity(FLUSH_BYTES * 2);
-
-        // UTF-8 境界で切れた不完全なバイト列の持ち越しバッファ
-        let mut pending: Vec<u8> = Vec::new();
-
-        // 注意: reader.read() はブロッキング呼び出しのため、16ms タイマーによる flush は
-        // read が頻繁に戻る（出力が活発な）場面でのみ有効に機能する。
-        // アイドル時は次の read が来るまでタイマーが進まない点に注意。
-        // Fix 3 で master を drop することで EOF が届き、このループも自然に終了する。
         let mut read_count: u32 = 0;
-        eprintln!("[pty] reader loop entered");
+        eprintln!("[pty-read] reader loop entered");
+
         loop {
-            // 停止フラグ確認
-            if stop_flag.load(Ordering::Relaxed) {
-                eprintln!("[pty] reader stop_flag set, exit");
+            if read_stop.load(Ordering::Relaxed) {
+                eprintln!("[pty-read] stop_flag set, exit");
                 break;
             }
 
-            // PTY から読み込む
-            let n = match reader.read(&mut read_buf) {
-                // Fix 2: EOF パスで flush_buf / pending を局所変数で結合し、
-                //        flush_buf の「有効 UTF-8 のみ」という invariant を保持する
+            match reader.read(&mut read_buf) {
                 Ok(0) => {
-                    if !flush_buf.is_empty() || !pending.is_empty() {
-                        let mut final_bytes = std::mem::take(&mut flush_buf);
-                        final_bytes.extend_from_slice(&pending);
-                        let text = String::from_utf8_lossy(&final_bytes).into_owned();
-                        let _ = channel.send(PtyEvent::Data { text });
-                    }
-                    let _ = channel.send(PtyEvent::Exit { code: None });
+                    // EOF: flush スレッドに通知して終了
+                    eprintln!("[pty-read] EOF received");
+                    let (lock, cvar) = &*read_state;
+                    let mut s = lock.lock();
+                    s.eof = true;
+                    cvar.notify_one();
                     break;
                 }
                 Ok(n) => {
                     read_count = read_count.saturating_add(1);
                     if read_count <= 5 {
                         eprintln!(
-                            "[pty] read #{read_count} n={n} first 30 bytes: {:?}",
+                            "[pty-read] read #{read_count} n={n} first 30 bytes: {:?}",
                             &read_buf[..n.min(30)]
                         );
                     }
-                    n
-                }
-                Err(e) => {
-                    eprintln!("[pty] read error: {e}");
-                    let _ = channel.send(PtyEvent::Error {
-                        message: e.to_string(),
-                    });
-                    break;
-                }
-            };
 
-            let chunk = &read_buf[..n];
+                    let (lock, cvar) = &*read_state;
+                    let mut s = lock.lock();
+                    s.raw_buf.extend_from_slice(&read_buf[..n]);
 
-            // pending + 今回のチャンクを結合して UTF-8 検証
-            pending.extend_from_slice(chunk);
-
-            // SF-6: 冗長な loop { match ... break; } を単純 match に整理
-            match std::str::from_utf8(&pending) {
-                Ok(_) => {
-                    // 全バイト有効 — flush_buf に移動
-                    flush_buf.append(&mut pending);
-                }
-                Err(e) => {
-                    let valid_up_to = e.valid_up_to();
-                    if valid_up_to > 0 {
-                        // 有効な先頭部分を flush_buf に移動し、残りを pending に残す
-                        flush_buf.extend_from_slice(&pending[..valid_up_to]);
-                        pending.drain(..valid_up_to);
-                    } else if pending.len() >= 4 {
-                        // 4 バイト以上で先頭から invalid → 無限ループ防止のため lossy 変換
-                        let text = String::from_utf8_lossy(&pending).into_owned();
-                        flush_buf.extend_from_slice(text.as_bytes());
-                        pending.clear();
+                    // tiny read 即 flush ショートパス:
+                    // 256 byte 未満 かつ 前回 flush から 2ms 以上経過している場合は
+                    // flush スレッドを即時起床させて DSR-CPR 応答等の遅延を避ける。
+                    // burst 時（256 byte 以上）は notify_one() は呼ぶが、
+                    // flush スレッド側で wait_timeout から起床し 16ms バッチで drain する。
+                    let tiny = n < 256 && s.last_flush.elapsed().as_millis() > 2;
+                    if read_count <= 5 {
+                        eprintln!("[pty-read] tiny={tiny} n={n}");
                     }
-                    // else: 続きのバイトを待つ（pending はそのまま）
+                    drop(s);
+                    // burst / tiny どちらも notify_one（flush スレッドが wait_timeout で吸収）
+                    cvar.notify_one();
                 }
-            }
-
-            // Phase 1 では即 flush（read() のブロッキングで 16ms タイマーが機能しない問題への対処）。
-            // SF-7 で指摘された通り、read 間隔がまばらな場合タイマー flush に到達できず、
-            // DSR-CPR 応答等の小量クエリが Frontend に届かず PTY が hang する。
-            // Phase 2 で独立タイマースレッドを導入してバースト最適化と両立させる。
-            let should_flush = !flush_buf.is_empty();
-
-            if should_flush && !flush_buf.is_empty() {
-                // Fix 1: unsafe { String::from_utf8_unchecked(...) } を除去。
-                //        std::mem::take で所有権を移動し（clone 不要）、
-                //        String::from_utf8 で安全に変換する。
-                //        失敗した場合は lossy 変換にフォールバック。
-                let buf = std::mem::take(&mut flush_buf);
-                flush_buf = Vec::with_capacity(FLUSH_BYTES * 2);
-                let text = match String::from_utf8(buf) {
-                    Ok(s) => s,
-                    Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
-                };
-                // Fix 4: send 失敗時の意図をコメントで明示
-                // Frontend がアンロード済み。PtySession のクリーンアップは
-                // 呼び出し側（アプリ終了 or pty_kill コマンド）に委ねる。
-                // Phase 2 以降で PtyManager に dead session 掃除機構を追加予定。
-                let send_result = channel.send(PtyEvent::Data { text });
-                if read_count <= 5 {
-                    eprintln!("[pty] sent data chunk (read_count={read_count}), result ok={}", send_result.is_ok());
-                }
-                if send_result.is_err() {
+                Err(e) => {
+                    eprintln!("[pty-read] read error: {e}");
+                    let (lock, cvar) = &*read_state;
+                    let mut s = lock.lock();
+                    s.error = Some(e.to_string());
+                    cvar.notify_one();
                     break;
                 }
             }
         }
-    })
+        eprintln!("[pty-read] reader thread exit");
+    });
+
+    // ── flush スレッド ─────────────────────────────────────────────────────
+    // Condvar.wait_timeout(16ms) で待機し、起床したら raw_buf を drain して
+    // UTF-8 検証 → channel.send を行う。
+    // read スレッドがブロッキングで止まっていても独立して動作する。
+    let flush_state_clone = Arc::clone(&flush_state);
+    let flush_stop = Arc::clone(&stop_flag);
+    let flush_handle = std::thread::spawn(move || {
+        let timeout = std::time::Duration::from_millis(16);
+        eprintln!("[pty-flush] flush loop entered");
+
+        loop {
+            if flush_stop.load(Ordering::Relaxed) {
+                eprintln!("[pty-flush] stop_flag set, exit");
+                break;
+            }
+
+            // wait_timeout(16ms) で待機。notify または timeout で起床。
+            let (lock, cvar) = &*flush_state_clone;
+            let mut s = lock.lock();
+            let _ = cvar.wait_for(&mut s, timeout);
+
+            // stop_flag を再確認（wake 後）
+            if flush_stop.load(Ordering::Relaxed) {
+                // 残余 bytes を lossy で吐いて終了
+                let remain = std::mem::take(&mut s.pending);
+                let raw = std::mem::take(&mut s.raw_buf);
+                drop(s);
+                let mut all = remain;
+                all.extend_from_slice(&raw);
+                if !all.is_empty() {
+                    let text = String::from_utf8_lossy(&all).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
+                eprintln!("[pty-flush] stop_flag set after wake, exit");
+                break;
+            }
+
+            // raw_buf / eof / error を取り出す
+            let raw = std::mem::take(&mut s.raw_buf);
+            let eof = s.eof;
+            let error = s.error.take();
+
+            if raw.is_empty() && !eof && error.is_none() {
+                // 何もなければ次の wait へ
+                continue;
+            }
+
+            // pending + raw を結合して UTF-8 検証
+            let mut combined = std::mem::take(&mut s.pending);
+            combined.extend_from_slice(&raw);
+
+            let (valid_bytes, remaining_pending) = if combined.is_empty() {
+                (Vec::new(), Vec::new())
+            } else {
+                match std::str::from_utf8(&combined) {
+                    Ok(_) => {
+                        // 全バイト有効
+                        (combined, Vec::new())
+                    }
+                    Err(e) => {
+                        let valid_up_to = e.valid_up_to();
+                        if valid_up_to > 0 {
+                            let valid = combined[..valid_up_to].to_vec();
+                            let remain = combined[valid_up_to..].to_vec();
+                            (valid, remain)
+                        } else if combined.len() >= 4 {
+                            // 4 byte 以上で先頭 invalid → 無限ループ防止のため lossy 変換
+                            let text = String::from_utf8_lossy(&combined).into_owned();
+                            (text.into_bytes(), Vec::new())
+                        } else {
+                            // 続きのバイトを待つ
+                            (Vec::new(), combined)
+                        }
+                    }
+                }
+            };
+
+            // pending を更新し last_flush を記録
+            s.pending = remaining_pending;
+            s.last_flush = Instant::now();
+            drop(s);
+
+            // Data イベント送信
+            if !valid_bytes.is_empty() {
+                let text = match String::from_utf8(valid_bytes) {
+                    Ok(s) => s,
+                    Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+                };
+                eprintln!("[pty-flush] sending data len={}", text.len());
+                if channel.send(PtyEvent::Data { text }).is_err() {
+                    eprintln!("[pty-flush] channel send failed, exit");
+                    break;
+                }
+            }
+
+            // エラー送信
+            if let Some(msg) = error {
+                eprintln!("[pty-flush] sending error: {msg}");
+                let _ = channel.send(PtyEvent::Error { message: msg });
+                break;
+            }
+
+            // EOF: 残余 pending を lossy で吐いて Exit 送信して終了
+            if eof {
+                eprintln!("[pty-flush] EOF, sending Exit");
+                let (lock, _) = &*flush_state_clone;
+                let mut s = lock.lock();
+                let remain = std::mem::take(&mut s.pending);
+                drop(s);
+                if !remain.is_empty() {
+                    let text = String::from_utf8_lossy(&remain).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
+                let _ = channel.send(PtyEvent::Exit { code: None });
+                break;
+            }
+        }
+        eprintln!("[pty-flush] flush thread exit");
+    });
+
+    ReaderThreads {
+        read_handle,
+        flush_handle,
+        flush_state,
+    }
 }
 
 // ─── PtyManager ──────────────────────────────────────────────────────────────
@@ -278,10 +431,6 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
-    // Unit D+E (お気に入り) で env を CommandBuilder::env に流す実装に置き換える。
-    // 仕様: shell 継承環境への merge（env-only 置換ではない）。
-    // TERM / COLORTERM は env 適用後に racker-terminal 側で強制上書きして xterm 互換性を保護する。
-    #[allow(unused_variables)]
     pub fn spawn(
         &self,
         shell: Option<String>,
@@ -334,6 +483,19 @@ impl PtyManager {
         // コマンドビルド
         let mut cmd = CommandBuilder::new(&shell_path);
         cmd.cwd(&cwd_path);
+
+        // env をユーザー指定値で merge（shell の継承環境に上書きする形）
+        if let Some(env_map) = env {
+            for (key, value) in env_map {
+                // 空キーは弾く（防御的コード）
+                if !key.is_empty() {
+                    cmd.env(key, value);
+                }
+            }
+        }
+
+        // TERM / COLORTERM は env 適用後に強制上書きして xterm 互換性を保護する
+        // （ユーザーが env で上書きしても racker-terminal 側で正しい値に戻す）
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
 
@@ -360,22 +522,23 @@ impl PtyManager {
         // 停止フラグ
         let stop_flag = Arc::new(AtomicBool::new(false));
 
-        // reader スレッド起動
-        let reader_handle =
-            spawn_reader_thread(reader, channel, Arc::clone(&stop_flag));
-        eprintln!("[pty] reader thread started");
+        // read / flush 2 スレッド起動
+        let threads = spawn_reader_threads(reader, channel, Arc::clone(&stop_flag));
+        eprintln!("[pty] reader + flush threads started");
 
         // セッション生成
         let id = Uuid::new_v4().to_string();
         eprintln!("[pty] session id: {id}");
-        let session = Arc::new(PtySession::new(
-            id.clone(),
+        let session = Arc::new(PtySession::new(PtySessionArgs {
+            id: id.clone(),
             writer,
-            pair.master,
+            master: pair.master,
             child,
             stop_flag,
-            reader_handle,
-        ));
+            reader_handle: threads.read_handle,
+            flush_handle: threads.flush_handle,
+            flush_state: threads.flush_state,
+        }));
 
         self.sessions.write().insert(id.clone(), session);
 

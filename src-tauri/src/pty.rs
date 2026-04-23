@@ -278,12 +278,17 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
+    // Unit D+E (お気に入り) で env を CommandBuilder::env に流す実装に置き換える。
+    // 仕様: shell 継承環境への merge（env-only 置換ではない）。
+    // TERM / COLORTERM は env 適用後に racker-terminal 側で強制上書きして xterm 互換性を保護する。
+    #[allow(unused_variables)]
     pub fn spawn(
         &self,
         shell: Option<String>,
         cwd: Option<String>,
         cols: u16,
         rows: u16,
+        env: Option<HashMap<String, String>>,
         channel: Channel<PtyEvent>,
     ) -> Result<String, PtyError> {
         // SF-B1: 0 clamp（フロント初期マウント時の 0x0 レイアウトを防御）
@@ -415,10 +420,11 @@ pub fn pty_spawn(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    env: Option<std::collections::HashMap<String, String>>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
     state
-        .spawn(shell, cwd, cols, rows, on_event)
+        .spawn(shell, cwd, cols, rows, env, on_event)
         .map_err(|e| e.to_string())
 }
 

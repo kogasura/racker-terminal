@@ -11,6 +11,13 @@ export interface SpawnOptions {
   cwd?: string;
   cols: number;
   rows: number;
+  /**
+   * 追加の環境変数。キー・値ともに文字列のみ（undefined 不可）。
+   * Rust 側で shell 起動プロセスの環境に merge される予定（Unit D+E で実装）。
+   * `{}` を渡した場合と省略した場合で挙動差なし。
+   * 注意: TERM / COLORTERM は racker-terminal 側で強制上書きされるため、env で指定しても反映されない。
+   */
+  env?: Record<string, string>;
 }
 
 export interface PtyHandle {
@@ -34,6 +41,7 @@ export async function spawnPty(
   };
   if (opts.shell !== undefined) args.shell = opts.shell;
   if (opts.cwd !== undefined) args.cwd = opts.cwd;
+  if (opts.env !== undefined) args.env = opts.env;
 
   const id = await invoke<string>("pty_spawn", args);
 

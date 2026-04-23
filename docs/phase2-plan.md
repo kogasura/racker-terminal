@@ -478,7 +478,21 @@ const sensors = useSensors(
 - Unit G: キーボードショートカット（A2 の後、F と並列可）
 - Unit H: StrictMode＋HMR 確認（A1・A2 の後）
 
-### Unit 0: 基盤整備
+### Unit 0: 基盤整備 + IPC 型契約先行
+
+Unit 0 は 2 つのサブタスクに分割する。両者とも機能ゼロで他ユニットの起点となる。
+
+**Unit 0-a: IPC 型契約先行 commit**（実装済み）
+
+- 対象ファイル:
+  - `src-tauri/src/pty.rs` — `pty_spawn` / `PtyManager::spawn` に `env: Option<HashMap<String, String>>` 引数を追加（Rust 側未使用、`#[allow(unused_variables)]` で抑制）
+  - `src/lib/pty.ts` — `SpawnOptions` に `env?: Record<string, string>` を追加、`spawnPty` で条件付き args 追加
+- 変更内容:
+  - env は Unit D+E（お気に入り）で本格利用する。現時点では受け取るだけ
+  - 目的: Unit D+E で Rust/TS 両側の IPC シグネチャ変更が入らないよう、先に型契約だけ確定させる
+- 並列可否: 最初に実施
+
+**Unit 0-b: 型定義・ID 生成・CSS 変数**
 
 - 対象ファイル:
   - `src/types/index.ts` — TabStatus, Tab, Group, Favorite, Settings 型定義
@@ -488,7 +502,7 @@ const sensors = useSensors(
   - TabStatus を `'spawning' | 'live' | 'crashed'` に確定
   - Settings 型を定義（shell, theme, fontSize 等）
   - newId() を crypto.randomUUID() ベースで実装、フォールバックは nanoid
-- 並列可否: 他ユニットの起点のため最初に実施
+- 並列可否: Unit 0-a と並列可、他ユニットの起点
 
 ### Unit A1: terminalRegistry
 
@@ -548,7 +562,7 @@ const sensors = useSensors(
 
 - 対象ファイル:
   - `src/store/appStore.ts` — settings スライス・spawnFavorite・favoriteの追加削除
-  - `src-tauri/src/pty.rs` — Condvar flush スレッド追加
+  - `src-tauri/src/pty.rs` — Condvar flush スレッド追加、env を `CommandBuilder::env` に流す実装（`#[allow(unused_variables)]` は削除）
   - `src-tauri/src/lib.rs` — PtyEvent 定義（TitleChange なし）
 - 変更内容（Zustand 側）:
   - Settings 型: shell, fontSize, theme
@@ -561,6 +575,7 @@ const sensors = useSensors(
   - flush スレッド: wait_timeout(16ms) または notify 受信 → emit
   - shortpath: 読み取りが 256 byte 未満かつ前回 flush から 2ms 超 → Condvar::notify_one()
   - PtyEvent::TitleChange は削除済み（OSC title は frontend の onTitleChange で処理）
+  - env を `CommandBuilder::env` でセット（Unit 0-a で追加済みの引数を利用）。`TERM` / `COLORTERM` は env 適用後に racker-terminal 側で強制上書きして xterm 互換性を保護
 - 並列可否: Unit A2 完了後、Unit B・C と並列実施可能
 
 ### Unit F: D&D
@@ -607,10 +622,11 @@ const sensors = useSensors(
 
 | ファイル | 追加/変更 | 担当ユニット |
 |---|---|---|
-| `src/types/index.ts` | 変更 | Unit 0 |
-| `src/lib/id.ts` | 追加 | Unit 0 |
+| `src/types/index.ts` | 変更 | Unit 0-b |
+| `src/lib/id.ts` | 追加 | Unit 0-b |
+| `src/lib/pty.ts` | 変更 | Unit 0-a |
 | `src/lib/terminalRegistry.ts` | 追加 | Unit A1 |
-| `src/styles/variables.css` | 変更 | Unit 0 |
+| `src/styles/variables.css` | 変更 | Unit 0-b |
 | `src/styles/terminal.css` | 変更 | Unit A2 |
 | `src/components/TerminalPane.tsx` | 変更 | A1, A2, G |
 | `src/components/TerminalPaneContainer.tsx` | 追加 | Unit A2 |
@@ -619,7 +635,7 @@ const sensors = useSensors(
 | `src/components/TabItem.tsx` | 変更 | B, C, F |
 | `src/components/InlineEdit.tsx` | 追加 | Unit C |
 | `src/store/appStore.ts` | 変更 | C, D+E |
-| `src-tauri/src/pty.rs` | 変更 | Unit D+E |
+| `src-tauri/src/pty.rs` | 変更 | Unit 0-a, D+E |
 | `src-tauri/src/lib.rs` | 変更 | Unit D+E |
 | `src/main.tsx` | 確認のみ | Unit H |
 | `vite.config.ts` | 確認のみ | Unit H |

@@ -278,6 +278,10 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
+    // Unit D+E (お気に入り) で env を CommandBuilder::env に流す実装に置き換える。
+    // 仕様: shell 継承環境への merge（env-only 置換ではない）。
+    // TERM / COLORTERM は env 適用後に racker-terminal 側で強制上書きして xterm 互換性を保護する。
+    #[allow(unused_variables)]
     pub fn spawn(
         &self,
         shell: Option<String>,
@@ -287,7 +291,6 @@ impl PtyManager {
         env: Option<HashMap<String, String>>,
         channel: Channel<PtyEvent>,
     ) -> Result<String, PtyError> {
-        let _ = env; // Unit F (お気に入り) で本格利用予定
         // SF-B1: 0 clamp（フロント初期マウント時の 0x0 レイアウトを防御）
         let cols = cols.max(1);
         let rows = rows.max(1);

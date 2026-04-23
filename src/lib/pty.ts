@@ -11,6 +11,7 @@ export interface SpawnOptions {
   cwd?: string;
   cols: number;
   rows: number;
+  env?: Record<string, string>;
 }
 
 export interface PtyHandle {
@@ -34,6 +35,7 @@ export async function spawnPty(
   };
   if (opts.shell !== undefined) args.shell = opts.shell;
   if (opts.cwd !== undefined) args.cwd = opts.cwd;
+  if (opts.env !== undefined) args.env = opts.env;
 
   const id = await invoke<string>("pty_spawn", args);
 

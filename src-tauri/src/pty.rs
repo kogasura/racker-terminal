@@ -284,8 +284,10 @@ impl PtyManager {
         cwd: Option<String>,
         cols: u16,
         rows: u16,
+        env: Option<HashMap<String, String>>,
         channel: Channel<PtyEvent>,
     ) -> Result<String, PtyError> {
+        let _ = env; // Unit F (お気に入り) で本格利用予定
         // SF-B1: 0 clamp（フロント初期マウント時の 0x0 レイアウトを防御）
         let cols = cols.max(1);
         let rows = rows.max(1);
@@ -415,10 +417,11 @@ pub fn pty_spawn(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    env: Option<std::collections::HashMap<String, String>>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
     state
-        .spawn(shell, cwd, cols, rows, on_event)
+        .spawn(shell, cwd, cols, rows, env, on_event)
         .map_err(|e| e.to_string())
 }
 

@@ -192,6 +192,35 @@ impl Drop for PtySession {
     }
 }
 
+// ─── UTF-8 境界処理ユーティリティ ────────────────────────────────────────────
+
+/// pending + raw を UTF-8 境界で valid prefix と remainder に分離する。
+/// 4 byte 以上で先頭 invalid の場合は lossy 変換で強制進行（無限ループ防止）。
+///
+/// 戻り値: (valid_bytes, remaining_pending)
+fn split_at_utf8_boundary(mut combined: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    if combined.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    match std::str::from_utf8(&combined) {
+        Ok(_) => (combined, Vec::new()),
+        Err(e) => {
+            let valid_up_to = e.valid_up_to();
+            if valid_up_to > 0 {
+                let remain = combined.split_off(valid_up_to);
+                (combined, remain)
+            } else if combined.len() >= 4 {
+                // 4 byte 以上で先頭 invalid → lossy で強制進行
+                let text = String::from_utf8_lossy(&combined).into_owned();
+                (text.into_bytes(), Vec::new())
+            } else {
+                // 続きのバイトを待つ
+                (Vec::new(), combined)
+            }
+        }
+    }
+}
+
 // ─── reader / flush 2 スレッド構成 ──────────────────────────────────────────
 //
 // Phase 2 (Unit D+E) で地雷 #4 を根本解決するための設計:
@@ -271,17 +300,18 @@ fn spawn_reader_threads(
                     s.raw_buf.extend_from_slice(&read_buf[..n]);
 
                     // tiny read 即 flush ショートパス:
-                    // 256 byte 未満 かつ 前回 flush から 2ms 以上経過している場合は
-                    // flush スレッドを即時起床させて DSR-CPR 応答等の遅延を避ける。
-                    // burst 時（256 byte 以上）は notify_one() は呼ぶが、
-                    // flush スレッド側で wait_timeout から起床し 16ms バッチで drain する。
-                    let tiny = n < 256 && s.last_flush.elapsed().as_millis() > 2;
+                    // n < 256 byte かつ前回 flush から 2ms 以上経過 → flush スレッドを即時起床
+                    // （DSR-CPR 応答等の遅延を回避）
+                    // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
+                    let tiny = n < 256 && s.last_flush.elapsed() >= std::time::Duration::from_millis(2);
                     if read_count <= 5 {
                         eprintln!("[pty-read] tiny={tiny} n={n}");
                     }
                     drop(s);
-                    // burst / tiny どちらも notify_one（flush スレッドが wait_timeout で吸収）
-                    cvar.notify_one();
+                    if tiny {
+                        cvar.notify_one();
+                    }
+                    // burst 時の notify は省略 — 16ms 以内に wait_timeout が起きる
                 }
                 Err(e) => {
                     eprintln!("[pty-read] read error: {e}");
@@ -319,17 +349,29 @@ fn spawn_reader_threads(
 
             // stop_flag を再確認（wake 後）
             if flush_stop.load(Ordering::Relaxed) {
-                // 残余 bytes を lossy で吐いて終了
-                let remain = std::mem::take(&mut s.pending);
+                // drain: stop_flag=true でも、溜まっている raw + pending を可能な限り吐き出す
                 let raw = std::mem::take(&mut s.raw_buf);
+                let pending = std::mem::take(&mut s.pending);
+                let pending_error = s.error.take();
                 drop(s);
-                let mut all = remain;
-                all.extend_from_slice(&raw);
-                if !all.is_empty() {
-                    let text = String::from_utf8_lossy(&all).into_owned();
+
+                // pending + raw を lossy で吐く（UTF-8 境界検証を省略して確実に吐き切る）
+                let mut combined = pending;
+                combined.extend_from_slice(&raw);
+                if !combined.is_empty() {
+                    let text = String::from_utf8_lossy(&combined).into_owned();
                     let _ = channel.send(PtyEvent::Data { text });
                 }
-                eprintln!("[pty-flush] stop_flag set after wake, exit");
+
+                // 残留 error があれば送信
+                if let Some(msg) = pending_error {
+                    eprintln!("[pty-flush] stop_flag set, sending pending error: {msg}");
+                    let _ = channel.send(PtyEvent::Error { message: msg });
+                } else {
+                    // shutdown 経由でも Exit を送って Frontend に終了を通知
+                    eprintln!("[pty-flush] stop_flag set after wake, sending Exit");
+                    let _ = channel.send(PtyEvent::Exit { code: None });
+                }
                 break;
             }
 
@@ -343,35 +385,15 @@ fn spawn_reader_threads(
                 continue;
             }
 
-            // pending + raw を結合して UTF-8 検証
-            let mut combined = std::mem::take(&mut s.pending);
-            combined.extend_from_slice(&raw);
-
-            let (valid_bytes, remaining_pending) = if combined.is_empty() {
-                (Vec::new(), Vec::new())
-            } else {
-                match std::str::from_utf8(&combined) {
-                    Ok(_) => {
-                        // 全バイト有効
-                        (combined, Vec::new())
-                    }
-                    Err(e) => {
-                        let valid_up_to = e.valid_up_to();
-                        if valid_up_to > 0 {
-                            let valid = combined[..valid_up_to].to_vec();
-                            let remain = combined[valid_up_to..].to_vec();
-                            (valid, remain)
-                        } else if combined.len() >= 4 {
-                            // 4 byte 以上で先頭 invalid → 無限ループ防止のため lossy 変換
-                            let text = String::from_utf8_lossy(&combined).into_owned();
-                            (text.into_bytes(), Vec::new())
-                        } else {
-                            // 続きのバイトを待つ
-                            (Vec::new(), combined)
-                        }
-                    }
-                }
+            // pending + raw を組み立てる
+            let combined = {
+                let mut c = std::mem::take(&mut s.pending);
+                c.extend_from_slice(&raw);
+                c
             };
+
+            // UTF-8 境界で分離
+            let (valid_bytes, remaining_pending) = split_at_utf8_boundary(combined);
 
             // pending を更新し last_flush を記録
             s.pending = remaining_pending;
@@ -393,6 +415,15 @@ fn spawn_reader_threads(
 
             // エラー送信
             if let Some(msg) = error {
+                // error 送信前に、持ち越し pending を lossy で吐き出す（データロス防止）
+                let (lock, _) = &*flush_state_clone;
+                let mut s = lock.lock();
+                let remain = std::mem::take(&mut s.pending);
+                drop(s);
+                if !remain.is_empty() {
+                    let text = String::from_utf8_lossy(&remain).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
                 eprintln!("[pty-flush] sending error: {msg}");
                 let _ = channel.send(PtyEvent::Error { message: msg });
                 break;
@@ -613,4 +644,59 @@ pub fn pty_resize(
 #[tauri::command]
 pub fn pty_kill(state: tauri::State<PtyManager>, id: String) -> Result<(), String> {
     state.kill(&id).map_err(|e| e.to_string())
+}
+
+// ─── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_all_valid() {
+        let (v, r) = split_at_utf8_boundary(b"hello".to_vec());
+        assert_eq!(v, b"hello");
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn split_partial_multibyte_held_over() {
+        // "あ" = 0xe3 0x81 0x82。最初の 2 byte のみ
+        let (v, r) = split_at_utf8_boundary(vec![0xe3, 0x81]);
+        assert!(v.is_empty());
+        assert_eq!(r, vec![0xe3, 0x81]);
+    }
+
+    #[test]
+    fn split_valid_then_partial() {
+        // "abc" + "あ" の最初 2 byte
+        let mut input = b"abc".to_vec();
+        input.extend_from_slice(&[0xe3, 0x81]);
+        let (v, r) = split_at_utf8_boundary(input);
+        assert_eq!(v, b"abc");
+        assert_eq!(r, vec![0xe3, 0x81]);
+    }
+
+    #[test]
+    fn split_four_bytes_invalid_goes_lossy() {
+        let (v, r) = split_at_utf8_boundary(vec![0xff, 0xff, 0xff, 0xff]);
+        assert!(!v.is_empty()); // U+FFFD replacement character が入る
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn split_empty() {
+        let (v, r) = split_at_utf8_boundary(vec![]);
+        assert!(v.is_empty());
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn split_japanese_full() {
+        // "こんにちは" を完全に含む
+        let input = "こんにちは".as_bytes().to_vec();
+        let (v, r) = split_at_utf8_boundary(input.clone());
+        assert_eq!(v, input);
+        assert!(r.is_empty());
+    }
 }

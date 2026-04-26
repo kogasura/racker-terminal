@@ -17,7 +17,8 @@
     "@xterm/xterm": "^6.0.0",
     "nanoid": "^5.1.9",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",

@@ -1,0 +1,28 @@
+:root {
+  /* サイドバー */
+  --sidebar-width: 240px;
+  --sidebar-bg: #16161e;
+  --sidebar-fg: #c0caf5;
+  --sidebar-border: #24283b;
+
+  /* グループ・タブ */
+  --group-header-bg: #1a1b26;
+  --tab-item-bg: transparent;
+  --tab-item-bg-hover: #1f2335;
+  --tab-item-bg-active: #292e42;
+
+  /* ステータスドット */
+  --status-spawning: #e0af68;
+  --status-live: #9ece6a;
+  --status-crashed: #f7768e;
+
+  /* crashed 状態の薄赤背景（MainPane 用） */
+  --crashed-overlay-bg: rgba(247, 118, 142, 0.08);
+
+  /* インライン編集 */
+  --inline-edit-bg: #1f2335;
+  --inline-edit-border: #7aa2f7;
+
+  /* フォーカスアウトライン */
+  --focus-ring: #7aa2f7;
+}

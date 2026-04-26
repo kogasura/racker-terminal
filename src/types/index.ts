@@ -31,7 +31,12 @@ export interface Group {
   id: string;
   title: string;
   collapsed: boolean;
-  /** タブの表示順序を管理する配列。順序は tabIds 配列で保持 */
+  /**
+   * このグループに属するタブ ID の配列（順序保持）。
+   * 不変条件: 同一 tabId は複数 Group.tabIds に含まれない。
+   * moveTabToGroup / removeTab 実装時は、移動元グループから tabIds を
+   * 除去することを忘れないこと。
+   */
   tabIds: string[];
 }
 

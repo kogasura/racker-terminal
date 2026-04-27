@@ -42,13 +42,25 @@ export interface TerminalRuntime {
   resetForRecycle(): void;
 
   /**
+   * OSC タイトル変更購読の IDisposable。
+   * createRuntime 内で term.onTitleChange を購読して取得する。
+   * dispose() の中で titleSub.dispose() を呼ぶ。
+   */
+  titleSub: IDisposable;
+
+  /**
+   * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
+   * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
+   * fontSize / fontFamily / scrollback を term.options に直接書き込む。
+   */
+  applySettings(settings: Settings): void;
+
+  /**
    * 全リソース解放。§3.2 の順序を厳守。
    * ResizeObserver の disconnect は TerminalPane の useEffect cleanup 側の責務。
    */
   dispose(): void;
 }
-
-// TODO (Unit D+E): OSC タイトル変更対応のため titleSub?: IDisposable を追加予定
 
 interface Entry {
   refs: number;
@@ -68,6 +80,15 @@ export function createRuntime(
   tabId: string,
   callbacks: {
     onLive: (ptyId: string) => void;
+    /**
+     * OSC タイトル変更時のコールバック。
+     * - isEditing: 現在タブ名を編集中かどうか（true のとき no-op）
+     * - title: OSC から受け取った新しいタイトル（256 文字に切り詰め済み）
+     * TerminalPane の useEffect 内で `() => useAppStore.getState().editingId === tabId`
+     * と `(t) => updateTabTitle(tabId, t)` を渡す。
+     */
+    isEditing: () => boolean;
+    onOscTitle: (title: string) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -126,12 +147,24 @@ export function createRuntime(
     }
   });
 
+  // OSC タイトル変更を購読してタブ名を自動更新する。
+  // 編集中ガード: callbacks.isEditing() が true のとき OSC を無視してユーザー編集を保護する。
+  // 文字長制限: 256 文字に切り詰め。制御文字フィルタ: sanitizeOscTitle を通してから onOscTitle を呼ぶ。
+  const titleSub = term.onTitleChange((title) => {
+    if (isDisposed) return;
+    if (callbacks.isEditing()) return;
+    const sanitized = sanitizeOscTitle(title);
+    if (sanitized.length === 0) return;
+    callbacks.onOscTitle(sanitized);
+  });
+
   const runtime: TerminalRuntime = {
     get term() { return term; },
     get fitAddon() { return fitAddon; },
     get ptyHandle() { return ptyHandle; },
     get pendingInputs() { return pendingInputs; },
     onDataSub,
+    titleSub,
 
     setOnEvent(handler) {
       if (isDisposed) return;
@@ -173,11 +206,23 @@ export function createRuntime(
       spawning = false;
     },
 
+    applySettings(settings) {
+      // Settings 変更を xterm.options に即時反映する。
+      // Settings UI は Phase 3 送りのため、Phase 2 では機構のみ用意する。
+      // dispose 済みの xterm に options を書き込むと例外になるため isDisposed ガードを入れる。
+      if (isDisposed) return;
+      term.options.fontSize = settings.fontSize;
+      term.options.fontFamily = settings.fontFamily;
+      term.options.scrollback = settings.scrollback;
+    },
+
     dispose() {
       // §3.2 の順序を厳守。この順序を変えない。
       isDisposed = true;
       onEventHandler = null;
       onDataSub.dispose();
+      // OSC タイトル購読を解放する（onDataSub の隣に配置）
+      titleSub.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();
@@ -282,6 +327,14 @@ export function recyclePty(
   });
 }
 
+/**
+ * 全 runtime を配列で返す。
+ * App.tsx の settings subscribe から applySettings を broadcast するために使用する。
+ */
+export function getAllRuntimes(): TerminalRuntime[] {
+  return Array.from(runtimes.values()).map((e) => e.runtime);
+}
+
 /** テスト用: 登録済みの runtime 数を返す */
 export function getRuntimeCount(): number {
   return runtimes.size;
@@ -297,3 +350,26 @@ export function getRefs(tabId: string): number {
  * Vite の import.meta.hot.dispose フックから呼ぶことで、HMR 更新時に全 runtime を
  * 強制 dispose して、ゾンビ xterm が残るのを防ぐ。
  */
+
+/**
+ * OSC タイトル文字列をサニタイズする純関数。
+ * - C0 制御文字 (U+0000-U+001F) を除去する
+ * - DEL (U+007F) + C1 制御文字 (U+0080-U+009F) を除去する
+ * - Bidi 制御文字 (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) を除去する
+ * - 上記除去後に 256 文字に切り詰める
+ *
+ * テスト容易性のためモジュール外から import できる形で export する。
+ */
+export function sanitizeOscTitle(title: string): string {
+  return title
+    // C0 制御文字 (U+0000-U+001F) を除去
+    .replace(/[\x00-\x1f]/g, '')
+    // DEL (U+007F) + C1 制御文字 (U+0080-U+009F) を除去
+    .replace(/[-]/g, '')
+    // Bidi 制御文字を除去:
+    //   LRM (U+200E), RLM (U+200F)
+    //   LRE (U+202A), RLE (U+202B), PDF (U+202C), LRO (U+202D), RLO (U+202E)
+    //   LRI (U+2066), RLI (U+2067), FSI (U+2068), PDI (U+2069)
+    .replace(/[‎‏‪-‮⁦-⁩]/g, '')
+    .slice(0, 256);
+}

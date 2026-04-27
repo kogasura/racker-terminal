@@ -508,6 +508,104 @@ describe('appStore', () => {
     });
   });
 
+  // --- addFavorite ---
+  describe('addFavorite', () => {
+    it('お気に入りを追加して id を返す', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'MyFav', shell: 'nu', cwd: '/home', env: { FOO: 'bar' } });
+      const { favorites } = useAppStore.getState();
+      expect(favorites).toHaveLength(1);
+      expect(favorites[0].id).toBe(id);
+      expect(favorites[0].title).toBe('MyFav');
+      expect(favorites[0].shell).toBe('nu');
+      expect(favorites[0].cwd).toBe('/home');
+      expect(favorites[0].env).toEqual({ FOO: 'bar' });
+    });
+
+    it('同一 title でも別 id が発行される', () => {
+      const id1 = useAppStore.getState().addFavorite({ title: 'SameName' });
+      const id2 = useAppStore.getState().addFavorite({ title: 'SameName' });
+      expect(id1).not.toBe(id2);
+      expect(useAppStore.getState().favorites).toHaveLength(2);
+    });
+  });
+
+  // --- addFavorite (env シャローコピー) ---
+  describe('addFavorite (env shallow copy)', () => {
+    it('T3: env はシャローコピーされる（元の参照と独立）', () => {
+      const env = { FOO: 'bar' };
+      const id = useAppStore.getState().addFavorite({ title: 'X', env });
+      // 元オブジェクトを変更
+      env.FOO = 'changed';
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      // ストア内の env は変更前の値を保持する
+      expect(fav?.env?.FOO).toBe('bar');
+    });
+
+    it('T3-2: env が undefined の場合は undefined のまま（クラッシュしない）', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'Y' });
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      expect(fav?.env).toBeUndefined();
+    });
+  });
+
+  // --- removeFavorite ---
+  describe('removeFavorite', () => {
+    it('指定した favId のお気に入りを削除する', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'ToRemove' });
+      useAppStore.getState().removeFavorite(id);
+      expect(useAppStore.getState().favorites).toHaveLength(0);
+    });
+
+    it('存在しない favId は no-op（例外を投げない）', () => {
+      useAppStore.getState().addFavorite({ title: 'Existing' });
+      expect(() => useAppStore.getState().removeFavorite('non-existent-fav')).not.toThrow();
+      expect(useAppStore.getState().favorites).toHaveLength(1);
+    });
+  });
+
+  // --- spawnFavorite ---
+  describe('spawnFavorite', () => {
+    it('有効な favId で新タブが追加される（status=spawning）', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'DevFav', shell: 'nu', cwd: '/dev', env: { X: '1' } });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+
+      expect(tabId).not.toBeNull();
+      const tab = useAppStore.getState().tabs[tabId!];
+      expect(tab).toBeDefined();
+      expect(tab.status).toBe('spawning');
+    });
+
+    it('shell / cwd / env が Favorite から引き継がれる', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'DevFav', shell: 'nu', cwd: '/dev', env: { X: '1' } });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      const tab = useAppStore.getState().tabs[tabId!];
+      expect(tab.shell).toBe('nu');
+      expect(tab.cwd).toBe('/dev');
+      expect(tab.env).toEqual({ X: '1' });
+    });
+
+    it('title は defaultTabTitle ?? title を使う（defaultTabTitle あり）', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'FavName', defaultTabTitle: 'CustomTab' });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      expect(useAppStore.getState().tabs[tabId!].title).toBe('CustomTab');
+    });
+
+    it('title は defaultTabTitle ?? title を使う（defaultTabTitle なし）', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'FavName' });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      expect(useAppStore.getState().tabs[tabId!].title).toBe('FavName');
+    });
+
+    it('存在しない favId は null を返す', () => {
+      const result = useAppStore.getState().spawnFavorite('non-existent-fav');
+      expect(result).toBeNull();
+    });
+  });
+
   // --- setContextMenuOpen ---
   describe('setContextMenuOpen', () => {
     it('true / false を切り替えられる', () => {

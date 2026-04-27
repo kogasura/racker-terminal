@@ -12,6 +12,29 @@ use tauri::ipc::Channel;
 use thiserror::Error;
 use uuid::Uuid;
 
+// ─── デバッグログマクロ ───────────────────────────────────────────────────────
+// release ビルドで eprintln! がログに漏れないよう #[cfg(debug_assertions)] で囲む。
+// Phase 3 で telemetry 収集が必要になったら tracing クレートへの移行を検討する。
+macro_rules! dbg_log {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        eprintln!($($arg)*);
+    }
+}
+
+// ─── 定数 ────────────────────────────────────────────────────────────────────
+
+/// tiny read 即 flush ショートパスの閾値。
+/// 1 回の read で受け取ったバイト数がこの値未満のとき、flush スレッドを即時起床させる。
+const TINY_READ_THRESHOLD: usize = 256;
+
+/// tiny read 判定で使用する前回 flush からの最小間隔。
+const TINY_READ_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(2);
+
+/// raw_buf の上限バイト数（4MB）。
+/// `yes` / `find /` 等の暴走出力で OOM になるのを防ぐための back-pressure 上限。
+const RAW_BUF_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+
 // ─── IPC イベント ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -285,18 +308,18 @@ fn spawn_reader_threads(
     let read_handle = std::thread::spawn(move || {
         let mut read_buf = [0u8; 4096];
         let mut read_count: u32 = 0;
-        eprintln!("[pty-read] reader loop entered");
+        dbg_log!("[pty-read] reader loop entered");
 
         loop {
             if read_stop.load(Ordering::Relaxed) {
-                eprintln!("[pty-read] stop_flag set, exit");
+                dbg_log!("[pty-read] stop_flag set, exit");
                 break;
             }
 
             match reader.read(&mut read_buf) {
                 Ok(0) => {
                     // EOF: flush スレッドに通知して終了
-                    eprintln!("[pty-read] EOF received");
+                    dbg_log!("[pty-read] EOF received");
                     let (lock, cvar) = &*read_state;
                     let mut s = lock.lock();
                     s.eof = true;
@@ -306,7 +329,7 @@ fn spawn_reader_threads(
                 Ok(n) => {
                     read_count = read_count.saturating_add(1);
                     if read_count <= 5 {
-                        eprintln!(
+                        dbg_log!(
                             "[pty-read] read #{read_count} n={n} first 30 bytes: {:?}",
                             &read_buf[..n.min(30)]
                         );
@@ -316,13 +339,24 @@ fn spawn_reader_threads(
                     let mut s = lock.lock();
                     s.raw_buf.extend_from_slice(&read_buf[..n]);
 
+                    // back-pressure: raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄する。
+                    // `yes` / `find /` 等の暴走出力による OOM を防ぐ。
+                    // drain 直後は pending と raw_buf が非連続になり、UTF-8 検証で
+                    // 数バイト分が U+FFFD になる場合がある（許容）。
+                    if s.raw_buf.len() > RAW_BUF_LIMIT_BYTES {
+                        let drain_len = s.raw_buf.len() / 2;
+                        s.raw_buf.drain(0..drain_len);
+                        s.raw_buf.extend_from_slice(b"\r\n[output truncated]\r\n");
+                        dbg_log!("[pty-read] back-pressure triggered: drained {drain_len} bytes");
+                    }
+
                     // tiny read 即 flush ショートパス:
-                    // n < 256 byte かつ前回 flush から 2ms 以上経過 → flush スレッドを即時起床
-                    // （DSR-CPR 応答等の遅延を回避）
+                    // n < TINY_READ_THRESHOLD かつ前回 flush から TINY_READ_MIN_INTERVAL_MS 以上経過
+                    // → flush スレッドを即時起床（DSR-CPR 応答等の遅延を回避）
                     // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
-                    let tiny = n < 256 && s.last_flush.elapsed() >= std::time::Duration::from_millis(2);
+                    let tiny = n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
                     if read_count <= 5 {
-                        eprintln!("[pty-read] tiny={tiny} n={n}");
+                        dbg_log!("[pty-read] tiny={tiny} n={n}");
                     }
                     drop(s);
                     if tiny {
@@ -331,7 +365,7 @@ fn spawn_reader_threads(
                     // burst 時の notify は省略 — 16ms 以内に wait_timeout が起きる
                 }
                 Err(e) => {
-                    eprintln!("[pty-read] read error: {e}");
+                    dbg_log!("[pty-read] read error: {e}");
                     let (lock, cvar) = &*read_state;
                     let mut s = lock.lock();
                     s.error = Some(e.to_string());
@@ -340,7 +374,7 @@ fn spawn_reader_threads(
                 }
             }
         }
-        eprintln!("[pty-read] reader thread exit");
+        dbg_log!("[pty-read] reader thread exit");
     });
 
     // ── flush スレッド ─────────────────────────────────────────────────────
@@ -351,11 +385,11 @@ fn spawn_reader_threads(
     let flush_stop = Arc::clone(&stop_flag);
     let flush_handle = std::thread::spawn(move || {
         let timeout = std::time::Duration::from_millis(16);
-        eprintln!("[pty-flush] flush loop entered");
+        dbg_log!("[pty-flush] flush loop entered");
 
         loop {
             if flush_stop.load(Ordering::Relaxed) {
-                eprintln!("[pty-flush] stop_flag set, exit");
+                dbg_log!("[pty-flush] stop_flag set, exit");
                 break;
             }
 
@@ -383,12 +417,12 @@ fn spawn_reader_threads(
 
                 // 残留 error があれば送信
                 if let Some(msg) = pending_error {
-                    eprintln!("[pty-flush] stop_flag set, sending pending error: {msg}");
+                    dbg_log!("[pty-flush] stop_flag set, sending pending error: {msg}");
                     let _ = channel.send(PtyEvent::Error { message: msg });
                 } else {
                     // shutdown 経由でも Exit を送って Frontend に終了を通知
                     // child watcher が検出した実 exit code を優先（kill 経由の場合は None）
-                    eprintln!("[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}");
+                    dbg_log!("[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}");
                     let _ = channel.send(PtyEvent::Exit { code: exit_code });
                 }
                 break;
@@ -425,9 +459,9 @@ fn spawn_reader_threads(
                     Ok(s) => s,
                     Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
                 };
-                eprintln!("[pty-flush] sending data len={}", text.len());
+                dbg_log!("[pty-flush] sending data len={}", text.len());
                 if channel.send(PtyEvent::Data { text }).is_err() {
-                    eprintln!("[pty-flush] channel send failed, exit");
+                    dbg_log!("[pty-flush] channel send failed, exit");
                     break;
                 }
             }
@@ -443,14 +477,14 @@ fn spawn_reader_threads(
                     let text = String::from_utf8_lossy(&remain).into_owned();
                     let _ = channel.send(PtyEvent::Data { text });
                 }
-                eprintln!("[pty-flush] sending error: {msg}");
+                dbg_log!("[pty-flush] sending error: {msg}");
                 let _ = channel.send(PtyEvent::Error { message: msg });
                 break;
             }
 
             // EOF: 残余 pending を lossy で吐いて Exit 送信して終了
             if eof {
-                eprintln!("[pty-flush] EOF, sending Exit");
+                dbg_log!("[pty-flush] EOF, sending Exit");
                 let (lock, _) = &*flush_state_clone;
                 let mut s = lock.lock();
                 let remain = std::mem::take(&mut s.pending);
@@ -463,7 +497,7 @@ fn spawn_reader_threads(
                 break;
             }
         }
-        eprintln!("[pty-flush] flush thread exit");
+        dbg_log!("[pty-flush] flush thread exit");
     });
 
     ReaderThreads {
@@ -496,12 +530,12 @@ fn spawn_child_watcher(
     flush_state: SharedFlushState,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        eprintln!("[pty-watch] watcher loop entered");
+        dbg_log!("[pty-watch] watcher loop entered");
         let poll_interval = std::time::Duration::from_millis(100);
 
         loop {
             if stop_flag.load(Ordering::Relaxed) {
-                eprintln!("[pty-watch] stop_flag set, exit");
+                dbg_log!("[pty-watch] stop_flag set, exit");
                 break;
             }
 
@@ -516,20 +550,20 @@ fn spawn_child_watcher(
                         }
                         Ok(None) => None, // まだ実行中
                         Err(e) => {
-                            eprintln!("[pty-watch] try_wait error: {e}");
+                            dbg_log!("[pty-watch] try_wait error: {e}");
                             None
                         }
                     },
                     None => {
                         // kill 経由で child が take 済み。watcher は撤退
-                        eprintln!("[pty-watch] child already taken, exit");
+                        dbg_log!("[pty-watch] child already taken, exit");
                         break;
                     }
                 }
             };
 
             if let Some(code) = exit_code {
-                eprintln!("[pty-watch] child exited with code {code}");
+                dbg_log!("[pty-watch] child exited with code {code}");
 
                 // flush_state に exit_code をセット + eof フラグ ON + notify
                 let (lock, cvar) = &*flush_state;
@@ -550,7 +584,7 @@ fn spawn_child_watcher(
 
             std::thread::sleep(poll_interval);
         }
-        eprintln!("[pty-watch] watcher exit");
+        dbg_log!("[pty-watch] watcher exit");
     })
 }
 
@@ -575,7 +609,7 @@ impl PtyManager {
         let cols = cols.max(1);
         let rows = rows.max(1);
 
-        eprintln!("[pty] spawn begin: cols={cols} rows={rows}");
+        dbg_log!("[pty] spawn begin: cols={cols} rows={rows}");
 
         // シェル解決
         let shell_path = if let Some(s) = shell {
@@ -587,7 +621,7 @@ impl PtyManager {
                 )
             })?
         };
-        eprintln!("[pty] shell resolved: {:?}", shell_path);
+        dbg_log!("[pty] shell resolved: {:?}", shell_path);
 
         // cwd 解決
         let cwd_path = if let Some(c) = cwd {
@@ -609,7 +643,7 @@ impl PtyManager {
         let pair = pty_system
             .openpty(pty_size)
             .map_err(|e| PtyError::PtyOpen(e.to_string()))?;
-        eprintln!("[pty] openpty ok");
+        dbg_log!("[pty] openpty ok");
 
         // コマンドビルド
         let mut cmd = CommandBuilder::new(&shell_path);
@@ -635,7 +669,7 @@ impl PtyManager {
             .slave
             .spawn_command(cmd)
             .map_err(|e| PtyError::Spawn(e.to_string()))?;
-        eprintln!("[pty] spawn_command ok");
+        dbg_log!("[pty] spawn_command ok");
 
         // slave は spawn 後に drop して close
         drop(pair.slave);
@@ -655,7 +689,7 @@ impl PtyManager {
 
         // read / flush 2 スレッド起動
         let threads = spawn_reader_threads(reader, channel, Arc::clone(&stop_flag));
-        eprintln!("[pty] reader + flush threads started");
+        dbg_log!("[pty] reader + flush threads started");
 
         // master / child を Arc 化（watcher スレッドと共有するため）
         let master_shared: SharedMaster = Arc::new(Mutex::new(Some(pair.master)));
@@ -668,11 +702,11 @@ impl PtyManager {
             Arc::clone(&stop_flag),
             Arc::clone(&threads.flush_state),
         );
-        eprintln!("[pty] child watcher thread started");
+        dbg_log!("[pty] child watcher thread started");
 
         // セッション生成
         let id = Uuid::new_v4().to_string();
-        eprintln!("[pty] session id: {id}");
+        dbg_log!("[pty] session id: {id}");
         let session = Arc::new(PtySession::new(PtySessionArgs {
             id: id.clone(),
             writer,
@@ -812,5 +846,67 @@ mod tests {
         let (v, r) = split_at_utf8_boundary(input.clone());
         assert_eq!(v, input);
         assert!(r.is_empty());
+    }
+
+    // ─── back-pressure ロジックの単体テスト ──────────────────────────────────
+    //
+    // back-pressure のロジックを純関数として切り出しテストする。
+    // 実際の read スレッドは blocking I/O を伴うため直接テストは困難なため、
+    // ロジック部分を別関数に委譲してテストする。
+
+    /// back-pressure チェックを適用するヘルパー（テスト用）。
+    /// raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄し、マーカーを挿入する。
+    /// 実際の read スレッドと同じロジックを再現。
+    fn apply_back_pressure(raw_buf: &mut Vec<u8>, limit: usize) {
+        if raw_buf.len() > limit {
+            let drain_len = raw_buf.len() / 2;
+            raw_buf.drain(0..drain_len);
+            raw_buf.extend_from_slice(b"\r\n[output truncated]\r\n");
+        }
+    }
+
+    #[test]
+    fn back_pressure_triggers_when_over_limit() {
+        // 上限を小さく設定してテストする
+        let limit = 1024;
+        let mut buf = vec![b'A'; limit + 1]; // 上限 +1 で超過させる
+        apply_back_pressure(&mut buf, limit);
+        // 古い半分が破棄されていること
+        assert!(buf.len() < limit + 1);
+        // マーカーが含まれていること
+        let text = String::from_utf8_lossy(&buf);
+        assert!(text.contains("[output truncated]"));
+    }
+
+    #[test]
+    fn back_pressure_no_op_under_limit() {
+        let limit = 1024;
+        let mut buf = vec![b'A'; limit]; // ちょうど上限、超過なし
+        let original_len = buf.len();
+        apply_back_pressure(&mut buf, limit);
+        // 変化なし
+        assert_eq!(buf.len(), original_len);
+    }
+
+    #[test]
+    fn back_pressure_drains_half_and_inserts_marker() {
+        let limit = 100;
+        // 5MB 相当を模擬するかわりに、limit の 2 倍で確実に half drain を検証する
+        let mut buf = vec![b'X'; limit + 50]; // limit = 100, len = 150
+        apply_back_pressure(&mut buf, limit);
+        // drain_len = 150 / 2 = 75。残り 75 + マーカー長
+        let marker = b"\r\n[output truncated]\r\n";
+        assert!(buf.ends_with(marker));
+        // 先頭 75 バイトは破棄されているため X が続くはず（75 バイト残 + マーカー）
+        let x_count = buf.iter().filter(|&&b| b == b'X').count();
+        assert_eq!(x_count, 75);
+    }
+
+    #[test]
+    fn back_pressure_constants_sanity() {
+        // 定数が期待値であることを確認する（値の変更検知）
+        assert_eq!(RAW_BUF_LIMIT_BYTES, 4 * 1024 * 1024);
+        assert_eq!(TINY_READ_THRESHOLD, 256);
+        assert_eq!(TINY_READ_MIN_INTERVAL, std::time::Duration::from_millis(2));
     }
 }

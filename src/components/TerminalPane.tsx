@@ -189,11 +189,19 @@ export const TerminalPane = memo(function TerminalPane({
       if (e.type !== 'keydown') return true;
       if (!e.ctrlKey) return true;
 
+      // IME 合成中の keydown は無視する（タブ切替・タブ閉じの暴発防止）
+      // - e.isComposing: 標準仕様（Chromium 含む大部分のブラウザで対応）
+      // - e.keyCode === 229: 古い仕様の保険（一部 IME で isComposing が立たないケース）
+      // e.preventDefault() は isComposing チェック後に置くことで IME 確定（Enter/Tab）を阻害しない
+      if (e.isComposing || e.keyCode === 229) return true;
+
       // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
       if (useAppStore.getState().contextMenuOpen) return true;
 
       // Ctrl+Shift+W: アクティブタブを閉じる
-      if (e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+      // e.code ('KeyW') を使うことで CapsLock/AZERTY 等の非 ASCII レイアウトでも
+      // 物理 W キーの位置を正確に判定できる（e.key は 'w'/'W'/'z' 等レイアウト依存）
+      if (e.shiftKey && e.code === 'KeyW') {
         e.preventDefault();
         const aid = useAppStore.getState().activeTabId;
         if (aid) useAppStore.getState().removeTab(aid);
@@ -201,7 +209,8 @@ export const TerminalPane = memo(function TerminalPane({
       }
 
       // Ctrl+Tab / Ctrl+Shift+Tab: 次/前のタブへ移動
-      if (e.key === 'Tab') {
+      // e.code ('Tab') で物理 Tab キーを判定する（IME 中は e.key === 'Process' になる場合がある）
+      if (e.code === 'Tab') {
         e.preventDefault();
         const state = useAppStore.getState();
         const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);

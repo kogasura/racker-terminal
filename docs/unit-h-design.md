@@ -95,7 +95,14 @@ microtask: refs=1 なので dispose はキャンセル
 PTY は init() の中で startSpawn を呼ぶが、startSpawn は `spawning || ptyHandle !== null` ガードがあるため
 mount-2 で再び呼ばれても no-op になる。
 
-### 3.2 各 useEffect の StrictMode 耐性
+### 3.2 dispose 順序の参照
+
+各 runtime の `dispose()` は `docs/unit-a2-design.md §3.2` で定義した順序を厳守する。
+P-D3 で `titleSub.dispose()` と `compositionAbort.abort()` が追加されたため、Unit H の StrictMode 検証でも
+この順序（isDisposed → setOnEvent(null) → onDataSub → titleSub → compositionAbort → fitAddon → ptyHandle → term）が
+維持されていることを `VH02` シナリオで確認すること。
+
+### 3.3 各 useEffect の StrictMode 耐性
 
 #### TerminalPane の 5 つの useEffect
 
@@ -114,7 +121,7 @@ mount-2 で再び呼ばれても no-op になる。
 | 起動時自動初期化 | `[]` | なし | `if (groups.length === 0)` ガードで二重 createGroup を防止 |
 | settings subscribe | `[]` | `unsub()` | cleanup で unsub、再 mount で再 subscribe。StrictMode 耐性あり |
 
-### 3.3 removeTab の forceDispose → set 順序
+### 3.4 removeTab の forceDispose → set 順序
 
 Unit C alpha レビュー #1 で指摘された懸念:
 
@@ -129,7 +136,7 @@ StrictMode 下での検証ポイント (VH02):
 - `removeTab` → `forceDisposeRuntime` → React unmount → `releaseRuntime` の順で重複 dispose 警告が出ないか
 - `runtimes.delete(tabId)` 後に `releaseRuntime` が呼ばれても `runtimes.get(tabId)` は `undefined` なので no-op
 
-### 3.4 DragOverlay Portal の StrictMode 影響
+### 3.5 DragOverlay Portal の StrictMode 影響
 
 Unit F beta レビューで指摘済み (F-β3):
 - `createPortal` が二重 mount される懸念

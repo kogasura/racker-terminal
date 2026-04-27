@@ -20,6 +20,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   let disposeCallCount = 0;
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
+  const compositionAbort = new AbortController();
   const disposeFn = vi.fn(() => { disposeCallCount++; });
 
   const runtime: TerminalRuntime & { disposeCallCount: number; dispose: ReturnType<typeof vi.fn> } = {
@@ -28,6 +29,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     get ptyHandle() { return null; },
     get pendingInputs() { return []; },
     onDataSub: sub,
+    compositionAbort,
     titleSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
@@ -173,6 +175,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const callOrder: string[] = [];
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
+  const compositionAbort = new AbortController();
 
   const runtime: TerminalRuntime & { callOrder: string[] } = {
     get term() { return {} as never; },
@@ -180,6 +183,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     get ptyHandle() { return null; },
     get pendingInputs() { return []; },
     onDataSub: sub,
+    compositionAbort,
     titleSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
@@ -223,12 +227,14 @@ describe('applySettings', () => {
     const options = { fontSize: 12.5, fontFamily: 'monospace', scrollback: 10000 };
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
+    const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
       get fitAddon() { return {} as never; },
       get ptyHandle() { return null; },
       get pendingInputs() { return []; },
       onDataSub: sub,
+      compositionAbort,
       titleSub,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
@@ -290,12 +296,14 @@ describe('titleSub dispose', () => {
     const tabId = 'test-titlesub-dispose';
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
+    const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
       get fitAddon() { return {} as never; },
       get ptyHandle() { return null; },
       get pendingInputs() { return []; },
       onDataSub: sub,
+      compositionAbort,
       titleSub,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
@@ -304,6 +312,7 @@ describe('titleSub dispose', () => {
       dispose: () => {
         sub.dispose();
         titleSub.dispose();
+        compositionAbort.abort();
       },
     };
 
@@ -402,12 +411,14 @@ describe('memory leak', () => {
       const id = `ml-loop-${i}`;
       const sub = { dispose: vi.fn() };
       const titleSub = { dispose: vi.fn() };
+      const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
         get term() { return {} as never; },
         get fitAddon() { return {} as never; },
         get ptyHandle() { return null; },
         get pendingInputs() { return []; },
         onDataSub: sub,
+        compositionAbort,
         titleSub,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
@@ -486,5 +497,131 @@ describe('recyclePty', () => {
     expect(getRefs(tabId)).toBe(1);
 
     forceDisposeRuntime(tabId);
+  });
+});
+
+// --- IME 合成ガード (2.13) ---
+
+/**
+ * IME 合成ガードのモックテスト。
+ * createRuntime は DOM (xterm) 依存のため直接テストできない。
+ * TerminalRuntime インターフェースの compositionAbort フィールドが dispose() で
+ * abort() されることを、モックランタイムを通じて検証する。
+ * 実際の isComposing フラグ動作は EventTarget を使ったユニットテストで検証する。
+ */
+describe('IME compositionAbort (2.13)', () => {
+  it('compositionAbort.abort() が dispose() 内で呼ばれる', () => {
+    const tabId = 'test-ime-abort';
+    const compositionAbort = new AbortController();
+    const abortSpy = vi.spyOn(compositionAbort, 'abort');
+
+    const sub = { dispose: vi.fn() };
+    const titleSub = { dispose: vi.fn() };
+    const runtime: TerminalRuntime = {
+      get term() { return {} as never; },
+      get fitAddon() { return {} as never; },
+      get ptyHandle() { return null; },
+      get pendingInputs() { return []; },
+      onDataSub: sub,
+      compositionAbort,
+      titleSub,
+      applySettings: vi.fn(),
+      setOnEvent: vi.fn(),
+      startSpawn: vi.fn(),
+      resetForRecycle: vi.fn(),
+      dispose() {
+        sub.dispose();
+        titleSub.dispose();
+        compositionAbort.abort();
+      },
+    };
+
+    acquireRuntime(tabId, () => runtime);
+    forceDisposeRuntime(tabId);
+
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('compositionAbort.abort() 後に listener が解除されている', () => {
+    // AbortController.abort() 後に { signal } オプションで登録したリスナーが
+    // 実際に解除されることを EventTarget で直接確認する。
+    // createRuntime の compositionstart/end リスナー解除と同じ仕組みを検証する。
+    const ac = new AbortController();
+    const target = new EventTarget();
+    let called = 0;
+
+    target.addEventListener(
+      'compositionstart',
+      () => { called++; },
+      { signal: ac.signal },
+    );
+
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(called).toBe(1);
+
+    ac.abort();
+
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(called).toBe(1); // abort 後はリスナーが呼ばれない
+    expect(ac.signal.aborted).toBe(true);
+  });
+
+  it('compositionstart/end イベントで isComposing フラグが切り替わり onData が drop される', () => {
+    // EventTarget を使って compositionstart/end + onData ガードの連携動作を検証する。
+    // createRuntime の IME ガード実装と同等の動作を確認する。
+    let isComposing = false;
+    const compositionAbort = new AbortController();
+    const { signal } = compositionAbort;
+
+    const textarea = new EventTarget();
+    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal });
+    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal });
+
+    const received: string[] = [];
+    const onData = (data: string) => {
+      if (isComposing) return;
+      received.push(data);
+    };
+
+    // 合成開始前: 通常入力は通過する
+    onData('a');
+    expect(received).toEqual(['a']);
+
+    // compositionstart: 合成中は drop される
+    textarea.dispatchEvent(new Event('compositionstart'));
+    onData('あ'); // 中間文字列
+    onData('い'); // さらに中間文字列
+    expect(received).toEqual(['a']); // 追加されていない
+
+    // compositionend: 確定後は通過する
+    textarea.dispatchEvent(new Event('compositionend'));
+    onData('愛'); // 確定文字列（xterm が再発火する想定）
+    expect(received).toEqual(['a', '愛']);
+
+    compositionAbort.abort();
+  });
+
+  it('compositionend 後は通常入力が再開される（確定文字列が drop されない）', () => {
+    let isComposing = false;
+    const textarea = new EventTarget();
+    const compositionAbort = new AbortController();
+    const { signal } = compositionAbort;
+    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal });
+    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal });
+
+    const received: string[] = [];
+    const onData = (data: string) => {
+      if (isComposing) return;
+      received.push(data);
+    };
+
+    textarea.dispatchEvent(new Event('compositionstart'));
+    onData('か');  // 中間 (drop)
+    textarea.dispatchEvent(new Event('compositionend'));
+    onData('漢字'); // 確定 (通過)
+    onData('b');    // 通常入力 (通過)
+
+    expect(received).toEqual(['漢字', 'b']);
+    compositionAbort.abort();
   });
 });

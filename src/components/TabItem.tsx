@@ -1,4 +1,6 @@
 import { memo } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
@@ -28,7 +30,20 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const addFavorite = useAppStore((s) => s.addFavorite);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
+  // groupId を data に持たせることで onDragEnd で所属グループを参照できる
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: tabId,
+    data: { groupId: tab?.groupId },
+    // 編集中はドラッグ操作を無効にする
+    disabled: isEditing,
+  });
+
   if (!tab) return null;
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   function handleDoubleClick(e: React.MouseEvent) {
     // 編集中のダブルクリックは無視
@@ -49,6 +64,11 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
         asChild
       >
         <div
+          ref={setNodeRef}
+          data-dragging={isDragging || undefined}
+          style={style}
+          {...attributes}
+          {...listeners}
           className={`tab-item${isActive ? ' active' : ''}`}
           onClick={() => setActiveTab(tabId)}
           onDoubleClick={handleDoubleClick}
@@ -68,6 +88,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
             type="button"
             className="tab-item__close-btn"
             title="Close tab"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               removeTab(tabId);

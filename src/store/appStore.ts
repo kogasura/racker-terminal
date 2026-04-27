@@ -199,6 +199,16 @@ interface AppActions {
    * toIndex は [0, groups.length-1] にクランプされる。
    */
   moveGroup: (groupId: string, toIndex: number) => void;
+
+  /**
+   * タブを別グループの指定 index に移動する。
+   * - fromGroup の tabIds から対象を除去
+   * - toGroup の tabIds の toIndex 位置に挿入 (toIndex は [0, toGroup.tabIds.length] にクランプ)
+   * - 同一グループ内移動: from 除去 → 同 group 内に再挿入
+   * - 不正な tabId / toGroupId は no-op
+   * - tab.groupId フィールドも更新
+   */
+  moveTab: (tabId: string, toGroupId: string, toIndex: number) => void;
 }
 
 type Store = AppState & AppActions;
@@ -452,6 +462,60 @@ export const useAppStore = create<Store>()((set, get) => ({
       const [item] = next.splice(from, 1);
       next.splice(clamped, 0, item);
       return { groups: next };
+    });
+  },
+
+  moveTab: (tabId, toGroupId, toIndex) => {
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};
+
+      const fromGroupId = tab.groupId;
+      const fromGroup = state.groups.find((g) => g.id === fromGroupId);
+      if (!fromGroup) return {}; // race: グループが削除済み
+
+      const toGroup = state.groups.find((g) => g.id === toGroupId);
+      if (!toGroup) return {}; // 不正な toGroupId
+
+      // fromGroup から除去した後の toGroup.tabIds を計算する
+      // 同一グループ内移動の場合は除去後の長さを基準にクランプする
+      const fromTabIds = fromGroup.tabIds.filter((id) => id !== tabId);
+
+      const toTabIdsBase =
+        fromGroupId === toGroupId
+          ? fromTabIds
+          : toGroup.tabIds;
+
+      const clamped = Math.max(0, Math.min(toIndex, toTabIdsBase.length));
+
+      // F5: 同一グループ内で位置が変わらない場合は no-op（参照を変えない）
+      if (fromGroupId === toGroupId) {
+        const originalIdx = fromGroup.tabIds.indexOf(tabId);
+        if (originalIdx === clamped) return {};
+      }
+
+      const newToTabIds = [...toTabIdsBase];
+      newToTabIds.splice(clamped, 0, tabId);
+
+      const updatedGroups = state.groups.map((g) => {
+        if (g.id === fromGroupId && g.id === toGroupId) {
+          return { ...g, tabIds: newToTabIds };
+        }
+        if (g.id === fromGroupId) {
+          return { ...g, tabIds: fromTabIds };
+        }
+        if (g.id === toGroupId) {
+          return { ...g, tabIds: newToTabIds };
+        }
+        return g;
+      });
+
+      const updatedTab =
+        fromGroupId !== toGroupId
+          ? { ...state.tabs, [tabId]: { ...tab, groupId: toGroupId } }
+          : state.tabs;
+
+      return { groups: updatedGroups, tabs: updatedTab };
     });
   },
 }));

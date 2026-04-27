@@ -648,6 +648,143 @@ describe('appStore', () => {
       ).not.toThrow();
     });
   });
+
+  // --- moveTab ---
+  describe('moveTab', () => {
+    it('同一グループ内の並び替え（前→後）', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+      const t3 = useAppStore.getState().createTab(g1, { title: 'C' });
+
+      // t1 (index 0) を index 2 へ移動 → [t2, t3, t1]
+      useAppStore.getState().moveTab(t1, g1, 2);
+
+      const tabIds = useAppStore.getState().groups[0].tabIds;
+      expect(tabIds).toEqual([t2, t3, t1]);
+    });
+
+    it('同一グループ内の並び替え（後→前）', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+      const t3 = useAppStore.getState().createTab(g1, { title: 'C' });
+
+      // t3 (index 2) を index 0 へ移動 → [t3, t1, t2]
+      useAppStore.getState().moveTab(t3, g1, 0);
+
+      const tabIds = useAppStore.getState().groups[0].tabIds;
+      expect(tabIds).toEqual([t3, t1, t2]);
+    });
+
+    it('別グループへ移動（末尾追加）', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g2, { title: 'B' });
+
+      // g2 に末尾追加 (toIndex = g2.tabIds.length = 1)
+      useAppStore.getState().moveTab(t1, g2, 1);
+
+      const state = useAppStore.getState();
+      expect(state.groups[0].tabIds).not.toContain(t1);
+      expect(state.groups[1].tabIds).toEqual([t2, t1]);
+    });
+
+    it('不正な tabId → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const before = useAppStore.getState().groups;
+
+      useAppStore.getState().moveTab('non-existent-tab', g1, 0);
+
+      expect(useAppStore.getState().groups).toBe(before);
+    });
+
+    it('不正な toGroupId → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const before = useAppStore.getState().groups;
+
+      useAppStore.getState().moveTab(t1, 'non-existent-group', 0);
+
+      expect(useAppStore.getState().groups).toBe(before);
+    });
+
+    it('toIndex が負の場合は 0 にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+
+      // t2 を -5 (→ 0) に移動 → [t2, t1]
+      useAppStore.getState().moveTab(t2, g1, -5);
+
+      const tabIds = useAppStore.getState().groups[0].tabIds;
+      expect(tabIds).toEqual([t2, t1]);
+    });
+
+    it('toIndex が超過の場合は末尾にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+
+      // t1 を 999 (→ 1) に移動 → [t2, t1]
+      useAppStore.getState().moveTab(t1, g1, 999);
+
+      const tabIds = useAppStore.getState().groups[0].tabIds;
+      expect(tabIds).toEqual([t2, t1]);
+    });
+
+    it('別グループへ移動すると tab.groupId が更新される', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      expect(useAppStore.getState().tabs[t1].groupId).toBe(g2);
+    });
+
+    it('同一グループ内移動では tab.groupId は変わらない', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      useAppStore.getState().createTab(g1, { title: 'B' });
+
+      useAppStore.getState().moveTab(t1, g1, 1);
+
+      expect(useAppStore.getState().tabs[t1].groupId).toBe(g1);
+    });
+
+    // F1: tab.groupId が指すグループが消失している race condition → no-op
+    it('tab.groupId が指すグループが存在しない不整合状態で moveTab → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+
+      // 不整合状態を直接 setState で作る（tab.groupId は 'g1' だが groups に g1 が存在しない）
+      useAppStore.setState((s) => ({
+        groups: s.groups.filter((g) => g.id !== g1),
+      }));
+
+      const before = useAppStore.getState().groups;
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      // no-op なので groups 参照が変わらない
+      expect(useAppStore.getState().groups).toBe(before);
+    });
+
+    // F5: 同一グループ同一 index への moveTab → 参照不変
+    it('同一グループ同一 index への moveTab → groups 参照が変わらない', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      useAppStore.getState().createTab(g1, { title: 'B' });
+
+      // t1 は index 0 → 同じ index 0 に移動
+      const before = useAppStore.getState().groups;
+      useAppStore.getState().moveTab(t1, g1, 0);
+
+      expect(useAppStore.getState().groups).toBe(before);
+    });
+  });
 });
 
 // --- selectFallbackTab ---
@@ -896,6 +1033,8 @@ describe('navigateToTab', () => {
     expect(after.groups).toBe(groupsBefore); // 参照変化なし
   });
 });
+
+// これより下は appStore describe の外 (純関数・navigateToTab 等のスタンドアロンテスト)
 
 // --- removeTab fallback で折りたたみグループを自動展開 ---
 

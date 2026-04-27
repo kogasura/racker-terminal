@@ -189,6 +189,12 @@ export const TerminalPane = memo(function TerminalPane({
       if (e.type !== 'keydown') return true;
       if (!e.ctrlKey) return true;
 
+      // IME 合成中の keydown は無視する（タブ切替・タブ閉じの暴発防止）
+      // - e.isComposing: 標準仕様（Chromium 含む大部分のブラウザで対応）
+      // - e.keyCode === 229: 古い仕様の保険（一部 IME で isComposing が立たないケース）
+      // e.preventDefault() は isComposing チェック後に置くことで IME 確定（Enter/Tab）を阻害しない
+      if (e.isComposing || e.keyCode === 229) return true;
+
       // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
       if (useAppStore.getState().contextMenuOpen) return true;
 

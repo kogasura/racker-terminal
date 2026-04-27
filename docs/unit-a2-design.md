@@ -100,12 +100,14 @@ export interface TerminalRuntime {
 
 ```typescript
 dispose() {
-  isDisposed = true;          // フラグ: 以降の setOnEvent 等を無害化
-  setOnEvent(null);           // onEvent ハンドラ参照を切る
-  onDataSub.dispose();        // xterm の onData 購読を停止
+  isDisposed = true;          // 以降の setOnEvent / startSpawn 等を無害化
+  setOnEvent(null);           // PTY イベントハンドラ参照を切る
+  onDataSub.dispose();        // xterm の onData 購読停止
+  titleSub.dispose();         // OSC タイトル購読停止 (Unit D+E)
+  compositionAbort.abort();   // IME compositionstart/end リスナー解除 (P-D3)
   fitAddon.dispose();
-  ptyHandle?.dispose();       // fire-and-forget（Promise は await しない）
-  term.dispose();
+  ptyHandle?.dispose();       // fire-and-forget (Promise は await しない)
+  term.dispose();             // 必ず最後 (WebView2 クラッシュ防止)
 }
 ```
 

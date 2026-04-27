@@ -542,9 +542,33 @@ describe('IME compositionAbort (2.13)', () => {
     expect(abortSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('compositionstart イベントで isComposing が true になり onData が drop される', () => {
-    // EventTarget を使って compositionstart/end + onData ガードのロジックを直接検証する。
-    // createRuntime の IME ガード実装と同等のロジックをインラインで再現する。
+  it('compositionAbort.abort() 後に listener が解除されている', () => {
+    // AbortController.abort() 後に { signal } オプションで登録したリスナーが
+    // 実際に解除されることを EventTarget で直接確認する。
+    // createRuntime の compositionstart/end リスナー解除と同じ仕組みを検証する。
+    const ac = new AbortController();
+    const target = new EventTarget();
+    let called = 0;
+
+    target.addEventListener(
+      'compositionstart',
+      () => { called++; },
+      { signal: ac.signal },
+    );
+
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(called).toBe(1);
+
+    ac.abort();
+
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(called).toBe(1); // abort 後はリスナーが呼ばれない
+    expect(ac.signal.aborted).toBe(true);
+  });
+
+  it('compositionstart/end イベントで isComposing フラグが切り替わり onData が drop される', () => {
+    // EventTarget を使って compositionstart/end + onData ガードの連携動作を検証する。
+    // createRuntime の IME ガード実装と同等の動作を確認する。
     let isComposing = false;
     const compositionAbort = new AbortController();
     const { signal } = compositionAbort;
@@ -554,7 +578,6 @@ describe('IME compositionAbort (2.13)', () => {
     textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal });
 
     const received: string[] = [];
-    // onData ハンドラのガードロジックを模擬する
     const onData = (data: string) => {
       if (isComposing) return;
       received.push(data);
@@ -575,12 +598,7 @@ describe('IME compositionAbort (2.13)', () => {
     onData('愛'); // 確定文字列（xterm が再発火する想定）
     expect(received).toEqual(['a', '愛']);
 
-    // AbortController.abort() でリスナーが解除される
     compositionAbort.abort();
-    // abort 後は compositionstart を発火しても isComposing が変化しない
-    isComposing = false; // 手動でリセット（abort 後のリスナー解除確認用）
-    textarea.dispatchEvent(new Event('compositionstart'));
-    expect(isComposing).toBe(false); // リスナーが解除されているので変化しない
   });
 
   it('compositionend 後は通常入力が再開される（確定文字列が drop されない）', () => {

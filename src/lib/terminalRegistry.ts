@@ -150,11 +150,17 @@ export function createRuntime(
   const compositionAbort = new AbortController();
   const { signal: compositionSignal } = compositionAbort;
 
+  // 注: xterm 内部 textarea は term.dispose() まで同じインスタンスを維持する前提
+  //     (recyclePty では textarea を差し替えない)。
   // term.textarea は term.open() の後でセットされる (xterm 公式型: HTMLTextAreaElement | undefined)
   const textarea = term.textarea;
   if (textarea) {
     textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal: compositionSignal });
     textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal: compositionSignal });
+  } else {
+    console.warn(
+      `[terminalRegistry] term.textarea is undefined; IME composition guard disabled for tab ${tabId}`,
+    );
   }
 
   // onData を spawn より先に登録して DSR-CPR 等を pendingInputs に貯める

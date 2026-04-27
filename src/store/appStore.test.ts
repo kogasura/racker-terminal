@@ -23,6 +23,7 @@ function resetStore() {
     favorites: [],
     activeTabId: null,
     editingId: null,
+    contextMenuOpen: false,
     settings: {
       theme: 'tokyo-night',
       fontFamily: '"MonaspiceNe NF", monospace',
@@ -335,6 +336,114 @@ describe('appStore', () => {
     });
   });
 
+  // --- updateTabTitle ---
+  describe('updateTabTitle', () => {
+    it('通常更新', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
+      useAppStore.getState().updateTabTitle(tabId, 'New');
+      expect(useAppStore.getState().tabs[tabId].title).toBe('New');
+    });
+
+    it('trim される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
+      useAppStore.getState().updateTabTitle(tabId, '  trimmed  ');
+      expect(useAppStore.getState().tabs[tabId].title).toBe('trimmed');
+    });
+
+    it('64 文字超は 64 文字に切り詰められる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
+      useAppStore.getState().updateTabTitle(tabId, 'a'.repeat(100));
+      expect(useAppStore.getState().tabs[tabId].title).toHaveLength(64);
+    });
+
+    it('空文字列は no-op（元タイトル維持）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
+      useAppStore.getState().updateTabTitle(tabId, '   ');
+      expect(useAppStore.getState().tabs[tabId].title).toBe('Old');
+    });
+
+    it('存在しない tabId は no-op', () => {
+      expect(() =>
+        useAppStore.getState().updateTabTitle('non-existent', 'New'),
+      ).not.toThrow();
+    });
+  });
+
+  // --- duplicateTab ---
+  describe('duplicateTab', () => {
+    it('同一グループに新タブが追加される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Original' });
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      expect(newTabId).not.toBeNull();
+      const state = useAppStore.getState();
+      expect(state.tabs[newTabId!]).toBeDefined();
+      expect(state.groups[0].tabIds).toContain(newTabId);
+    });
+
+    it('title に " (copy)" が付与される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'Terminal' });
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      expect(useAppStore.getState().tabs[newTabId!].title).toBe('Terminal (copy)');
+    });
+
+    it('shell / cwd / env が引き継がれる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, {
+        title: 'T',
+        shell: 'nu',
+        cwd: '/home/user',
+        env: { FOO: 'bar' },
+      });
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      const newTab = useAppStore.getState().tabs[newTabId!];
+      expect(newTab.shell).toBe('nu');
+      expect(newTab.cwd).toBe('/home/user');
+      expect(newTab.env).toEqual({ FOO: 'bar' });
+    });
+
+    it('status は "spawning" になる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+      useAppStore.getState().setTabStatus(tabId, 'live', 'pty-1');
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      expect(useAppStore.getState().tabs[newTabId!].status).toBe('spawning');
+    });
+
+    it('元タブの直後に挿入される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tab1 = useAppStore.getState().createTab(groupId, { title: 'A' });
+      const tab2 = useAppStore.getState().createTab(groupId, { title: 'B' });
+      // tab1 の直後に複製を挿入 → [tab1, copy, tab2]
+      const copyId = useAppStore.getState().duplicateTab(tab1);
+      const tabIds = useAppStore.getState().groups[0].tabIds;
+      expect(tabIds[0]).toBe(tab1);
+      expect(tabIds[1]).toBe(copyId);
+      expect(tabIds[2]).toBe(tab2);
+    });
+
+    it('存在しない tabId は null を返す', () => {
+      const result = useAppStore.getState().duplicateTab('non-existent');
+      expect(result).toBeNull();
+    });
+  });
+
+  // --- setContextMenuOpen ---
+  describe('setContextMenuOpen', () => {
+    it('true / false を切り替えられる', () => {
+      expect(useAppStore.getState().contextMenuOpen).toBe(false);
+      useAppStore.getState().setContextMenuOpen(true);
+      expect(useAppStore.getState().contextMenuOpen).toBe(true);
+      useAppStore.getState().setContextMenuOpen(false);
+      expect(useAppStore.getState().contextMenuOpen).toBe(false);
+    });
+  });
+
   // --- setTabStatus ---
   describe('setTabStatus', () => {
     it('spawning → live に変更し ptyId を設定する', () => {
@@ -421,6 +530,7 @@ function makeState(
     favorites: [],
     activeTabId,
     editingId: null,
+    contextMenuOpen: false,
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000 },
   };
 }
@@ -572,6 +682,7 @@ describe('navigateToTab', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
+      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -623,6 +734,7 @@ describe('removeTab — fallback expand', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
+      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',

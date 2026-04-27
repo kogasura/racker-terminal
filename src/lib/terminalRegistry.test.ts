@@ -24,6 +24,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
     onDataSub: sub,
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
+    resetForRecycle: vi.fn(),
     dispose: () => {
       disposeCallCount++;
     },

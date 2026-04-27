@@ -18,13 +18,38 @@
   inset: 0;
   background: var(--crashed-overlay-bg);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   color: var(--status-crashed);
   font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
   font-size: 14px;
   z-index: 10;
+  /* restart ボタンはクリック可能にするため pointer-events: none を外す */
+  pointer-events: auto;
+}
+
+.terminal-crashed-overlay__message {
+  /* メッセージ自体はポインタ操作不要 */
   pointer-events: none;
+}
+
+.terminal-crashed-overlay__restart-btn {
+  background: none;
+  border: 1px solid var(--status-crashed);
+  border-radius: 4px;
+  color: var(--status-crashed);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  opacity: 0.8;
+}
+
+.terminal-crashed-overlay__restart-btn:hover {
+  opacity: 1;
+  background: rgba(247, 118, 142, 0.12);
 }
 
 .terminal-empty-placeholder {

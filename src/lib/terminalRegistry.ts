@@ -1,8 +1,67 @@
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
 import type { Settings } from '../types';
 import { spawnPty, writePty, resizePty } from './pty';
+
+interface WebglRendererHandle {
+  /** dispose() で WebGL addon と onContextLoss listener を解放 */
+  dispose: () => void;
+}
+
+/**
+ * xterm に WebGL renderer を attach する。
+ * - new WebglAddon() / term.loadAddon() で失敗した場合は Canvas fallback (warn ログ)
+ * - GPU context loss 時は WebglAddon を dispose して Canvas fallback (warn ログ + xterm 内通知)
+ * - onContextLoss の IDisposable を保持し、dispose 時に解除
+ *
+ * 注意: WebView2/Chromium の WebGL context 上限は 16 個 (デフォルト)。
+ *       17 個目以降を開くと一番古い context が強制 lose されるため、大量タブ運用時は
+ *       context loss が常態化する可能性がある (compatibility-matrix.md 既知リスク参照)。
+ *
+ * new WebglAddon() は preserveDrawingBuffer=false (デフォルト)。
+ * スクリーンショット機能を Phase 4 で追加する場合は要再検討。
+ */
+export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHandle {
+  let webglAddon: WebglAddon | null = null;
+  let ctxLossSub: { dispose(): void } | null = null;
+
+  try {
+    webglAddon = new WebglAddon();
+    // onContextLoss は IEvent<void> を返す。IDisposable を保持して dispose で解除
+    ctxLossSub = webglAddon.onContextLoss(() => {
+      console.warn(
+        `[terminalRegistry] WebGL context lost for tab ${tabId}, falling back to Canvas`,
+      );
+      // xterm 内に視覚通知
+      try {
+        term.write('\r\n\x1b[33m[Renderer fell back to Canvas]\x1b[0m\r\n');
+      } catch {}
+      webglAddon?.dispose();
+      // 注: webglAddon = null とすることで以降の dispose() 内 webglAddon?.dispose() を no-op 化
+      webglAddon = null;
+    });
+    term.loadAddon(webglAddon);
+  } catch (e) {
+    console.warn(
+      `[terminalRegistry] WebGL addon failed to load for tab ${tabId}, using Canvas:`,
+      e,
+    );
+    // 初期化失敗時のクリーンアップ
+    ctxLossSub?.dispose();
+    ctxLossSub = null;
+    webglAddon?.dispose();
+    webglAddon = null;
+  }
+
+  return {
+    dispose: () => {
+      ctxLossSub?.dispose();
+      webglAddon?.dispose();
+    },
+  };
+}
 
 /**
  * TerminalPane のライフサイクル全体を React 外で管理する runtime。
@@ -133,6 +192,13 @@ export function createRuntime(
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  // WebGL renderer 有効化 (Phase 3 Unit P-C1)
+  // setupWebglRenderer ヘルパーで WebGL を attach する。
+  // onContextLoss で Canvas renderer に自動フォールバックする堅牢性を確保する。
+  // dispose 順序: webglHandle.dispose() は fitAddon.dispose() の前に呼ぶ (§3.2 参照)。
+  const webglHandle = setupWebglRenderer(term, tabId);
+
   try {
     fitAddon.fit();
   } catch (e) {
@@ -254,6 +320,9 @@ export function createRuntime(
       titleSub.dispose();
       // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
       compositionAbort.abort();
+      // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)
+      // term.dispose() より先に WebGL context を解放することで WebView2 crash を防ぐ。
+      webglHandle.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();

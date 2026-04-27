@@ -105,6 +105,7 @@ dispose() {
   onDataSub.dispose();        // xterm の onData 購読停止
   titleSub.dispose();         // OSC タイトル購読停止 (Unit D+E)
   compositionAbort.abort();   // IME compositionstart/end リスナー解除 (P-D3)
+  webglAddon?.dispose();      // WebGL context 解放 (Phase 3 Unit P-C1)
   fitAddon.dispose();
   ptyHandle?.dispose();       // fire-and-forget (Promise は await しない)
   term.dispose();             // 必ず最後 (WebView2 クラッシュ防止)
@@ -112,6 +113,7 @@ dispose() {
 ```
 
 この順序を変えない。特に `term.dispose()` を先に呼ぶと WebView2 がクラッシュする場合がある（WebGL アドオン起因）。
+`webglAddon?.dispose()` は `fitAddon.dispose()` より前、`compositionAbort.abort()` より後に呼ぶ。
 
 ### 3.3 startSpawn の内部仕様
 

@@ -9,8 +9,35 @@ import {
   getRuntimeCount,
   getRefs,
   sanitizeOscTitle,
+  setupWebglRenderer,
   type TerminalRuntime,
 } from './terminalRegistry';
+
+// WebglAddon は jsdom 環境では WebGL が使用不可のため全てモック化する。
+// setupWebglRenderer ヘルパーの単体テストで実際の attach/dispose ロジックを検証する。
+vi.mock('@xterm/addon-webgl', () => {
+  return {
+    WebglAddon: class {
+      dispose: ReturnType<typeof vi.fn>;
+      onContextLoss: ReturnType<typeof vi.fn>;
+      private ctxLossCallback: (() => void) | null = null;
+
+      constructor() {
+        this.dispose = vi.fn();
+        const ctxLossDispose = vi.fn();
+        this.onContextLoss = vi.fn((cb: () => void) => {
+          this.ctxLossCallback = cb;
+          return { dispose: ctxLossDispose };
+        });
+      }
+
+      // テスト用ヘルパー (本物にはない)
+      __triggerContextLoss(): void {
+        this.ctxLossCallback?.();
+      }
+    },
+  };
+});
 
 /**
  * テスト用のモック TerminalRuntime を生成するヘルパー。
@@ -624,4 +651,76 @@ describe('IME compositionAbort (2.13)', () => {
     expect(received).toEqual(['漢字', 'b']);
     compositionAbort.abort();
   });
+});
+
+// --- setupWebglRenderer (Phase 3 Unit P-C1) ---
+
+/**
+ * setupWebglRenderer ヘルパーの単体テスト。
+ * WebglAddon は jsdom 環境では WebGL が利用できないためモック化して検証する。
+ * モックは vi.mock('@xterm/addon-webgl') でファイル先頭に定義済み。
+ *
+ * P-C1 ロジック（attach / onContextLoss / dispose 順序）を直接テストする。
+ */
+describe('setupWebglRenderer (P-C1)', () => {
+  it('正常系: term.loadAddon が呼ばれて WebglAddon が attach される', () => {
+    const loadAddon = vi.fn();
+    const term = { loadAddon, write: vi.fn() } as any;
+
+    const handle = setupWebglRenderer(term, 'tab-1');
+
+    expect(loadAddon).toHaveBeenCalledTimes(1);
+    expect(loadAddon.mock.calls[0][0]).toBeDefined();
+
+    handle.dispose();
+  });
+
+  it('dispose で WebglAddon と onContextLoss listener が解除される', () => {
+    const term = { loadAddon: vi.fn(), write: vi.fn() } as any;
+
+    const handle = setupWebglRenderer(term, 'tab-1');
+    const addon = (term.loadAddon as ReturnType<typeof vi.fn>).mock.calls[0][0] as any;
+
+    expect(addon.dispose).not.toHaveBeenCalled();
+
+    handle.dispose();
+
+    expect(addon.dispose).toHaveBeenCalledTimes(1);
+    // onContextLoss が返した IDisposable.dispose も呼ばれている
+    const ctxLossDispose = addon.onContextLoss.mock.results[0].value.dispose;
+    expect(ctxLossDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('onContextLoss 発火 → addon.dispose() が呼ばれて null 化、term.write で通知', () => {
+    const term = { loadAddon: vi.fn(), write: vi.fn() } as any;
+
+    const handle = setupWebglRenderer(term, 'tab-1');
+    const addon = (term.loadAddon as ReturnType<typeof vi.fn>).mock.calls[0][0] as any;
+
+    // context loss を発火
+    addon.__triggerContextLoss();
+
+    expect(addon.dispose).toHaveBeenCalledTimes(1);
+    expect(term.write).toHaveBeenCalled();
+
+    // handle.dispose() を呼んでも addon.dispose() が 2 回目に呼ばれないこと
+    // (webglAddon = null 化により no-op になる)
+    handle.dispose();
+    expect(addon.dispose).toHaveBeenCalledTimes(1); // 増えない
+  });
+
+  it('term.loadAddon が throw した場合、例外を投げずに Canvas fallback になる', () => {
+    const loadAddon = vi.fn(() => { throw new Error('loadAddon failed'); });
+    const term = { loadAddon, write: vi.fn() } as any;
+
+    // 例外を投げず handle が返る
+    expect(() => setupWebglRenderer(term, 'tab-2')).not.toThrow();
+
+    // dispose() も例外を投げない
+    const handle = setupWebglRenderer(term, 'tab-3');
+    expect(() => handle.dispose()).not.toThrow();
+  });
+
+  // new WebglAddon() 自体が throw するケースは vi.mock 差し替えが複雑なためスキップ。
+  // loadAddon throw テスト (上記) でエラー吸収パスは十分にカバーされている。
 });

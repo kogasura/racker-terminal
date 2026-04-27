@@ -98,8 +98,8 @@ mount-2 で再び呼ばれても no-op になる。
 ### 3.2 dispose 順序の参照
 
 各 runtime の `dispose()` は `docs/unit-a2-design.md §3.2` で定義した順序を厳守する。
-P-D3 で `titleSub.dispose()` と `compositionAbort.abort()` が追加されたため、Unit H の StrictMode 検証でも
-この順序（isDisposed → setOnEvent(null) → onDataSub → titleSub → compositionAbort → fitAddon → ptyHandle → term）が
+P-D3 で `titleSub.dispose()` と `compositionAbort.abort()` が追加、Phase 3 Unit P-C1 で `webglAddon?.dispose()` が追加されたため、
+Unit H の StrictMode 検証でもこの順序（isDisposed → setOnEvent(null) → onDataSub → titleSub → compositionAbort → webglAddon → fitAddon → ptyHandle → term）が
 維持されていることを `VH02` シナリオで確認すること。
 
 ### 3.3 各 useEffect の StrictMode 耐性

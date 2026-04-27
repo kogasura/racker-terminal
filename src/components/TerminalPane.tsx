@@ -135,6 +135,24 @@ export const TerminalPane = memo(function TerminalPane({
     runtime.term.options.disableStdin = (tab.status === 'crashed');
   }, [tab.status]);
 
+  // (2.11) spawning タイムアウト監視:
+  // 10 秒経っても live にならない場合は crashed 扱いにする。
+  // EDR (企業環境) で OS が hang した場合等にユーザーが無限待機するのを防ぐ。
+  // リスク: EDR 環境で誤検知する場合は 30 秒に延長、または Settings 化を検討すること。
+  useEffect(() => {
+    if (tab.status !== 'spawning') return;
+
+    const timeoutId = setTimeout(() => {
+      // 10 秒経過時点でまだ spawning のままなら crashed 扱いにする
+      if (useAppStore.getState().tabs[tabId]?.status === 'spawning') {
+        spawnErrorRef.current = '[Spawn timed out (10s)]';
+        setTabStatus(tabId, 'crashed');
+      }
+    }, 10000);
+
+    return () => clearTimeout(timeoutId);
+  }, [tab.status, tabId, setTabStatus]);
+
   // ResizeObserver は isActive 変化のたびに付け直す（設計書 §4.4）
   // observe() 直後の初回コールバックは仕様上即時発火するため、1 回だけスキップする。
   // isActive=true 時の fit+resize は rAF effect が担うため、二重実行を防ぐ。

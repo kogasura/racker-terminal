@@ -211,22 +211,22 @@ impl Drop for PtySession {
         // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
         drop(self.master.lock().take());
 
-        // reader / flush / watch thread を join する。ただしアプリ終了をブロックしないよう
-        // バックグラウンドスレッドに投げる
+        // (2.10) detached thread リーク対策:
+        // 従来は `std::thread::spawn(move || h.join())` のように background thread に投げていたが、
+        // その background thread 自体が join されないため 1000 タブ open/close で 3000 スレッドが
+        // 積み上がるリークが発生していた。
+        // reader/flush/watch は stop_flag=true + master drop (EOF) の後、数 ms 以内に抜ける設計
+        // なので、Drop で直接 join() を呼んで tatched に統一する。
+        // 万一 reader が blocking read で止まっても、master drop により EOF が返る経路で解放される
+        // (Unit D+E の child watcher fix で確認済み)。
         if let Some(h) = self.reader_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
         if let Some(h) = self.flush_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
         if let Some(h) = self.watch_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
     }
 }

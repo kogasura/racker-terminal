@@ -55,12 +55,18 @@ Phase 3 ではユーザーが日常的にツールとして使い始められる
 - 現状: 4MB 超で前半 50% drain
 - 改善: tiny read しきい値・back-pressure しきい値を Settings 化
 
-### 2.10 Drop の detached thread リーク
+### 2.10 Drop の detached thread リーク **[実装完了 — Unit P-D1]**
 - `pty.rs` の `Drop` で `std::thread::spawn(move || h.join())` が join されない
 - reaper thread でまとめる、または `h.join()` 直接呼び (Drop 短時間ブロック許容)
+- **対策 (案 B 採用)**: Drop で直接 `h.join()` を呼ぶ。reader/flush/watch はいずれも
+  stop_flag=true + master drop (EOF) 後、数 ms 以内に抜けるため短時間ブロック許容。
+  detached spawn を撤廃し tatched に統一することでリークを撲滅。
 
-### 2.11 spawning タイムアウト UX
+### 2.11 spawning タイムアウト UX **[実装完了 — Unit P-D1]**
 - 10 秒経っても live にならなかったら crashed 扱い (企業 EDR 環境対応)
+- **実装**: `TerminalPane.tsx` に `useEffect([tab.status, tabId])` を追加し 10 秒タイムアウトを監視。
+  status が live or crashed に変わると clearTimeout でキャンセル。
+- **リスク**: EDR 環境で誤検知する場合は 30 秒に延長、または Settings 化を検討すること。
 
 ### 2.12 異常終了の網羅検証
 - `Ctrl-D` / `[Environment]::Exit` / `taskkill /F` / ssh 切断

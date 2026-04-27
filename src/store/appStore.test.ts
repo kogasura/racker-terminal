@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useAppStore, selectFallbackTab } from './appStore';
+import { useAppStore, selectFallbackTab, selectNextTabId, selectPrevTabId } from './appStore';
+import type { AppState } from '../types';
 import * as terminalRegistry from '../lib/terminalRegistry';
 
 // forceDisposeRuntime を no-op にしてテストから Tauri IPC を切り離す
@@ -251,5 +252,126 @@ describe('selectFallbackTab', () => {
       { id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] },
     ];
     expect(selectFallbackTab('non-existent', groups)).toBeNull();
+  });
+});
+
+// --- selectNextTabId / selectPrevTabId ---
+
+/** テスト用に AppState の最小形を組み立てるヘルパー */
+function makeState(
+  groups: { id: string; tabIds: string[] }[],
+  activeTabId: string | null,
+): AppState {
+  return {
+    groups: groups.map((g) => ({ ...g, title: g.id, collapsed: false })),
+    tabs: {},
+    favorites: [],
+    activeTabId,
+    editingId: null,
+    settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000 },
+  };
+}
+
+describe('selectNextTabId', () => {
+  it('単一グループ・複数タブ: 順送りする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2', 't3'] }], 't1');
+    expect(selectNextTabId(state)).toBe('t2');
+  });
+
+  it('単一グループ・複数タブ: 末尾→先頭でラップする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2', 't3'] }], 't3');
+    expect(selectNextTabId(state)).toBe('t1');
+  });
+
+  it('複数グループ・グループ境界をまたいで次のタブへ遷移する', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1', 't2'] }, { id: 'g2', tabIds: ['t3', 't4'] }],
+      't2',
+    );
+    expect(selectNextTabId(state)).toBe('t3');
+  });
+
+  it('複数グループ・最後のタブから先頭へラップする', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1', 't2'] }, { id: 'g2', tabIds: ['t3', 't4'] }],
+      't4',
+    );
+    expect(selectNextTabId(state)).toBe('t1');
+  });
+
+  it('空グループを途中に含む: 空グループはスキップして次グループへ遷移する', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1'] }, { id: 'g2', tabIds: [] }, { id: 'g3', tabIds: ['t2'] }],
+      't1',
+    );
+    // g2 は空なので g3 の t2 へ
+    expect(selectNextTabId(state)).toBe('t2');
+  });
+
+  it('activeTabId === null: null を返す', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2'] }], null);
+    expect(selectNextTabId(state)).toBeNull();
+  });
+
+  it('activeTabId が全タブに見つからない（不正値）: null を返す', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2'] }], 'not-exist');
+    expect(selectNextTabId(state)).toBeNull();
+  });
+
+  it('タブが 1 個だけ: 自分自身へラップする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1'] }], 't1');
+    expect(selectNextTabId(state)).toBe('t1');
+  });
+});
+
+describe('selectPrevTabId', () => {
+  it('単一グループ・複数タブ: 逆順送りする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2', 't3'] }], 't3');
+    expect(selectPrevTabId(state)).toBe('t2');
+  });
+
+  it('単一グループ・複数タブ: 先頭→末尾でラップする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2', 't3'] }], 't1');
+    expect(selectPrevTabId(state)).toBe('t3');
+  });
+
+  it('複数グループ・グループ境界をまたいで前のタブへ遷移する', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1', 't2'] }, { id: 'g2', tabIds: ['t3', 't4'] }],
+      't3',
+    );
+    expect(selectPrevTabId(state)).toBe('t2');
+  });
+
+  it('複数グループ・先頭タブから末尾へラップする', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1', 't2'] }, { id: 'g2', tabIds: ['t3', 't4'] }],
+      't1',
+    );
+    expect(selectPrevTabId(state)).toBe('t4');
+  });
+
+  it('空グループを途中に含む: 空グループはスキップして前グループへ遷移する', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1'] }, { id: 'g2', tabIds: [] }, { id: 'g3', tabIds: ['t2'] }],
+      't2',
+    );
+    // g2 は空なので g1 の t1 へ
+    expect(selectPrevTabId(state)).toBe('t1');
+  });
+
+  it('activeTabId === null: null を返す', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2'] }], null);
+    expect(selectPrevTabId(state)).toBeNull();
+  });
+
+  it('activeTabId が全タブに見つからない（不正値）: null を返す', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1', 't2'] }], 'not-exist');
+    expect(selectPrevTabId(state)).toBeNull();
+  });
+
+  it('タブが 1 個だけ: 自分自身へラップする', () => {
+    const state = makeState([{ id: 'g1', tabIds: ['t1'] }], 't1');
+    expect(selectPrevTabId(state)).toBe('t1');
   });
 });

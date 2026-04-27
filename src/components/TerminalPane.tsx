@@ -4,7 +4,7 @@ if (import.meta.hot) { import.meta.hot.invalidate(); }
 
 import React, { memo, useEffect, useRef } from 'react';
 import type { Tab } from '../types';
-import { useAppStore } from '../store/appStore';
+import { useAppStore, selectNextTabId, selectPrevTabId } from '../store/appStore';
 import {
   acquireRuntime,
   releaseRuntime,
@@ -139,6 +139,43 @@ export const TerminalPane = memo(function TerminalPane({
     observer.observe(divRef.current);
     return () => observer.disconnect();
   }, [isActive]);
+
+  // キーボードショートカット [tabId]: xterm がフォーカスを持つときのみ動作する
+  // attachCustomKeyEventHandler の戻り値: false → xterm が通常処理しない、true → 通常処理継続
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+
+    const handler = (e: KeyboardEvent): boolean => {
+      if (e.type !== 'keydown') return true;
+      if (!e.ctrlKey) return true;
+
+      // Ctrl+Shift+W: アクティブタブを閉じる
+      if (e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+        e.preventDefault();
+        const aid = useAppStore.getState().activeTabId;
+        if (aid) useAppStore.getState().removeTab(aid);
+        return false;
+      }
+
+      // Ctrl+Tab / Ctrl+Shift+Tab: 次/前のタブへ移動
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const state = useAppStore.getState();
+        const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);
+        if (next) state.setActiveTab(next);
+        return false;
+      }
+
+      return true;
+    };
+
+    runtime.term.attachCustomKeyEventHandler(handler);
+    return () => {
+      // xterm はハンドラ解除 API がないため、no-op ハンドラで上書きする
+      runtime.term.attachCustomKeyEventHandler(() => true);
+    };
+  }, [tabId]);
 
   const isCrashed = tab.status === 'crashed';
 

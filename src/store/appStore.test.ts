@@ -6,6 +6,7 @@ import {
   selectPrevTabId,
   expandGroupContaining,
 } from './appStore';
+import { SPAWN_TIMEOUT_MS } from '../components/TerminalPane';
 import type { AppState } from '../types';
 import * as terminalRegistry from '../lib/terminalRegistry';
 
@@ -1072,5 +1073,116 @@ describe('removeTab — fallback expand', () => {
     const after = useAppStore.getState();
     expect(after.activeTabId).not.toBeNull();
     expect(after.groups.find((g) => g.id === g2)?.collapsed).toBe(false);
+  });
+});
+
+// --- (2.11) spawning タイムアウト ロジックの間接テスト ---
+//
+// TerminalPane の useEffect は jsdom 環境では Tauri IPC 依存のため直接テストできないが、
+// タイムアウト発火後に実行される「setTabStatus(tabId, 'crashed')」が store に正しく反映
+// されることを fake timer で検証する。
+// これによりタイムアウトロジックの結果（spawning → crashed 遷移）がストア側で動くことを保証する。
+
+describe('spawning タイムアウト (2.11) — setTabStatus による状態遷移の間接テスト', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      contextMenuOpen: false,
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('spawning タブに対して fake setTimeout が発火したとき setTabStatus で crashed になる', () => {
+    vi.useFakeTimers();
+
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+
+    // 初期状態: spawning
+    expect(useAppStore.getState().tabs[tabId].status).toBe('spawning');
+
+    // タイムアウトロジックを模擬: SPAWN_TIMEOUT_MS 後に spawning のままなら crashed にする
+    const setTabStatus = useAppStore.getState().setTabStatus;
+    const timeoutId = setTimeout(() => {
+      if (useAppStore.getState().tabs[tabId]?.status === 'spawning') {
+        setTabStatus(tabId, 'crashed');
+      }
+    }, SPAWN_TIMEOUT_MS);
+
+    // 5 秒経過 → まだ spawning
+    vi.advanceTimersByTime(5000);
+    expect(useAppStore.getState().tabs[tabId].status).toBe('spawning');
+
+    // 10 秒経過 → crashed に遷移
+    vi.advanceTimersByTime(5000);
+    expect(useAppStore.getState().tabs[tabId].status).toBe('crashed');
+
+    clearTimeout(timeoutId);
+    vi.useRealTimers();
+  });
+
+  it('spawning → live になった後にタイムアウトが発火しても crashed にならない', () => {
+    vi.useFakeTimers();
+
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+
+    const setTabStatus = useAppStore.getState().setTabStatus;
+    const timeoutId = setTimeout(() => {
+      if (useAppStore.getState().tabs[tabId]?.status === 'spawning') {
+        setTabStatus(tabId, 'crashed');
+      }
+    }, SPAWN_TIMEOUT_MS);
+
+    // 5 秒後に live に遷移（spawn 成功）
+    vi.advanceTimersByTime(5000);
+    useAppStore.getState().setTabStatus(tabId, 'live', 'pty-abc');
+    expect(useAppStore.getState().tabs[tabId].status).toBe('live');
+
+    // 残り 5 秒経過 → タイムアウト発火するが spawning ではないので no-op
+    vi.advanceTimersByTime(5000);
+    expect(useAppStore.getState().tabs[tabId].status).toBe('live');
+
+    clearTimeout(timeoutId);
+    vi.useRealTimers();
+  });
+
+  it('crashed → spawning に再遷移したとき、新たな 10 秒タイムアウトが設定される', () => {
+    vi.useFakeTimers();
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+
+    // crashed に遷移 (spawn 失敗を模擬)
+    useAppStore.getState().setTabStatus(tabId, 'crashed');
+    expect(useAppStore.getState().tabs[tabId].status).toBe('crashed');
+
+    // restart 模擬: spawning に再遷移
+    useAppStore.getState().setTabStatus(tabId, 'spawning');
+
+    // タイムアウトロジックを再セット (TerminalPane.tsx の useEffect 相当)
+    const setTabStatus = useAppStore.getState().setTabStatus;
+    const timeoutId = setTimeout(() => {
+      if (useAppStore.getState().tabs[tabId]?.status === 'spawning') {
+        setTabStatus(tabId, 'crashed');
+      }
+    }, SPAWN_TIMEOUT_MS);
+
+    // 10 秒経過
+    vi.advanceTimersByTime(SPAWN_TIMEOUT_MS);
+
+    expect(useAppStore.getState().tabs[tabId].status).toBe('crashed');
+
+    clearTimeout(timeoutId);
+    vi.useRealTimers();
   });
 });

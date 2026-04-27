@@ -13,6 +13,10 @@ import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import '../styles/terminal.css';
 
+// (2.11) spawning タイムアウト定数
+export const SPAWN_TIMEOUT_MS = 10_000;
+export const SPAWN_TIMEOUT_LABEL = `${SPAWN_TIMEOUT_MS / 1000}s`;
+
 // HMR フック: HMR 更新前に全 runtime を強制破棄して xterm/PTY のリークを防ぐ。
 // dispose で PTY を Rust 側に確実に解放 → invalidate で full reload に倒し、
 // xterm/React Hook の HMR 互換性問題を回避する設計。
@@ -134,6 +138,26 @@ export const TerminalPane = memo(function TerminalPane({
     if (!runtime) return;
     runtime.term.options.disableStdin = (tab.status === 'crashed');
   }, [tab.status]);
+
+  // (2.11) spawning タイムアウト監視:
+  // SPAWN_TIMEOUT_MS 秒経っても live にならない場合は crashed 扱いにする。
+  // EDR (企業環境) で OS が hang した場合等にユーザーが無限待機するのを防ぐ。
+  // リスク: EDR 環境で誤検知する場合は 30 秒に延長、または Settings 化を検討すること。
+  useEffect(() => {
+    if (tab.status !== 'spawning') return;
+
+    const timeoutId = setTimeout(() => {
+      // タイムアウト経過時点でまだ spawning のままなら crashed 扱いにする
+      if (useAppStore.getState().tabs[tabId]?.status === 'spawning') {
+        spawnErrorRef.current = `[Spawn timed out (${SPAWN_TIMEOUT_LABEL})]`;
+        setTabStatus(tabId, 'crashed');
+      }
+    }, SPAWN_TIMEOUT_MS);
+
+    return () => clearTimeout(timeoutId);
+    // setTabStatus は zustand action なので参照不変 (deps に入れても再実行されない)。
+    // react-hooks/exhaustive-deps 整合性のため明示的に含めている。
+  }, [tab.status, tabId, setTabStatus]);
 
   // ResizeObserver は isActive 変化のたびに付け直す（設計書 §4.4）
   // observe() 直後の初回コールバックは仕様上即時発火するため、1 回だけスキップする。

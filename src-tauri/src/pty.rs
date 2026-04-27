@@ -177,6 +177,10 @@ impl PtySession {
         Ok(())
     }
 
+    /// セッションを終了する。
+    /// 注: PtyManager::kill 経由では sessions.remove で Arc を取得 → kill() 呼び出し →
+    ///     スコープ抜けで Arc drop → Drop が再度走る。kill() で child を take 済みのため
+    ///     Drop 内の child kill+wait はスキップされる (idempotent)。
     pub fn kill(&self) {
         self.stop_flag.store(true, Ordering::Relaxed);
 
@@ -193,6 +197,18 @@ impl PtySession {
 }
 
 impl Drop for PtySession {
+    // Drop の所要時間について:
+    // - reader/flush/watch スレッド単体は数 ms で抜ける (master drop で EOF / stop_flag check)
+    // - ただし Drop 全体は child.wait() の所要時間に支配される (Windows ConPTY 配下で
+    //   子プロセスがハング状態の場合、kill 後でも数百 ms〜数秒返らないことがある)
+    // - watch スレッドの 100ms ポーリング sleep が乗っている場合、stop_flag セット後の
+    //   join で最大 100ms 待たされる
+    //
+    // race 条件:
+    // - watch スレッドが child.lock() を保持して try_wait を呼ぶ間、Drop の child.kill+wait は
+    //   競合する。watch は try_wait 後すぐ lock を手放すため、Drop は概ね watch loop の
+    //   次イテレーション (or break) を待ってから kill+wait に入る。実害はない (watch は
+    //   child=None を観測して break する経路がある)。
     fn drop(&mut self) {
         // stop_flag をセット
         self.stop_flag.store(true, Ordering::Relaxed);
@@ -211,22 +227,22 @@ impl Drop for PtySession {
         // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
         drop(self.master.lock().take());
 
-        // reader / flush / watch thread を join する。ただしアプリ終了をブロックしないよう
-        // バックグラウンドスレッドに投げる
+        // (2.10) detached thread リーク対策:
+        // 従来は `std::thread::spawn(move || h.join())` のように background thread に投げていたが、
+        // その background thread 自体が join されないため 1000 タブ open/close で 3000 スレッドが
+        // 積み上がるリークが発生していた。
+        // reader/flush/watch は stop_flag=true + master drop (EOF) の後、数 ms 以内に抜ける設計
+        // なので、Drop で直接 join() を呼んで attached に統一する。
+        // 万一 reader が blocking read で止まっても、master drop により EOF が返る経路で解放される
+        // (Unit D+E の child watcher fix で確認済み)。
         if let Some(h) = self.reader_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
         if let Some(h) = self.flush_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
         if let Some(h) = self.watch_handle.lock().take() {
-            std::thread::spawn(move || {
-                let _ = h.join();
-            });
+            let _ = h.join();
         }
     }
 }

@@ -1,14 +1,19 @@
-# Racker Terminal — Phase 3 実装計画 (スケルトン)
+# Racker Terminal — Phase 3 実装計画
 
-> Phase 2 完成 (2026-04-27) 後に作成。Phase 3 のスコープを精査するためのドラフト。
-> 確定スコープ・実装順序は後段の議論で決定する。
+> **Phase 3 (絞り込みスコープ) 完成 (2026-04-27)**: パフォーマンス + 安定性の **6 項目 (2.3, 2.10〜2.14)** を実装完了。
+> WebView2 native crash は **再現せず** WebGL renderer が安全に復活。
+> 残 15 項目は **Phase 4 送り** または **永久送り** に分類 (§7 参照)。
+>
+> 実装 PR: #16 (P-D1) / #17 (P-D3) / #18 (P-C1) / #19 (P-D2)
+> Frontend 142 tests pass / Rust 10 tests pass
 
 ---
 
 ## 1. Context
 
-Phase 2 で「複数 PTY セッションを単一ウィンドウで管理する UI 本命機能」が完成した。
-Phase 3 ではユーザーが日常的にツールとして使い始められる **永続化・カスタマイズ・配布** に重心を移す。
+Phase 2 で「複数 PTY セッションを単一ウィンドウで管理する UI 本命機能」が完成。
+Phase 3 はユーザー指示により **パフォーマンス (C) + 安定性 (D) のみ** に絞り込んで実装した。
+それ以外 (永続化・配布・Settings UI 等) は Phase 4 / 永久送り。
 
 ---
 
@@ -116,91 +121,71 @@ Phase 3 ではユーザーが日常的にツールとして使い始められる
 
 ---
 
-## 3. テーマ別グループ化 (案)
+## 3. Phase 3 で実装した Unit (確定)
 
-Phase 3 を進める単位として、テーマでまとめる案:
-
-### A. 永続化 (Persistence)
-- 2.1 `zustand/persist` 導入
-- 2.2 Tab.title 分離 (永続化と密接)
-- 2.20 scrollback 復元不可の明示
-
-### B. UI 完成度向上 (Polish)
-- 2.4 グループ D&D
-- 2.5 Favorites D&D
-- 2.6 Settings UI
-- 2.7 新規グループ drop
-- 2.8 auto-expand drop
-
-### C. パフォーマンス
-- 2.3 WebGL renderer 復活
-- 2.9 back-pressure 改善
-
-### D. 安定性 (Robustness)
-- 2.10 detached thread リーク
-- 2.11 spawning タイムアウト
-- 2.12 異常終了検証
-- 2.13 IME 改善
-- 2.14 国際化キーボード
-
-### E. 配布 (Distribution)
-- 2.17 インストーラー
-- 2.18 frameless window
-- 2.19 フォント埋め込み
-- 2.15 更新ポリシー
-
-### F. テスト・品質
-- 2.16 UI レンダリングテスト
-- 2.21 Sleep / Wake (要検討)
-
----
-
-## 4. 優先度議論ポイント
-
-ユーザーと議論して決める:
-
-### 4.1 必須 vs 任意
-- ユーザーが「日常使い」できる状態にするには **永続化** が必須? 
-- 配布 (2.17) はマイルストーン v1.0 のために必須?
-
-### 4.2 順序
-- 永続化 (A) → UI 完成度 (B) → 配布 (E) の順序で進めるのが自然
-- パフォーマンス (C) と安定性 (D) は永続化と並行可能
-
-### 4.3 スコープ縮小
-- Phase 3 で全部やると重い → v0.2 / v0.3 に分割する案
-- 最低限「永続化 + 配布」で v1.0 とする案も
-
-### 4.4 後送り候補
-- Sleep / Wake (2.21): 価値 vs 痛みのバランス
-- 国際化 (2.13/2.14): ユーザー本人が必要としているか
-
----
-
-## 5. 実装単位の予想 (確定後に詳細化)
-
-仮の Unit 分割 (要議論):
-
-| Unit | テーマ | 主な内容 |
+| Unit | PR | 主な内容 |
 |---|---|---|
-| P-A1 | persist 導入 | zustand/persist + partialize |
-| P-A2 | title 構造分離 | userTitle / oscTitle 分離 |
-| P-B1 | グループ D&D | 既存 dnd-kit 拡張 |
-| P-B2 | Favorites D&D | moveFavorite + Sortable |
-| P-B3 | Settings UI | フォント・scrollback・theme 変更 UI |
-| P-C1 | WebGL renderer | addon-webgl 復活 + 検証 **[実装完了]** |
-| P-D1 | 安定性まとめ | thread leak / timeout / 異常終了 |
-| P-E1 | 配布 | Tauri build + インストーラー |
-| P-F1 | UI テスト | testing-library + Playwright |
+| **P-D1** | #16 | detached thread リーク対策 (2.10) + spawning タイムアウト (2.11) |
+| **P-D3** | #17 | IME 改善 (2.13) + e.code ベースキーバインド (2.14) |
+| **P-C1** | #18 | WebGL renderer 復活 + onContextLoss + Canvas fallback (2.3) |
+| **P-D2** | #19 | 異常終了の網羅検証 (2.12) — ドキュメント中心 |
+
+**WebView2 native crash は再現せず**: Phase 1 で WebGL を無効化していた WebView2 native crash 問題は、最新の WebView2 / xterm.js v6 / addon-webgl 0.19 の組み合わせで **解消されたことを確認** (2026-04-27 起動検証)。
 
 ---
+
+## 4. Phase 4 / 永久送り項目
+
+Phase 3 で対象外とした 15 項目を分類。Phase 4 開始時に再度精査する。
+
+### A. 永続化 (Phase 4 最有力候補)
+- **2.1 `zustand/persist` 導入** — 起動時にタブ・グループ・お気に入り復元
+- **2.2 Tab.title の構造分離** (userTitle / oscTitle) — 永続化と密接
+- **2.20 scrollback 復元不可の明示** — ユーザー期待管理
+
+### B. UI 完成度向上 (Phase 4)
+- **2.4 グループ自体の D&D 並び替え** — store の moveGroup は実装済、UI 追加のみ
+- **2.5 Favorites の D&D 並び替え** — moveFavorite + Sortable 統合
+- **2.6 Settings UI** — フォント・scrollback・theme 変更 GUI
+- **2.7 タブを新規グループとしてドロップ** — D&D で新規グループ作成
+- **2.8 折りたたみグループへの auto-expand drop** — 600ms ホバーで自動展開
+
+### C. パフォーマンス改善 (Phase 4 / 永久送り)
+- **2.9 raw_buf back-pressure しきい値の Settings 化** — Settings UI 完成後に同時実装
+
+### D. 配布 (Phase 4)
+- **2.15 Tauri / WebView2 / xterm.js 更新ポリシー** — Cargo.lock 固定 + CONTRIBUTING
+- **2.17 配布・インストーラー** — Tauri ビルド (msi/exe) + 署名
+- **2.18 背景透過・frameless window** — Tokyo Night との組み合わせで見た目改善
+- **2.19 フォント埋め込み** — MonaspiceNe NF を @font-face でバンドル
+
+### E. テスト・品質 (Phase 4)
+- **2.16 UI コンポーネントテスト** — `@testing-library/react` 導入
+
+### F. 機能拡張 (永久送り候補)
+- **2.21 Sleep / Wake** — 大量タブ運用時のメモリ削減。scrollback 失う UX 痛みのため要検討
+
+---
+
+## 5. Phase 3 完成チェックリスト
+
+- [x] PR #16 (P-D1) マージ済み
+- [x] PR #17 (P-D3) マージ済み
+- [x] PR #18 (P-C1) マージ済み
+- [x] PR #19 (P-D2) マージ済み
+- [x] テスト件数: Frontend 142 / Rust 10 (Phase 2 比 +11)
+- [x] WebGL native crash 再発なし (実機検証 2026-04-27)
+- [x] StrictMode + HMR 復活状態維持
+- [x] 設計書 (`unit-pd2-design.md` 新規 + 既存 5 つ更新)
+- [x] `compatibility-matrix.md` に WebGL リスク追記
 
 ## 6. 次のアクション
 
-このドラフトをもとに以下を議論:
+Phase 4 着手時:
 
-1. **Phase 3 のスコープ確定**: 何を含めて何を v0.3 / v1.0 送りにするか
-2. **優先度合意**: 永続化を先にするか、UI 完成度を先にするか
-3. **マイルストーン定義**: v0.2 / v0.3 / v1.0 の到達条件
-
-決定次第、各 Unit の詳細設計 (`docs/unit-p-*-design.md`) を作成して実装に進む。
+1. **スコープ精査**: §4 の 15 項目から Phase 4 で扱う範囲を確定
+2. **マイルストーン定義**: v0.2 / v0.3 / v1.0 の到達条件
+3. **優先度議論**:
+   - 「日常使い」のために **永続化** (2.1, 2.2, 2.20) が最有力
+   - 「自分の PC で常用」のために **配布** (2.17, 2.15) を組み合わせると v1.0 になる
+4. 議論決定後、`docs/phase4-plan.md` を新規作成し各 Unit の詳細設計に進む。

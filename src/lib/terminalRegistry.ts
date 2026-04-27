@@ -350,6 +350,10 @@ export function getRefs(tabId: string): number {
  * HMR の import.meta.hot.dispose hook で呼ぶことで、HMR 更新時に
  * xterm/PTY がリークするのを防ぐ。
  * dispose() の呼び出し順序は §3.2 の規約通り。
+ *
+ * 注: Map をコピーしてから dispose() ループに入る理由:
+ * - 現状 dispose() は Map を変更しないが、Phase 3 で永続化等の副作用が
+ *   入った場合にループ中の Map 変化を防ぐ防御的設計。
  */
 export function forceDisposeAll(): void {
   // Map をコピーしてから dispose（dispose 中に Map が変化しないように）

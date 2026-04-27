@@ -244,6 +244,10 @@ expect(init).toHaveBeenCalledOnce();
 - Unit C alpha レビュー #1 で StrictMode 復活時に問題化する懸念あり
 - VH02 で繰り返し検証。問題があれば順序を変更
 
+### 6.6 import.meta.hot.dispose の適用範囲
+
+**TerminalPane.tsx 自身の HMR update 時のみ dispose が走る**。親モジュール経由の Fast Refresh では走らないため、`terminalRegistry.ts` 自体が更新される場合は別途対応が必要 (Phase 3 で persist 導入時に再検討)。
+
 ---
 
 ## 7. 後続フェーズ（Phase 3）送り項目
@@ -256,3 +260,10 @@ expect(init).toHaveBeenCalledOnce();
 | Tab.title の userTitle/oscTitle 分離 | 動的書き換えと persist の競合をフリッカーなしで解決する設計が必要 |
 | `compatibility-matrix.md` 作成 | Phase 2 完成後のアーキテクト推奨事項 |
 | Phase 3 設計書スケルトン | 永続化・WebGL・title 分離・グループ D&D を含む次フェーズの設計 |
+
+### 7.1 Phase 3 引き継ぎ詳細
+
+- **persist 導入時の forceDisposeAll との関係**: セッション復元時は保存済みタブ情報から新規 PTY を spawn し直す (runtimeId 再生成)。forceDisposeAll が Map を完全にクリアする設計は persist と整合するが、復元フローは別途設計が必要。
+- **WebGL renderer 復活時の StrictMode 影響**: createRuntime 内で 1 回だけ loadAddon する。acquireRuntime の refcount が既存 entry を返すため、StrictMode の二重 mount で loadAddon が重複呼び出しされることはない。
+- **title 分離 + OSC 競合**: callbacks.isEditing のスコープを userTitle フィールドに拡張し、oscTitle と userTitle を独立したフィールドとして管理する設計を検討する。
+- **`import.meta.hot.dispose` の async 化**: 現状は fire-and-forget (void ptyHandle?.dispose()) だが、PTY 解放を確実に待つ場合は `await Promise.all(runtimes.map(e => e.runtime.dispose()))` で対応する (dispose の戻り値を Promise に変更する必要あり)。

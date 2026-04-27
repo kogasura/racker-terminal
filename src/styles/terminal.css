@@ -1,0 +1,39 @@
+.terminal-pane {
+  position: absolute;
+  inset: 0;
+}
+
+.terminal-pane--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.terminal-pane--visible {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.terminal-crashed-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--crashed-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--status-crashed);
+  font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
+  font-size: 14px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.terminal-empty-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--sidebar-fg);
+  opacity: 0.5;
+  font-size: 14px;
+  font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
+}

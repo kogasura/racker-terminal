@@ -18,11 +18,9 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
-    // Phase 1 では HMR を無効化。
-    // xterm.js + PTY の複雑なライフサイクルを HMR で壊さないため、
-    // コード変更時は手動で tauri dev を再起動する。
-    // Phase 2 以降で複数タブ設計時に、HMR 耐性のあるマウント戦略を再設計する。
-    hmr: false,
+    // Phase 2 Unit H で HMR を復活。
+    // TerminalPane.tsx は import.meta.hot.dispose で forceDisposeAll を呼び xterm/PTY を
+    // 強制クリーンアップした後、invalidate() で full reload に倒す設計。
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],

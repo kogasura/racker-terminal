@@ -3,6 +3,7 @@ import {
   acquireRuntime,
   releaseRuntime,
   forceDisposeRuntime,
+  forceDisposeAll,
   recyclePty,
   getAllRuntimes,
   getRuntimeCount,
@@ -367,6 +368,73 @@ describe('sanitizeOscTitle', () => {
     const input = '\x07'.repeat(10) + 'a'.repeat(260);
     const result = sanitizeOscTitle(input);
     expect(result).toBe('a'.repeat(256));
+  });
+});
+
+// --- memory leak テスト ---
+
+describe('memory leak', () => {
+  it('forceDisposeAll で全 runtime が即時破棄される', () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const id = `ml-force-all-${i}`;
+      ids.push(id);
+      acquireRuntime(id, () => makeRuntime());
+    }
+    expect(getRuntimeCount()).toBeGreaterThanOrEqual(10);
+
+    forceDisposeAll();
+
+    // 登録した 10 個が全て消えていること（他テストの残留分は考慮しない）
+    for (const id of ids) {
+      expect(getRefs(id)).toBe(0);
+    }
+  });
+
+  it('100 タブ open/close で runtime がリークしない', () => {
+    const before = getRuntimeCount();
+    const disposeMock = vi.fn();
+
+    for (let i = 0; i < 100; i++) {
+      const id = `ml-loop-${i}`;
+      const sub = { dispose: vi.fn() };
+      const titleSub = { dispose: vi.fn() };
+      const runtime: TerminalRuntime = {
+        get term() { return {} as never; },
+        get fitAddon() { return {} as never; },
+        get ptyHandle() { return null; },
+        get pendingInputs() { return []; },
+        onDataSub: sub,
+        titleSub,
+        applySettings: vi.fn(),
+        setOnEvent: vi.fn(),
+        startSpawn: vi.fn(),
+        resetForRecycle: vi.fn(),
+        dispose: disposeMock,
+      };
+      acquireRuntime(id, () => runtime);
+      forceDisposeRuntime(id);
+    }
+
+    expect(getRuntimeCount()).toBe(before);
+    expect(disposeMock).toHaveBeenCalledTimes(100);
+  });
+
+  it('StrictMode 二重 mount → release → mount で dispose されない (refcount 吸収)', async () => {
+    const tabId = 'ml-strictmode-refcount';
+    const init = vi.fn(() => makeRuntime());
+
+    acquireRuntime(tabId, init);  // mount-1, refs=1
+    acquireRuntime(tabId, init);  // mount-2 (StrictMode), refs=2 (init は呼ばれない)
+    releaseRuntime(tabId);        // cleanup-1, refs=1
+
+    await new Promise<void>((r) => queueMicrotask(() => r()));
+
+    expect(getRuntimeCount()).toBeGreaterThanOrEqual(1);
+    expect(getRefs(tabId)).toBe(1);  // microtask 後も生存
+    expect(init).toHaveBeenCalledOnce();
+
+    forceDisposeRuntime(tabId);
   });
 });
 

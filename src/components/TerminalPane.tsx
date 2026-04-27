@@ -1,6 +1,13 @@
 // PTY/xterm.js のライフサイクル管理が複雑なため HMR 対象外とする。
 // このファイルが変更された場合、Vite は full reload を行う。
-if (import.meta.hot) { import.meta.hot.invalidate(); }
+// HMR 更新前に全 runtime を強制破棄して xterm/PTY のリークを防ぐ。
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    forceDisposeAll();
+  });
+  // 全 reload に倒す（terminalRegistry の参照カウント前提を維持）
+  import.meta.hot.invalidate();
+}
 
 import React, { memo, useEffect, useRef } from 'react';
 import type { Tab } from '../types';
@@ -10,6 +17,7 @@ import {
   releaseRuntime,
   createRuntime,
   recyclePty,
+  forceDisposeAll,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
 import { resizePty } from '../lib/pty';

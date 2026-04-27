@@ -72,11 +72,15 @@ Phase 3 ではユーザーが日常的にツールとして使い始められる
 - `Ctrl-D` / `[Environment]::Exit` / `taskkill /F` / ssh 切断
 - child watcher が 100ms 以内に検出することを T14 拡張
 
-### 2.13 IME 改善 (xterm 側)
+### 2.13 IME 改善 (xterm 側) **[実装完了 — Unit P-D3]**
 - Windows ConPTY + nushell/PowerShell の IME 中間文字列流入問題
+- **対策**: `term.textarea` に `compositionstart`/`compositionend` リスナーを attach し、
+  合成中の `onData` を drop。AbortController で一括解除。dispose 順序 §3.2 に `compositionAbort.abort()` を追加。
 
-### 2.14 国際化キーボード対応
+### 2.14 国際化キーボード対応 **[実装完了 — Unit P-D3]**
 - `e.code === 'KeyW'` 切替 (CapsLock / 非 ASCII レイアウト対応)
+- **対策**: `TerminalPane.tsx` の `attachCustomKeyEventHandler` を `e.key` から `e.code` ベースに切替。
+  `'w'/'W'` → `'KeyW'`、`'Tab'` → `'Tab'` (e.code)。物理キー位置判定で CapsLock・AZERTY 対応。
 
 ### 2.15 `Tauri` / WebView2 / xterm.js 更新ポリシー
 - `Cargo.lock` 固定 + Tauri 更新ルール (CONTRIBUTING に明記)

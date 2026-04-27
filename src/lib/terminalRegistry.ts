@@ -20,6 +20,11 @@ export interface TerminalRuntime {
   pendingInputs: string[];
   /** init() 内で 1 度だけ登録する onData 購読。dispose() で解放 */
   onDataSub: IDisposable;
+  /**
+   * IME 合成リスナーの一括解除用 AbortController。
+   * dispose() 内で abort() を呼ぶことで compositionstart/end リスナーをまとめて解除する。
+   */
+  compositionAbort: AbortController;
 
   /**
    * PTY イベント受信時のコールバック。
@@ -137,9 +142,26 @@ export function createRuntime(
   const pendingInputs: string[] = [];
   let ptyHandle: PtyHandle | null = null;
 
+  // IME 合成中フラグ: compositionstart で true、compositionend で false になる。
+  // Windows ConPTY + nushell/PowerShell で変換中の中間文字列が PTY に流れて
+  // 画面が崩れる問題を防ぐため、onData ハンドラで合成中の入力を drop する。
+  // xterm の onData は確定文字列を再発火する設計のため、合成中 drop しても確定後に再送される。
+  let isComposing = false;
+  const compositionAbort = new AbortController();
+  const { signal: compositionSignal } = compositionAbort;
+
+  // term.textarea は term.open() の後でセットされる (xterm 公式型: HTMLTextAreaElement | undefined)
+  const textarea = term.textarea;
+  if (textarea) {
+    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal: compositionSignal });
+    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal: compositionSignal });
+  }
+
   // onData を spawn より先に登録して DSR-CPR 等を pendingInputs に貯める
   const onDataSub = term.onData((data) => {
     if (isDisposed) return;
+    // IME 合成中は中間文字列を drop する（確定後に xterm が再発火するため入力は失われない）
+    if (isComposing) return;
     if (ptyHandle) {
       void writePty(ptyHandle.id, data).catch(() => {});
     } else {
@@ -164,6 +186,7 @@ export function createRuntime(
     get ptyHandle() { return ptyHandle; },
     get pendingInputs() { return pendingInputs; },
     onDataSub,
+    compositionAbort,
     titleSub,
 
     setOnEvent(handler) {
@@ -223,6 +246,8 @@ export function createRuntime(
       onDataSub.dispose();
       // OSC タイトル購読を解放する（onDataSub の隣に配置）
       titleSub.dispose();
+      // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
+      compositionAbort.abort();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();

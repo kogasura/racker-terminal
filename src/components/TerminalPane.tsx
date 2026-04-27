@@ -193,7 +193,9 @@ export const TerminalPane = memo(function TerminalPane({
       if (useAppStore.getState().contextMenuOpen) return true;
 
       // Ctrl+Shift+W: アクティブタブを閉じる
-      if (e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+      // e.code ('KeyW') を使うことで CapsLock/AZERTY 等の非 ASCII レイアウトでも
+      // 物理 W キーの位置を正確に判定できる（e.key は 'w'/'W'/'z' 等レイアウト依存）
+      if (e.shiftKey && e.code === 'KeyW') {
         e.preventDefault();
         const aid = useAppStore.getState().activeTabId;
         if (aid) useAppStore.getState().removeTab(aid);
@@ -201,7 +203,8 @@ export const TerminalPane = memo(function TerminalPane({
       }
 
       // Ctrl+Tab / Ctrl+Shift+Tab: 次/前のタブへ移動
-      if (e.key === 'Tab') {
+      // e.code ('Tab') で物理 Tab キーを判定する（IME 中は e.key === 'Process' になる場合がある）
+      if (e.code === 'Tab') {
         e.preventDefault();
         const state = useAppStore.getState();
         const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);

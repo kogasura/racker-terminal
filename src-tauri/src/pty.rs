@@ -58,6 +58,9 @@ struct FlushState {
     eof: bool,
     /// read スレッドがエラーを受信した場合のメッセージ
     error: Option<String>,
+    /// child watcher が検出した子プロセスの実 exit code
+    /// （PtyEvent::Exit に乗せる）
+    exit_code: Option<i32>,
 }
 
 /// read / flush スレッド間で共有する状態 + Condvar の型エイリアス
@@ -69,15 +72,20 @@ type SharedFlushState = Arc<(Mutex<FlushState>, Condvar)>;
 #[allow(dead_code)]
 const FLUSH_BYTES: usize = 64 * 1024;
 
+/// child / master 共有用の型エイリアス（watcher スレッドと PtySession で共有）
+type SharedChild = Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>;
+type SharedMaster = Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>;
+
 /// PtySession 生成時の引数をまとめた構造体（clippy too_many_arguments 対策）
 struct PtySessionArgs {
     id: String,
     writer: Box<dyn Write + Send>,
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    master: SharedMaster,
+    child: SharedChild,
     stop_flag: Arc<AtomicBool>,
     reader_handle: JoinHandle<()>,
     flush_handle: JoinHandle<()>,
+    watch_handle: JoinHandle<()>,
     flush_state: SharedFlushState,
 }
 
@@ -87,11 +95,13 @@ pub struct PtySession {
     writer: Mutex<Box<dyn Write + Send>>,
     // Fix 3: Option に変更して Drop 時に take → drop で PTY を閉じ、
     //        reader thread の blocking read を EOF で解放できるようにする
-    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
-    child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
+    // exit-hang fix: watcher スレッドと共有するため Arc に変更
+    master: SharedMaster,
+    child: SharedChild,
     stop_flag: Arc<AtomicBool>,
     reader_handle: Mutex<Option<JoinHandle<()>>>,
     flush_handle: Mutex<Option<JoinHandle<()>>>,
+    watch_handle: Mutex<Option<JoinHandle<()>>>,
     /// Drop 時に flush スレッドを即時起床させるための Condvar 共有参照
     /// （flush スレッドが wait_timeout で待機中でも stop_flag チェックに誘導できる）
     flush_state: SharedFlushState,
@@ -102,11 +112,12 @@ impl PtySession {
         Self {
             id: args.id,
             writer: Mutex::new(args.writer),
-            master: Mutex::new(Some(args.master)),
-            child: Mutex::new(Some(args.child)),
+            master: args.master,
+            child: args.child,
             stop_flag: args.stop_flag,
             reader_handle: Mutex::new(Some(args.reader_handle)),
             flush_handle: Mutex::new(Some(args.flush_handle)),
+            watch_handle: Mutex::new(Some(args.watch_handle)),
             flush_state: args.flush_state,
         }
     }
@@ -177,7 +188,7 @@ impl Drop for PtySession {
         // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
         drop(self.master.lock().take());
 
-        // reader / flush thread を join する。ただしアプリ終了をブロックしないよう
+        // reader / flush / watch thread を join する。ただしアプリ終了をブロックしないよう
         // バックグラウンドスレッドに投げる
         if let Some(h) = self.reader_handle.lock().take() {
             std::thread::spawn(move || {
@@ -185,6 +196,11 @@ impl Drop for PtySession {
             });
         }
         if let Some(h) = self.flush_handle.lock().take() {
+            std::thread::spawn(move || {
+                let _ = h.join();
+            });
+        }
+        if let Some(h) = self.watch_handle.lock().take() {
             std::thread::spawn(move || {
                 let _ = h.join();
             });
@@ -257,6 +273,7 @@ fn spawn_reader_threads(
             last_flush: Instant::now(),
             eof: false,
             error: None,
+            exit_code: None,
         }),
         Condvar::new(),
     ));
@@ -353,6 +370,7 @@ fn spawn_reader_threads(
                 let raw = std::mem::take(&mut s.raw_buf);
                 let pending = std::mem::take(&mut s.pending);
                 let pending_error = s.error.take();
+                let exit_code = s.exit_code.take();
                 drop(s);
 
                 // pending + raw を lossy で吐く（UTF-8 境界検証を省略して確実に吐き切る）
@@ -369,8 +387,9 @@ fn spawn_reader_threads(
                     let _ = channel.send(PtyEvent::Error { message: msg });
                 } else {
                     // shutdown 経由でも Exit を送って Frontend に終了を通知
-                    eprintln!("[pty-flush] stop_flag set after wake, sending Exit");
-                    let _ = channel.send(PtyEvent::Exit { code: None });
+                    // child watcher が検出した実 exit code を優先（kill 経由の場合は None）
+                    eprintln!("[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}");
+                    let _ = channel.send(PtyEvent::Exit { code: exit_code });
                 }
                 break;
             }
@@ -452,6 +471,87 @@ fn spawn_reader_threads(
         flush_handle,
         flush_state,
     }
+}
+
+// ─── child watcher スレッド ──────────────────────────────────────────────────
+//
+// 子プロセスが自然終了（user typed `exit` など）した際に、master の blocking read が
+// EOF を返さない問題（portable_pty / ConPTY 仕様）への対処。
+//
+// 設計:
+//   - 100ms 周期で child.try_wait() をポーリング
+//   - Some(ExitStatus) が返ったら:
+//     1. exit_code を flush_state に格納
+//     2. stop_flag を true にセット
+//     3. flush スレッドを cvar で起床
+//     4. master を drop して reader の blocking read を EOF で解放
+//   - kill 経由（child が他で take 済み）の場合は break して終了
+//
+// ポーリング間隔は exit 検出のレイテンシとアイドル CPU 負荷のトレードオフで 100ms。
+
+fn spawn_child_watcher(
+    child: SharedChild,
+    master: SharedMaster,
+    stop_flag: Arc<AtomicBool>,
+    flush_state: SharedFlushState,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        eprintln!("[pty-watch] watcher loop entered");
+        let poll_interval = std::time::Duration::from_millis(100);
+
+        loop {
+            if stop_flag.load(Ordering::Relaxed) {
+                eprintln!("[pty-watch] stop_flag set, exit");
+                break;
+            }
+
+            // child を短時間ロックして try_wait
+            let exit_code: Option<i32> = {
+                let mut child_lock = child.lock();
+                match child_lock.as_mut() {
+                    Some(c) => match c.try_wait() {
+                        Ok(Some(status)) => {
+                            // Windows: exit_code() は u32。i32 に cast（負値ハンドルは滅多にない）
+                            Some(status.exit_code() as i32)
+                        }
+                        Ok(None) => None, // まだ実行中
+                        Err(e) => {
+                            eprintln!("[pty-watch] try_wait error: {e}");
+                            None
+                        }
+                    },
+                    None => {
+                        // kill 経由で child が take 済み。watcher は撤退
+                        eprintln!("[pty-watch] child already taken, exit");
+                        break;
+                    }
+                }
+            };
+
+            if let Some(code) = exit_code {
+                eprintln!("[pty-watch] child exited with code {code}");
+
+                // flush_state に exit_code をセット + eof フラグ ON + notify
+                let (lock, cvar) = &*flush_state;
+                let mut s = lock.lock();
+                s.exit_code = Some(code);
+                s.eof = true;
+                drop(s);
+
+                // stop_flag をセット（read/flush 両スレッドの終了経路に乗せる）
+                stop_flag.store(true, Ordering::Relaxed);
+                cvar.notify_one();
+
+                // master を drop して reader の blocking read を EOF で解放
+                drop(master.lock().take());
+
+                break;
+            }
+
+            std::thread::sleep(poll_interval);
+        }
+        eprintln!("[pty-watch] watcher exit");
+    })
 }
 
 // ─── PtyManager ──────────────────────────────────────────────────────────────
@@ -557,17 +657,31 @@ impl PtyManager {
         let threads = spawn_reader_threads(reader, channel, Arc::clone(&stop_flag));
         eprintln!("[pty] reader + flush threads started");
 
+        // master / child を Arc 化（watcher スレッドと共有するため）
+        let master_shared: SharedMaster = Arc::new(Mutex::new(Some(pair.master)));
+        let child_shared: SharedChild = Arc::new(Mutex::new(Some(child)));
+
+        // child watcher スレッド起動（子プロセスの自然終了を検出して exit イベントを送る）
+        let watch_handle = spawn_child_watcher(
+            Arc::clone(&child_shared),
+            Arc::clone(&master_shared),
+            Arc::clone(&stop_flag),
+            Arc::clone(&threads.flush_state),
+        );
+        eprintln!("[pty] child watcher thread started");
+
         // セッション生成
         let id = Uuid::new_v4().to_string();
         eprintln!("[pty] session id: {id}");
         let session = Arc::new(PtySession::new(PtySessionArgs {
             id: id.clone(),
             writer,
-            master: pair.master,
-            child,
+            master: master_shared,
+            child: child_shared,
             stop_flag,
             reader_handle: threads.read_handle,
             flush_handle: threads.flush_handle,
+            watch_handle,
             flush_state: threads.flush_state,
         }));
 

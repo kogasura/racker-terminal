@@ -101,24 +101,26 @@ export const useAppStore = create<Store>()((set) => ({
   createTab: (groupId, opts) => {
     const tabId = newId();
     set((state) => {
-      // groupId の解決: 未指定なら groups[0]、groups が空なら自動作成
-      let resolvedGroupId = groupId;
+      // groupId の解決:
+      //   1. 未指定 or 存在しない groupId → groups[0] を使う
+      //   2. groups も空 → Default グループを自動作成
+      const existsGroup =
+        groupId !== undefined && state.groups.some((g) => g.id === groupId);
+
+      let resolvedGroupId: string;
       let newGroups = state.groups;
 
-      if (!resolvedGroupId) {
-        if (state.groups.length > 0) {
-          resolvedGroupId = state.groups[0].id;
-        } else {
-          const newGroupId = newId();
-          newGroups = [
-            ...state.groups,
-            { id: newGroupId, title: 'Default', collapsed: false, tabIds: [] },
-          ];
-          resolvedGroupId = newGroupId;
-        }
-      } else if (!state.groups.find((g) => g.id === resolvedGroupId)) {
-        // 指定 groupId が存在しない場合は groups[0] にフォールバック
-        resolvedGroupId = state.groups.length > 0 ? state.groups[0].id : resolvedGroupId;
+      if (existsGroup) {
+        // groupId は undefined でないことが確定している
+        resolvedGroupId = groupId as string;
+      } else if (state.groups.length === 0) {
+        // グループが 1 つもない場合は Default グループを自動作成
+        const newGroupId = newId();
+        newGroups = [{ id: newGroupId, title: 'Default', collapsed: false, tabIds: [] }];
+        resolvedGroupId = newGroupId;
+      } else {
+        // groupId 未指定 or 不正: groups[0] にフォールバック
+        resolvedGroupId = state.groups[0].id;
       }
 
       const tab: Tab = {

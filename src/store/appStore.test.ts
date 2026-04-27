@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore, selectFallbackTab } from './appStore';
+import * as terminalRegistry from '../lib/terminalRegistry';
 
 // forceDisposeRuntime を no-op にしてテストから Tauri IPC を切り離す
 vi.mock('../lib/terminalRegistry', () => ({
@@ -88,6 +89,31 @@ describe('appStore', () => {
       expect(useAppStore.getState().activeTabId).toBe(tab2);
       void tab1;
     });
+
+    // T2-a: 存在しない groupId を渡し、かつ groups が空 → 新規 Default グループ作成 + そこにタブ追加
+    it('存在しない groupId を渡し groups が空のとき: 新規 Default グループを作成してタブを追加する', () => {
+      const tabId = useAppStore.getState().createTab('non-existent-group-id');
+
+      const state = useAppStore.getState();
+      expect(state.groups).toHaveLength(1);
+      expect(state.groups[0].title).toBe('Default');
+      expect(state.groups[0].tabIds).toContain(tabId);
+      expect(state.tabs[tabId]).toBeDefined();
+      expect(state.tabs[tabId].groupId).toBe(state.groups[0].id);
+    });
+
+    // T2-b: 存在しない groupId を渡し、かつ groups がある → groups[0] にタブ追加
+    it('存在しない groupId を渡し groups があるとき: groups[0] にタブを追加する', () => {
+      const group0Id = useAppStore.getState().createGroup('FirstGroup');
+      useAppStore.getState().createGroup('SecondGroup');
+
+      const tabId = useAppStore.getState().createTab('non-existent-group-id');
+
+      const state = useAppStore.getState();
+      // groups[0] のタブに追加される
+      expect(state.groups[0].tabIds).toContain(tabId);
+      expect(state.tabs[tabId].groupId).toBe(group0Id);
+    });
   });
 
   // --- removeTab ---
@@ -132,6 +158,26 @@ describe('appStore', () => {
       useAppStore.getState().removeTab(tab2);
 
       expect(useAppStore.getState().activeTabId).toBe(tab1);
+    });
+
+    // T1: forceDisposeRuntime が set() より先に呼ばれることの検証
+    it('forceDisposeRuntime は set より先に呼ばれる（タブがまだ store に残っている状態で呼ばれる）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+
+      // forceDisposeRuntime が呼ばれた瞬間の tabs 状態をキャプチャする
+      let tabsAtDisposeTime: Record<string, unknown> | undefined;
+      vi.mocked(terminalRegistry.forceDisposeRuntime).mockImplementationOnce(() => {
+        tabsAtDisposeTime = useAppStore.getState().tabs;
+      });
+
+      useAppStore.getState().removeTab(tabId);
+
+      // forceDisposeRuntime 呼び出し時点ではタブがまだ存在する（set より前）
+      expect(tabsAtDisposeTime).toBeDefined();
+      expect(tabsAtDisposeTime![tabId]).toBeDefined();
+      // set 完了後はタブが削除されている
+      expect(useAppStore.getState().tabs[tabId]).toBeUndefined();
     });
   });
 

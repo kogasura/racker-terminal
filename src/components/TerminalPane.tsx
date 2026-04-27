@@ -63,10 +63,6 @@ export const TerminalPane = memo(function TerminalPane({
     const runtime = acquireRuntime(tabId, () =>
       createRuntime(divRef.current!, settings, tabId, {
         onLive: (ptyId) => setTabStatus(tabId, 'live', ptyId),
-        onError: (msg) => {
-          spawnErrorRef.current = msg;
-          setTabStatus(tabId, 'crashed');
-        },
       }),
     );
     runtimeRef.current = runtime;
@@ -116,12 +112,24 @@ export const TerminalPane = memo(function TerminalPane({
     return () => cancelAnimationFrame(rafId);
   }, [isActive]);
 
+  // crashed 時は xterm への入力を遮断する（writePty が "session not found" エラーを返すのを防ぐ）
+  // Unit C で restart が実装された際に live 復帰時の false 戻しが機能する
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    runtime.term.options.disableStdin = (tab.status === 'crashed');
+  }, [tab.status]);
+
   // ResizeObserver は isActive 変化のたびに付け直す（設計書 §4.4）
+  // observe() 直後の初回コールバックは仕様上即時発火するため、1 回だけスキップする。
+  // isActive=true 時の fit+resize は rAF effect が担うため、二重実行を防ぐ。
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime || !divRef.current) return;
 
+    let initialFire = true;
     const observer = new ResizeObserver(() => {
+      if (initialFire) { initialFire = false; return; }  // observe() 直後の自動発火は無視
       if (!isActive) return;  // 非アクティブ時はスキップ（isActive 復帰時の rAF fit で同期）
       try { runtime.fitAddon.fit(); } catch (e) { console.warn(e); }
       if (runtime.ptyHandle) {

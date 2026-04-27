@@ -61,7 +61,6 @@ export function createRuntime(
   tabId: string,
   callbacks: {
     onLive: (ptyId: string) => void;
-    onError: (msg: string) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -138,6 +137,7 @@ export function createRuntime(
 
       spawnPty(opts, (e) => onEventHandler?.(e))
         .then((handle) => {
+          spawning = false;
           if (isDisposed || !runtimes.has(tabId)) {
             // unmount 後 or forceDispose 後: PTY だけ確実に解放してリターン
             void handle.dispose();

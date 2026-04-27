@@ -218,6 +218,12 @@ expect(init).toHaveBeenCalledOnce();
 
 **手動 E2E は発注者の責務**（自動テストが pass していれば自動検証は完了）。
 
+> **異常終了の網羅検証（Unit P-D2）との関係**:
+> VH05 は StrictMode 下の recyclePty 動作確認を目的とする。
+> Ctrl-D / taskkill /F / タスクマネージャ強制終了などの異常終了パターン自体の検証は
+> `docs/unit-pd2-design.md` §3 の VS01〜VS05 を参照すること。
+> child watcher の `try_wait()` ポーリングが全シナリオをカバーすることは Unit P-D2 で確認済み。
+
 ---
 
 ## 6. リスク・注意

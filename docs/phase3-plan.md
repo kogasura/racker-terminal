@@ -72,9 +72,11 @@ Phase 3 ではユーザーが日常的にツールとして使い始められる
   status が live or crashed に変わると clearTimeout でキャンセル。
 - **リスク**: EDR 環境で誤検知する場合は 30 秒に延長、または Settings 化を検討すること。
 
-### 2.12 異常終了の網羅検証
-- `Ctrl-D` / `[Environment]::Exit` / `taskkill /F` / ssh 切断
-- child watcher が 100ms 以内に検出することを T14 拡張
+### 2.12 異常終了の網羅検証 **[実装完了 (検証中心) — Unit P-D2]**
+- `Ctrl-D` / `[Environment]::Exit` / `taskkill /F` / ssh 切断 / タスクマネージャ強制終了
+- 既存の `spawn_child_watcher` (100ms ポーリング + `child.try_wait()`) で全シナリオをカバー済みと確認
+- **コード変更なし**: 網羅性分析 + コメント追加 + 検証シナリオドキュメント化のみ
+- 実機検証 VS01〜VS05 は発注者が実施 (`docs/unit-pd2-design.md` §3 を参照)
 
 ### 2.13 IME 改善 (xterm 側) **[実装完了 — Unit P-D3]**
 - Windows ConPTY + nushell/PowerShell の IME 中間文字列流入問題

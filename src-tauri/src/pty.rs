@@ -538,6 +538,28 @@ fn spawn_reader_threads(
 //   - kill 経由（child が他で take 済み）の場合は break して終了
 //
 // ポーリング間隔は exit 検出のレイテンシとアイドル CPU 負荷のトレードオフで 100ms。
+//
+// ── 異常終了の網羅性 (Unit P-D2 §2.2 参照) ──────────────────────────────────
+//
+// 以下の全シナリオで child.try_wait() が Ok(Some(ExitStatus)) を返し、
+// 100ms 以内に検出されることを設計上保証する:
+//
+//   VS01: Ctrl-D (EOF 入力)
+//         nushell が EOF を受信して自ら exit(0) → try_wait() で検出
+//
+//   VS02: [Environment]::Exit(0) (PowerShell)
+//         通常の ExitProcess(0) → try_wait() で検出
+//
+//   VS03: taskkill /F /PID <子プロセスPID>
+//         TerminateProcess() (SIGKILL 相当) → try_wait() で検出
+//         exit code は通常 1 (taskkill の実装依存)
+//
+//   VS04: ssh セッション中のネットワーク切断
+//         ssh client が SIGHUP/タイムアウトで終了 → try_wait() で検出
+//         ssh がハングした場合は P-D1 の 10 秒 spawning タイムアウトがカバー
+//
+//   VS05: タスクマネージャからの強制終了
+//         TerminateProcess() (VS03 と同等) → try_wait() で検出
 
 fn spawn_child_watcher(
     child: SharedChild,

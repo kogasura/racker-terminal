@@ -1,5 +1,9 @@
 # Racker Terminal — Phase 2 実装計画 v2
 
+> **Phase 2 完成 (2026-04-27)**: 全 8 ユニット (Unit 0-a/0-b, A1, A2, B, C, D+E, F, G, H) + 修正 PR (#6 exit hang fix, #10 keyboard nav fix) すべてマージ済み。
+> Frontend 131 tests pass / Rust 10 tests pass。
+> Phase 3 のスコープは [phase3-plan.md](./phase3-plan.md) を参照。
+
 ## 1. Context
 
 ### Phase 1 からの継続点

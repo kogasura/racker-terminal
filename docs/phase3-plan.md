@@ -28,10 +28,14 @@ Phase 3 ではユーザーが日常的にツールとして使い始められる
 - 表示: `userTitle ?? oscTitle ?? defaultTitle`
 - 関連: phase2-plan §3.1 永続化メモで言及済み
 
-### 2.3 WebGL renderer 復活
+### 2.3 WebGL renderer 復活 **[実装完了 — Unit P-C1]**
 - `@xterm/addon-webgl` を loadAddon
 - StrictMode 下で WebGL context の二重作成を防ぐ (acquireRuntime の refcount 設計を活用)
 - WebView2 native crash の再検証必須
+- **実装**: `createRuntime` 内で `term.open()` 後に `WebglAddon` を try/catch で loadAddon。
+  `onContextLoss` ハンドラで Canvas renderer に自動フォールバック。
+  dispose 順序: `webglAddon?.dispose()` を `fitAddon.dispose()` より前に追加 (§3.2 参照)。
+- **WebView2 native crash の有無は発注者が実機検証**。crash 再現時は即 revert して compatibility-matrix.md に記録。
 
 ### 2.4 グループ自体の D&D 並び替え
 - store の `moveGroup` は Unit B で先回り実装済
@@ -182,7 +186,7 @@ Phase 3 を進める単位として、テーマでまとめる案:
 | P-B1 | グループ D&D | 既存 dnd-kit 拡張 |
 | P-B2 | Favorites D&D | moveFavorite + Sortable |
 | P-B3 | Settings UI | フォント・scrollback・theme 変更 UI |
-| P-C1 | WebGL renderer | addon-webgl 復活 + 検証 |
+| P-C1 | WebGL renderer | addon-webgl 復活 + 検証 **[実装完了]** |
 | P-D1 | 安定性まとめ | thread leak / timeout / 異常終了 |
 | P-E1 | 配布 | Tauri build + インストーラー |
 | P-F1 | UI テスト | testing-library + Playwright |

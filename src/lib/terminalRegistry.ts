@@ -1,5 +1,6 @@
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
 import type { Settings } from '../types';
 import { spawnPty, writePty, resizePty } from './pty';
@@ -133,6 +134,28 @@ export function createRuntime(
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  // WebGL renderer 有効化 (Phase 3 Unit P-C1)
+  // onContextLoss で Canvas renderer に自動フォールバックする堅牢性を確保する。
+  // try/catch: 古い WebView2 や WebGL 非対応環境での初期化失敗を吸収して Canvas にフォールバック。
+  // dispose 順序: webglAddon.dispose() は fitAddon.dispose() の前に呼ぶ (§3.2 参照)。
+  let webglAddon: WebglAddon | null = null;
+  try {
+    webglAddon = new WebglAddon();
+    // Context loss 時: WebGL addon を破棄して Canvas renderer に自動フォールバック。
+    // WebView2 のスリープ復帰時等に WebGL context が失われる場合に備える。
+    webglAddon.onContextLoss(() => {
+      console.warn('[terminalRegistry] WebGL context lost, falling back to Canvas');
+      webglAddon?.dispose();
+      webglAddon = null;
+    });
+    term.loadAddon(webglAddon);
+  } catch (e) {
+    // WebGL addon の初期化失敗 (古い WebView2、GPU ブラックリスト等) → Canvas fallback
+    console.warn('[terminalRegistry] WebGL addon failed to load, using Canvas:', e);
+    webglAddon = null;
+  }
+
   try {
     fitAddon.fit();
   } catch (e) {
@@ -254,6 +277,9 @@ export function createRuntime(
       titleSub.dispose();
       // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
       compositionAbort.abort();
+      // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)
+      // term.dispose() より先に WebGL context を解放することで WebView2 crash を防ぐ。
+      webglAddon?.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();

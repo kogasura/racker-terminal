@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useAppStore, selectFallbackTab, selectNextTabId, selectPrevTabId } from './appStore';
+import {
+  useAppStore,
+  selectFallbackTab,
+  selectNextTabId,
+  selectPrevTabId,
+  expandGroupContaining,
+} from './appStore';
 import type { AppState } from '../types';
 import * as terminalRegistry from '../lib/terminalRegistry';
 
@@ -520,5 +526,127 @@ describe('selectPrevTabId', () => {
   it('タブが 1 個だけ: 自分自身へラップする', () => {
     const state = makeState([{ id: 'g1', tabIds: ['t1'] }], 't1');
     expect(selectPrevTabId(state)).toBe('t1');
+  });
+});
+
+// --- expandGroupContaining (純関数) ---
+
+describe('expandGroupContaining', () => {
+  const makeGroups = (groups: { id: string; tabIds: string[]; collapsed: boolean }[]) =>
+    groups.map((g) => ({ ...g, title: g.id }));
+
+  it('tabId が null: groups をそのまま返す', () => {
+    const groups = makeGroups([{ id: 'g1', tabIds: ['t1'], collapsed: true }]);
+    expect(expandGroupContaining(groups, null)).toBe(groups);
+  });
+
+  it('tabId が見つからない: groups をそのまま返す', () => {
+    const groups = makeGroups([{ id: 'g1', tabIds: ['t1'], collapsed: true }]);
+    expect(expandGroupContaining(groups, 'not-exist')).toBe(groups);
+  });
+
+  it('tabId のグループが折りたたまれていない: groups をそのまま返す', () => {
+    const groups = makeGroups([{ id: 'g1', tabIds: ['t1'], collapsed: false }]);
+    expect(expandGroupContaining(groups, 't1')).toBe(groups);
+  });
+
+  it('tabId のグループが折りたたみ中: 該当グループのみ collapsed=false にした新配列を返す', () => {
+    const groups = makeGroups([
+      { id: 'g1', tabIds: ['t1'], collapsed: true },
+      { id: 'g2', tabIds: ['t2'], collapsed: true },
+    ]);
+    const result = expandGroupContaining(groups, 't2');
+    expect(result[0].collapsed).toBe(true); // g1 は不変
+    expect(result[1].collapsed).toBe(false); // g2 は展開
+    expect(result).not.toBe(groups);
+  });
+});
+
+// --- navigateToTab (Ctrl+Tab で隠れタブにジャンプしないことの保証) ---
+
+describe('navigateToTab', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('折りたたみグループのタブに遷移するとそのグループが展開される', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const g2 = useAppStore.getState().createGroup('G2');
+    useAppStore.getState().createTab(g1, { title: 'A' });
+    const t2 = useAppStore.getState().createTab(g2, { title: 'B' });
+    useAppStore.getState().toggleCollapse(g2); // g2 を折りたたみ
+
+    const before = useAppStore.getState().groups.find((g) => g.id === g2);
+    expect(before?.collapsed).toBe(true);
+
+    useAppStore.getState().navigateToTab(t2);
+
+    const after = useAppStore.getState();
+    expect(after.activeTabId).toBe(t2);
+    expect(after.groups.find((g) => g.id === g2)?.collapsed).toBe(false);
+  });
+
+  it('折りたたみでないグループのタブ遷移は active のみ更新', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1, { title: 'A' });
+    const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+
+    const groupsBefore = useAppStore.getState().groups;
+    useAppStore.getState().navigateToTab(t2);
+
+    const after = useAppStore.getState();
+    expect(after.activeTabId).toBe(t2);
+    expect(after.groups).toBe(groupsBefore); // 参照変化なし
+  });
+});
+
+// --- removeTab fallback で折りたたみグループを自動展開 ---
+
+describe('removeTab — fallback expand', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('active タブを削除した結果フォールバックが折りたたみグループ内なら自動展開', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const g2 = useAppStore.getState().createGroup('G2');
+    useAppStore.getState().createTab(g2, { title: 'B' }); // g2/t-B
+    const tA = useAppStore.getState().createTab(g1, { title: 'A' });
+    useAppStore.getState().setActiveTab(tA);
+    useAppStore.getState().toggleCollapse(g2); // g2 を折りたたむ
+
+    expect(useAppStore.getState().groups.find((g) => g.id === g2)?.collapsed).toBe(true);
+
+    useAppStore.getState().removeTab(tA); // tA を削除 → fallback は g2 内タブ
+
+    const after = useAppStore.getState();
+    expect(after.activeTabId).not.toBeNull();
+    expect(after.groups.find((g) => g.id === g2)?.collapsed).toBe(false);
   });
 });

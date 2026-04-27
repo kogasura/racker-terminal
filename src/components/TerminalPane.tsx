@@ -163,7 +163,7 @@ export const TerminalPane = memo(function TerminalPane({
         e.preventDefault();
         const state = useAppStore.getState();
         const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);
-        if (next) state.setActiveTab(next);
+        if (next) state.navigateToTab(next);
         return false;
       }
 

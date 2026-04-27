@@ -67,8 +67,32 @@ export function selectPrevTabId(state: AppState): string | null {
   return flatIds[(idx - 1 + flatIds.length) % flatIds.length];
 }
 
+/**
+ * tabId を含むグループが折りたたまれていれば展開した groups を返す。
+ * tabId が null か該当グループが見つからない、または折りたたまれていない場合は groups をそのまま返す。
+ * Ctrl+Tab 等のキーボード操作・removeTab のフォールバックで、active タブが折りたたみグループ内に
+ * 隠れて見えなくなる UX 問題を解消するために使用する。
+ */
+export function expandGroupContaining(
+  groups: Group[],
+  tabId: string | null,
+): Group[] {
+  if (tabId === null) return groups;
+  const target = groups.find((g) => g.tabIds.includes(tabId));
+  if (!target?.collapsed) return groups;
+  return groups.map((g) =>
+    g.id === target.id ? { ...g, collapsed: false } : g,
+  );
+}
+
 interface AppActions {
   setActiveTab: (tabId: string | null) => void;
+  /**
+   * tabId を active にし、その tabId を含むグループが折りたたまれていれば自動展開する。
+   * Ctrl+Tab / Ctrl+Shift+Tab のキーボード遷移で、隠れタブにジャンプして
+   * active が見えなくなる UX 問題を防ぐ。
+   */
+  navigateToTab: (tabId: string) => void;
   startEditing: (id: string) => void;
   stopEditing: () => void;
 
@@ -136,6 +160,11 @@ export const useAppStore = create<Store>()((set) => ({
   settings: defaultSettings,
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
+  navigateToTab: (tabId) =>
+    set((state) => ({
+      activeTabId: tabId,
+      groups: expandGroupContaining(state.groups, tabId),
+    })),
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
 
@@ -213,7 +242,13 @@ export const useAppStore = create<Store>()((set) => ({
           ? selectFallbackTab(removedTab?.groupId ?? '', newGroups)
           : state.activeTabId;
 
-      return { groups: newGroups, tabs: newTabs, activeTabId: newActiveTabId };
+      // フォールバック先タブが折りたたみグループ内にあるとき自動展開する
+      const finalGroups =
+        state.activeTabId === tabId && newActiveTabId !== null
+          ? expandGroupContaining(newGroups, newActiveTabId)
+          : newGroups;
+
+      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId };
     });
   },
 

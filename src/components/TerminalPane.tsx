@@ -1,7 +1,3 @@
-// PTY/xterm.js のライフサイクル管理が複雑なため HMR 対象外とする。
-// このファイルが変更された場合、Vite は full reload を行う。
-if (import.meta.hot) { import.meta.hot.invalidate(); }
-
 import React, { memo, useEffect, useRef } from 'react';
 import type { Tab } from '../types';
 import { useAppStore, selectNextTabId, selectPrevTabId } from '../store/appStore';
@@ -10,11 +6,24 @@ import {
   releaseRuntime,
   createRuntime,
   recyclePty,
+  forceDisposeAll,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
 import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import '../styles/terminal.css';
+
+// HMR フック: HMR 更新前に全 runtime を強制破棄して xterm/PTY のリークを防ぐ。
+// dispose で PTY を Rust 側に確実に解放 → invalidate で full reload に倒し、
+// xterm/React Hook の HMR 互換性問題を回避する設計。
+// 注: dispose は TerminalPane.tsx 自身が HMR 更新される場合のみ実行される。
+// 親モジュール経由の Fast Refresh では走らない。
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    forceDisposeAll();
+  });
+  import.meta.hot.invalidate();
+}
 
 interface TerminalPaneProps {
   tabId: string;

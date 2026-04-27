@@ -3,6 +3,7 @@ import {
   acquireRuntime,
   releaseRuntime,
   forceDisposeRuntime,
+  forceDisposeAll,
   recyclePty,
   getAllRuntimes,
   getRuntimeCount,
@@ -15,12 +16,13 @@ import {
  * テスト用のモック TerminalRuntime を生成するヘルパー。
  * xterm / FitAddon は DOM を必要とするため、dispose だけ追跡できる最小モックを使う。
  */
-function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
+function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: ReturnType<typeof vi.fn> } {
   let disposeCallCount = 0;
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
+  const disposeFn = vi.fn(() => { disposeCallCount++; });
 
-  const runtime: TerminalRuntime & { disposeCallCount: number } = {
+  const runtime: TerminalRuntime & { disposeCallCount: number; dispose: ReturnType<typeof vi.fn> } = {
     get term() { return {} as never; },
     get fitAddon() { return {} as never; },
     get ptyHandle() { return null; },
@@ -31,9 +33,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
-    dispose: () => {
-      disposeCallCount++;
-    },
+    dispose: disposeFn,
     get disposeCallCount() { return disposeCallCount; },
   };
   return runtime;
@@ -367,6 +367,79 @@ describe('sanitizeOscTitle', () => {
     const input = '\x07'.repeat(10) + 'a'.repeat(260);
     const result = sanitizeOscTitle(input);
     expect(result).toBe('a'.repeat(256));
+  });
+});
+
+// --- memory leak テスト ---
+
+describe('memory leak', () => {
+  it('forceDisposeAll で全 runtime が即時破棄される', () => {
+    // テスト前の state を確認 (他テストの残骸がないこと)
+    const beforeCount = getRuntimeCount();
+
+    // 10 個 acquire (各々独自の dispose mock)
+    const runtimes = Array.from({ length: 10 }, () => makeRuntime());
+    for (let i = 0; i < 10; i++) {
+      acquireRuntime(`force-all-${i}`, () => runtimes[i]);
+    }
+    expect(getRuntimeCount()).toBe(beforeCount + 10);
+
+    forceDisposeAll();
+
+    // 自分が登録した 10 個のすべての dispose が呼ばれた
+    for (const r of runtimes) {
+      expect(r.dispose).toHaveBeenCalledTimes(1);
+    }
+    // Map が完全に空になった (他テスト残骸も含めて全消し)
+    expect(getRuntimeCount()).toBe(0);
+  });
+
+  it('100 タブ open/close で runtime がリークしない', () => {
+    const before = getRuntimeCount();
+    const disposeMock = vi.fn();
+
+    for (let i = 0; i < 100; i++) {
+      const id = `ml-loop-${i}`;
+      const sub = { dispose: vi.fn() };
+      const titleSub = { dispose: vi.fn() };
+      const runtime: TerminalRuntime = {
+        get term() { return {} as never; },
+        get fitAddon() { return {} as never; },
+        get ptyHandle() { return null; },
+        get pendingInputs() { return []; },
+        onDataSub: sub,
+        titleSub,
+        applySettings: vi.fn(),
+        setOnEvent: vi.fn(),
+        startSpawn: vi.fn(),
+        resetForRecycle: vi.fn(),
+        dispose: disposeMock,
+      };
+      acquireRuntime(id, () => runtime);
+      forceDisposeRuntime(id);
+    }
+
+    expect(getRuntimeCount()).toBe(before);
+    expect(disposeMock).toHaveBeenCalledTimes(100);
+  });
+
+  it('真の StrictMode サイクル: mount → cleanup → mount で dispose されない (refcount 吸収)', async () => {
+    const tabId = 'strict-mode-cycle';
+    const init = vi.fn(() => makeRuntime());
+
+    acquireRuntime(tabId, init);    // mount-1, refs=1
+    releaseRuntime(tabId);          // cleanup-1, refs=0, microtask 予約
+    acquireRuntime(tabId, init);    // mount-2 (microtask 前), refs=1
+
+    // microtask flush
+    await new Promise<void>((r) => queueMicrotask(() => r()));
+
+    // dispose されず、refs=1 で生存している
+    expect(init).toHaveBeenCalledOnce();
+    expect(getRefs(tabId)).toBe(1);
+    expect(getRuntimeCount()).toBeGreaterThanOrEqual(1);
+
+    forceDisposeRuntime(tabId);
   });
 });
 

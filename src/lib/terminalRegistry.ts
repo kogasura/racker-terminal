@@ -346,10 +346,23 @@ export function getRefs(tabId: string): number {
 }
 
 /**
- * TODO (Unit H): HMR 時の xterm/PTY リーク対策として forceDisposeAll() を追加予定。
- * Vite の import.meta.hot.dispose フックから呼ぶことで、HMR 更新時に全 runtime を
- * 強制 dispose して、ゾンビ xterm が残るのを防ぐ。
+ * すべての runtime を即時破棄して registry を空にする。
+ * HMR の import.meta.hot.dispose hook で呼ぶことで、HMR 更新時に
+ * xterm/PTY がリークするのを防ぐ。
+ * dispose() の呼び出し順序は §3.2 の規約通り。
+ *
+ * 注: Map をコピーしてから dispose() ループに入る理由:
+ * - 現状 dispose() は Map を変更しないが、Phase 3 で永続化等の副作用が
+ *   入った場合にループ中の Map 変化を防ぐ防御的設計。
  */
+export function forceDisposeAll(): void {
+  // Map をコピーしてから dispose（dispose 中に Map が変化しないように）
+  const entries = Array.from(runtimes.entries());
+  for (const [tabId, entry] of entries) {
+    entry.runtime.dispose();
+    runtimes.delete(tabId);
+  }
+}
 
 /**
  * OSC タイトル文字列をサニタイズする純関数。

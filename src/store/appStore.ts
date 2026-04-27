@@ -469,16 +469,17 @@ export const useAppStore = create<Store>()((set, get) => ({
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};
-      const toGroup = state.groups.find((g) => g.id === toGroupId);
-      if (!toGroup) return {};
 
       const fromGroupId = tab.groupId;
+      const fromGroup = state.groups.find((g) => g.id === fromGroupId);
+      if (!fromGroup) return {}; // race: グループが削除済み
+
+      const toGroup = state.groups.find((g) => g.id === toGroupId);
+      if (!toGroup) return {}; // 不正な toGroupId
 
       // fromGroup から除去した後の toGroup.tabIds を計算する
       // 同一グループ内移動の場合は除去後の長さを基準にクランプする
-      const fromTabIds = state.groups
-        .find((g) => g.id === fromGroupId)!
-        .tabIds.filter((id) => id !== tabId);
+      const fromTabIds = fromGroup.tabIds.filter((id) => id !== tabId);
 
       const toTabIdsBase =
         fromGroupId === toGroupId
@@ -486,6 +487,12 @@ export const useAppStore = create<Store>()((set, get) => ({
           : toGroup.tabIds;
 
       const clamped = Math.max(0, Math.min(toIndex, toTabIdsBase.length));
+
+      // F5: 同一グループ内で位置が変わらない場合は no-op（参照を変えない）
+      if (fromGroupId === toGroupId) {
+        const originalIdx = fromGroup.tabIds.indexOf(tabId);
+        if (originalIdx === clamped) return {};
+      }
 
       const newToTabIds = [...toTabIdsBase];
       newToTabIds.splice(clamped, 0, tabId);

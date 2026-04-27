@@ -254,6 +254,12 @@
   opacity: 1;
 }
 
+/* F8: isDragging を data-attribute で表現（インラインスタイル依存を解消） */
+.tab-item[data-dragging] {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
 /* ----- InlineEdit ----- */
 .inline-edit__input {
   flex: 1;
@@ -293,6 +299,11 @@
 .group-body {
   min-height: 4px;
   transition: background 120ms ease;
+}
+
+/* F9: 空グループは drop 領域を拡大してターゲットにしやすくする */
+.group-body:not(:has(.tab-item)) {
+  min-height: 24px;
 }
 
 /* ドラッグ中にグループ本体がターゲットになった時のハイライト */

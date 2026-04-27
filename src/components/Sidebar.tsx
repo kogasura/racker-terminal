@@ -13,6 +13,7 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { GroupSection } from './GroupSection';
 import { FavoritesSection } from './FavoritesSection';
+import { resolveDropTarget } from '../lib/dndResolve';
 import type { Tab, TabStatus } from '../types';
 import '../styles/sidebar.css';
 
@@ -23,7 +24,7 @@ const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   crashed: 'tab-item__status-dot tab-item__status-dot--crashed',
 };
 
-function TabItemPreview({ tab }: { tab: Tab }) {
+function TabItemPreview({ tab }: { tab: Pick<Tab, 'title' | 'status'> }) {
   return (
     <div className="tab-item tab-item--drag-overlay">
       <span className={STATUS_DOT_CLASS[tab.status]} />
@@ -39,9 +40,15 @@ export const Sidebar = memo(function Sidebar() {
   const createGroup = useAppStore((s) => s.createGroup);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-  // activeDragId が変わった時のみ再 subscribe（null 時は null を返す selector）
-  const activeDragTab = useAppStore((s) =>
-    activeDragId ? s.tabs[activeDragId] : null,
+  // F2: useShallow で id/title/status の 3 フィールドのみ抽出する。
+  // Tab オブジェクト全体を返すと OSC タイトル更新等で Sidebar 全体が再レンダーされ、
+  // DndContext の collision 計算が走り直す問題を防ぐ。
+  const activeDragTab = useAppStore(
+    useShallow((s) => {
+      if (!activeDragId) return null;
+      const t = s.tabs[activeDragId];
+      return t ? { id: t.id, title: t.title, status: t.status } : null;
+    }),
   );
 
   const sensors = useSensors(
@@ -62,34 +69,16 @@ export const Sidebar = memo(function Sidebar() {
 
     const { active, over } = event;
     if (!over) return;
+    // 同一タブ上での drop（実質的な移動なし）を弾く。group sentinel 上の drop は別経路で末尾追加扱い。
     if (active.id === over.id) return;
 
     const activeTabId = active.id as string;
     const fromGroupId = active.data.current?.groupId as string | undefined;
     if (!fromGroupId) return;
 
-    const overId = over.id as string;
-    let toGroupId: string;
-    let toIndex: number;
-
-    if (overId.startsWith('group-')) {
-      // グループ全体の droppable への drop = 末尾追加
-      toGroupId = overId.replace(/^group-/, '');
-      const g = useAppStore.getState().groups.find((g) => g.id === toGroupId);
-      toIndex = g?.tabIds.length ?? 0;
-    } else {
-      // 別タブへの drop = そのタブの位置に挿入
-      const overTabId = overId;
-      const state = useAppStore.getState();
-      const overTab = state.tabs[overTabId];
-      if (!overTab) return;
-      toGroupId = overTab.groupId;
-      const g = state.groups.find((g) => g.id === toGroupId);
-      if (!g) return;
-      toIndex = g.tabIds.indexOf(overTabId);
-    }
-
-    useAppStore.getState().moveTab(activeTabId, toGroupId, toIndex);
+    const target = resolveDropTarget(over.id as string, useAppStore.getState());
+    if (!target) return;
+    useAppStore.getState().moveTab(activeTabId, target.toGroupId, target.toIndex);
   }
 
   return (
@@ -134,3 +123,4 @@ export const Sidebar = memo(function Sidebar() {
     </DndContext>
   );
 });
+

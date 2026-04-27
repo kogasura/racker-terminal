@@ -753,6 +753,37 @@ describe('appStore', () => {
 
       expect(useAppStore.getState().tabs[t1].groupId).toBe(g1);
     });
+
+    // F1: tab.groupId が指すグループが消失している race condition → no-op
+    it('tab.groupId が指すグループが存在しない不整合状態で moveTab → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+
+      // 不整合状態を直接 setState で作る（tab.groupId は 'g1' だが groups に g1 が存在しない）
+      useAppStore.setState((s) => ({
+        groups: s.groups.filter((g) => g.id !== g1),
+      }));
+
+      const before = useAppStore.getState().groups;
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      // no-op なので groups 参照が変わらない
+      expect(useAppStore.getState().groups).toBe(before);
+    });
+
+    // F5: 同一グループ同一 index への moveTab → 参照不変
+    it('同一グループ同一 index への moveTab → groups 参照が変わらない', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      useAppStore.getState().createTab(g1, { title: 'B' });
+
+      // t1 は index 0 → 同じ index 0 に移動
+      const before = useAppStore.getState().groups;
+      useAppStore.getState().moveTab(t1, g1, 0);
+
+      expect(useAppStore.getState().groups).toBe(before);
+    });
   });
 });
 

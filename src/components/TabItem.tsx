@@ -43,8 +43,6 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    // ドラッグ中の元位置を半透明表示（DragOverlay が前面に描画される）
-    opacity: isDragging ? 0.4 : 1,
   };
 
   function handleDoubleClick(e: React.MouseEvent) {
@@ -67,6 +65,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
       >
         <div
           ref={setNodeRef}
+          data-dragging={isDragging || undefined}
           style={style}
           {...attributes}
           {...listeners}
@@ -89,6 +88,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
             type="button"
             className="tab-item__close-btn"
             title="Close tab"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               removeTab(tabId);

@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { InlineEdit } from './InlineEdit';
+import { GROUP_DROPPABLE_PREFIX } from '../lib/dndResolve';
 
 interface GroupSectionProps {
   groupId: string;
@@ -17,7 +18,7 @@ interface GroupSectionProps {
  * id は "group-{groupId}" 形式で Sidebar の onDragEnd から参照する。
  */
 function GroupBody({ groupId, children }: { groupId: string; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `group-${groupId}` });
+  const { setNodeRef, isOver } = useDroppable({ id: `${GROUP_DROPPABLE_PREFIX}${groupId}` });
   return (
     <div
       ref={setNodeRef}

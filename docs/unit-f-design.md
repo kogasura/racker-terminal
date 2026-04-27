@@ -4,6 +4,8 @@
 
 Phase 2 Unit F では `@dnd-kit/core` + `@dnd-kit/sortable` を導入し、サイドバーのタブを D&D で並び替え可能にする。
 
+**折りたたみグループは drop 対象外。** 折りたたみ時は GroupBody が unmount されるため useDroppable の受付領域が存在しない。auto-expand 対応は Phase 2.5 で検討する（VF10 参照）。
+
 ### Phase 2 対象
 - 同一グループ内のタブ並び替え
 - タブをドラッグして別グループの末尾へ移動
@@ -141,6 +143,7 @@ moveTab(tabId: string, toGroupId: string, toIndex: number): void
 | VF07 | 空グループにタブをドロップ | そのグループに追加される |
 | VF08 | 高速ドラッグ&ドロップを繰り返す | store が壊れない |
 | VF09 | 大量タブ (50+) でもスムーズに動作する | fps が落ちない |
+| VF10 | 折りたたみグループへドラッグ | drop 不可（GroupBody が unmount のため）。Phase 2.5 で auto-expand 検討 |
 
 ---
 

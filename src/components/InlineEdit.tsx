@@ -102,6 +102,8 @@ export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) 
         }}
       // クリックイベントを親（タブ/グループ）に伝播させない
       onClick={(e) => e.stopPropagation()}
+      // 編集中は disabled だが念のため dnd-kit のドラッグ判定を抑止する
+      onPointerDown={(e) => e.stopPropagation()}
     />
   );
 }

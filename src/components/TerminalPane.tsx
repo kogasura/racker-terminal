@@ -221,6 +221,8 @@ export const TerminalPane = memo(function TerminalPane({
           <button
             type="button"
             className="terminal-crashed-overlay__restart-btn"
+            // F6: spawning 中の二重クリック防止（recyclePty の二重実行による PtyHandle.dispose 多重呼び出しを防ぐ）
+            disabled={tab.status === 'spawning'}
             onClick={handleRestart}
           >
             Click to restart

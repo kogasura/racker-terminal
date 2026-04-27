@@ -18,7 +18,8 @@ interface TabItemProps {
 export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) {
   // 個別 subscribe で他タブの status 変化による再レンダを防ぐ
   const tab = useAppStore((s) => s.tabs[tabId]);
-  const editingId = useAppStore((s) => s.editingId);
+  // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
+  const isEditing = useAppStore((s) => s.editingId === tabId);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const removeTab = useAppStore((s) => s.removeTab);
   const startEditing = useAppStore((s) => s.startEditing);
@@ -27,8 +28,6 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   if (!tab) return null;
-
-  const isEditing = editingId === tabId;
 
   function handleDoubleClick(e: React.MouseEvent) {
     // 編集中のダブルクリックは無視
@@ -52,6 +51,8 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           className={`tab-item${isActive ? ' active' : ''}`}
           onClick={() => setActiveTab(tabId)}
           onDoubleClick={handleDoubleClick}
+          // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
+          onContextMenu={isEditing ? (e) => e.preventDefault() : undefined}
         >
           <span className={STATUS_DOT_CLASS[tab.status]} />
 

@@ -23,13 +23,14 @@ interface InlineEditProps {
  * - キャンセル: Escape → stopEditing のみ（元タイトル維持）
  */
 export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) {
-  const editingId = useAppStore((s) => s.editingId);
+  const isEditing = useAppStore((s) => s.editingId === id);
   const stopEditing = useAppStore((s) => s.stopEditing);
 
-  const isEditing = editingId === id;
   const [value, setValue] = useState(title);
   const isComposingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Escape → cancel() → stopEditing() の unmount 直前の blur による commit を防ぐフラグ
+  const skipBlurRef = useRef(false);
 
   // 編集モードに入った瞬間に value を現在の title に同期し、input にフォーカスを当てる
   useEffect(() => {
@@ -40,7 +41,11 @@ export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) 
         inputRef.current?.focus();
         inputRef.current?.select();
       });
-      return () => cancelAnimationFrame(rafId);
+      return () => {
+        cancelAnimationFrame(rafId);
+        // cleanup 時に skipBlurRef をリセットして次回編集開始時の状態を確実にクリアする
+        skipBlurRef.current = false;
+      };
     }
   // title は編集開始時の初期値として参照するため、isEditing が true になった瞬間のみ適用する
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -52,6 +57,8 @@ export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) 
   }
 
   function cancel() {
+    // Escape 直後の onBlur による commit を防ぐ（IME 中の Escape で特に発生）
+    skipBlurRef.current = true;
     stopEditing();
   }
 
@@ -86,7 +93,13 @@ export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) 
           cancel();
         }
       }}
-      onBlur={commit}
+      onBlur={() => {
+          if (skipBlurRef.current) {
+            skipBlurRef.current = false;
+            return;
+          }
+          commit();
+        }}
       // クリックイベントを親（タブ/グループ）に伝播させない
       onClick={(e) => e.stopPropagation()}
     />

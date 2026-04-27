@@ -124,6 +124,16 @@ describe('appStore', () => {
     });
   });
 
+  // --- startEditing / stopEditing ---
+  describe('startEditing / stopEditing', () => {
+    it('startEditing で editingId が設定され、stopEditing で null になる', () => {
+      useAppStore.getState().startEditing('some-id');
+      expect(useAppStore.getState().editingId).toBe('some-id');
+      useAppStore.getState().stopEditing();
+      expect(useAppStore.getState().editingId).toBeNull();
+    });
+  });
+
   // --- removeTab ---
   describe('removeTab', () => {
     it('タブと groups.tabIds から削除する', () => {
@@ -173,6 +183,29 @@ describe('appStore', () => {
       expect(() =>
         useAppStore.getState().removeTab('non-existent-tab-id'),
       ).not.toThrow();
+    });
+
+    // M2: removeTab 中の editingId クリア
+    it('削除対象タブが編集中のとき editingId が null になる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().startEditing(tabId);
+      expect(useAppStore.getState().editingId).toBe(tabId);
+
+      useAppStore.getState().removeTab(tabId);
+
+      expect(useAppStore.getState().editingId).toBeNull();
+    });
+
+    it('編集中でないタブを削除しても editingId は変わらない', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tab1 = useAppStore.getState().createTab(groupId);
+      const tab2 = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().startEditing(tab1);
+
+      useAppStore.getState().removeTab(tab2);
+
+      expect(useAppStore.getState().editingId).toBe(tab1);
     });
 
     // T1: forceDisposeRuntime が set() より先に呼ばれることの検証
@@ -237,6 +270,28 @@ describe('appStore', () => {
       ).not.toThrow();
       expect(useAppStore.getState().groups).toHaveLength(2);
     });
+
+    // M2: removeGroup 中の editingId クリア
+    it('削除対象グループが編集中のとき editingId が null になる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+      useAppStore.getState().startEditing(g1);
+      expect(useAppStore.getState().editingId).toBe(g1);
+
+      useAppStore.getState().removeGroup(g1);
+
+      expect(useAppStore.getState().editingId).toBeNull();
+    });
+
+    it('編集中でないグループを削除しても editingId は変わらない', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      useAppStore.getState().startEditing(g1);
+
+      useAppStore.getState().removeGroup(g2);
+
+      expect(useAppStore.getState().editingId).toBe(g1);
+    });
   });
 
   // --- updateGroupTitle ---
@@ -258,6 +313,26 @@ describe('appStore', () => {
       const long = 'a'.repeat(100);
       useAppStore.getState().updateGroupTitle(g1, long);
       expect(useAppStore.getState().groups[0].title).toHaveLength(64);
+    });
+
+    // M2: 存在しない groupId は no-op
+    it('存在しない groupId は no-op（例外を投げない）', () => {
+      const g1 = useAppStore.getState().createGroup('Existing');
+      const groupsBefore = useAppStore.getState().groups;
+
+      expect(() =>
+        useAppStore.getState().updateGroupTitle('non-existent-group', 'New'),
+      ).not.toThrow();
+
+      expect(useAppStore.getState().groups).toBe(groupsBefore);
+      void g1;
+    });
+
+    // M2: 空 trim は no-op（元タイトル維持）
+    it('空文字列（trim 後）は no-op（元タイトル維持）', () => {
+      const g1 = useAppStore.getState().createGroup('Original');
+      useAppStore.getState().updateGroupTitle(g1, '   ');
+      expect(useAppStore.getState().groups[0].title).toBe('Original');
     });
   });
 

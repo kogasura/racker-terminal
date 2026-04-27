@@ -167,7 +167,7 @@ export function createRuntime(
 
     resetForRecycle() {
       // 旧 ptyHandle 参照を null にして spawning フラグをリセットする。
-      // recyclebPty から startSpawn を再実行するための前処理。
+      // recyclePty から startSpawn を再実行するための前処理。
       // dispose() との違い: xterm / fitAddon / onDataSub / isDisposed には触れない。
       ptyHandle = null;
       spawning = false;
@@ -273,6 +273,10 @@ export function recyclePty(
   void runtime.ptyHandle?.dispose();
   // ptyHandle を null に、spawning フラグをリセット（startSpawn の二重起動防止を通過させる）
   runtime.resetForRecycle();
+
+  // F7: dispose の async 処理中にタブが削除された場合は startSpawn を呼ばない
+  if (!runtimes.has(tabId)) return;
+
   runtime.startSpawn(opts, (err) => {
     onError(err.message);
   });

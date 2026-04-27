@@ -22,7 +22,8 @@ export const GroupSection = memo(function GroupSection({
     }),
   );
   const activeTabId = useAppStore((s) => s.activeTabId);
-  const editingId = useAppStore((s) => s.editingId);
+  // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
+  const isEditingGroup = useAppStore((s) => s.editingId === groupId);
   const createTab = useAppStore((s) => s.createTab);
   const removeGroup = useAppStore((s) => s.removeGroup);
   const toggleCollapse = useAppStore((s) => s.toggleCollapse);
@@ -36,7 +37,6 @@ export const GroupSection = memo(function GroupSection({
 
   const { title, collapsed, tabIds } = groupView;
   const isEmpty = tabIds.length === 0;
-  const isEditingGroup = editingId === groupId;
 
   // グループ削除可能条件: タブが空 + グループが 2 個以上
   const canDeleteGroup = isEmpty && canDelete;
@@ -73,6 +73,8 @@ export const GroupSection = memo(function GroupSection({
             role="button"
             tabIndex={0}
             onClick={handleToggle}
+            // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
+            onContextMenu={isEditingGroup ? (e) => e.preventDefault() : undefined}
             onKeyDown={(e) => {
               if (isEditingGroup) return;
               if (e.key === 'Enter' || e.key === ' ') {

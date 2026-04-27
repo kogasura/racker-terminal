@@ -212,6 +212,9 @@ duplicateTab(tabId) {
 | VC10 | nushell exit → crashed → restart ボタン | 同 xterm に新プロンプトが表示され scrollback が保持される |
 | VC11 | ContextMenu 開いている間に Ctrl+Tab | タブ切替が効かない（suspend 確認） |
 | VC12 | 編集中に右クリック | ContextMenu が開かない（Trigger disabled） |
+| VC13 | IME 中に Escape | 元タイトルに戻り、blur による commit が走らない（skipBlurRef で防止） |
+
+> **VC11+: ウィンドウ blur 時の editingId 挙動**: タブを編集中に Alt+Tab で別アプリへ → 戻ってくると input にフォーカスが戻らないが editingId は残る。実装変更は必須ではないが、Phase 3 で window blur ハンドラで自動 stopEditing する余地あり。
 
 ---
 

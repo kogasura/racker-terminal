@@ -282,7 +282,9 @@ export const useAppStore = create<Store>()((set) => ({
           ? expandGroupContaining(newGroups, newActiveTabId)
           : newGroups;
 
-      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId };
+      // M2: 削除対象タブが編集中だった場合は editingId をクリアする
+      const newEditingId = state.editingId === tabId ? null : state.editingId;
+      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId, editingId: newEditingId };
     });
   },
 
@@ -314,6 +316,8 @@ export const useAppStore = create<Store>()((set) => ({
   },
 
   duplicateTab: (tabId) => {
+    // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
+    if (!useAppStore.getState().tabs[tabId]) return null;
     const newTabId = newId();
     let inserted = false;
 
@@ -360,17 +364,25 @@ export const useAppStore = create<Store>()((set) => ({
       if (state.groups.length === 1) return {};
       const target = state.groups.find((g) => g.id === groupId);
       if (!target || target.tabIds.length > 0) return {};
-      return { groups: state.groups.filter((g) => g.id !== groupId) };
+      // M2: 削除対象グループが編集中だった場合は editingId をクリアする
+      const newEditingId = state.editingId === groupId ? null : state.editingId;
+      return { groups: state.groups.filter((g) => g.id !== groupId), editingId: newEditingId };
     });
   },
 
   updateGroupTitle: (groupId, title) => {
-    const trimmed = title.trim().slice(0, 64);
-    set((state) => ({
-      groups: state.groups.map((g) =>
-        g.id === groupId ? { ...g, title: trimmed } : g,
-      ),
-    }));
+    set((state) => {
+      // M2: 存在しない groupId は no-op
+      if (!state.groups.some((g) => g.id === groupId)) return {};
+      const trimmed = title.trim().slice(0, 64);
+      // M2: trim 後が空文字列なら no-op（元タイトル維持）
+      if (!trimmed) return {};
+      return {
+        groups: state.groups.map((g) =>
+          g.id === groupId ? { ...g, title: trimmed } : g,
+        ),
+      };
+    });
   },
 
   toggleCollapse: (groupId) => {

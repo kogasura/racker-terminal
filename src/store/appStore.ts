@@ -40,6 +40,33 @@ export function selectFallbackTab(
   return null;
 }
 
+/**
+ * サイドバー表示順（groups 配列順 → 各グループの tabIds 順）でタブをフラット化し、
+ * 現在の activeTabId の次のタブ ID を返す。末尾→先頭でラップ。
+ * activeTabId が null か全タブにマッチしない場合は null。
+ */
+export function selectNextTabId(state: AppState): string | null {
+  // 空グループはスキップしてフラットなタブ ID 一覧を構築する
+  const flatIds = state.groups.flatMap((g) => g.tabIds);
+  if (flatIds.length === 0) return null;
+  if (state.activeTabId === null) return null;
+  const idx = flatIds.indexOf(state.activeTabId);
+  if (idx === -1) return null;
+  // 末尾の場合は先頭へラップ
+  return flatIds[(idx + 1) % flatIds.length];
+}
+
+/** 同上、前のタブを返す。先頭→末尾でラップ */
+export function selectPrevTabId(state: AppState): string | null {
+  const flatIds = state.groups.flatMap((g) => g.tabIds);
+  if (flatIds.length === 0) return null;
+  if (state.activeTabId === null) return null;
+  const idx = flatIds.indexOf(state.activeTabId);
+  if (idx === -1) return null;
+  // 先頭の場合は末尾へラップ
+  return flatIds[(idx - 1 + flatIds.length) % flatIds.length];
+}
+
 interface AppActions {
   setActiveTab: (tabId: string | null) => void;
   startEditing: (id: string) => void;

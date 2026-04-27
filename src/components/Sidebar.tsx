@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { GroupSection } from './GroupSection';
+import { FavoritesSection } from './FavoritesSection';
 import '../styles/sidebar.css';
 
 export const Sidebar = memo(function Sidebar() {
@@ -13,6 +14,9 @@ export const Sidebar = memo(function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar__scroll-area">
+        {/* Favorites セクションはグループ一覧の上部に表示する */}
+        <FavoritesSection />
+
         {groupIds.map((groupId) => (
           <GroupSection
             key={groupId}

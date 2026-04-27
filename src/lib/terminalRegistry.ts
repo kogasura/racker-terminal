@@ -42,13 +42,25 @@ export interface TerminalRuntime {
   resetForRecycle(): void;
 
   /**
+   * OSC タイトル変更購読の IDisposable。
+   * createRuntime 内で term.onTitleChange を購読して取得する。
+   * dispose() の中で titleSub.dispose() を呼ぶ。
+   */
+  titleSub: IDisposable;
+
+  /**
+   * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
+   * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
+   * fontSize / fontFamily / scrollback を term.options に直接書き込む。
+   */
+  applySettings(settings: Settings): void;
+
+  /**
    * 全リソース解放。§3.2 の順序を厳守。
    * ResizeObserver の disconnect は TerminalPane の useEffect cleanup 側の責務。
    */
   dispose(): void;
 }
-
-// TODO (Unit D+E): OSC タイトル変更対応のため titleSub?: IDisposable を追加予定
 
 interface Entry {
   refs: number;
@@ -68,6 +80,15 @@ export function createRuntime(
   tabId: string,
   callbacks: {
     onLive: (ptyId: string) => void;
+    /**
+     * OSC タイトル変更時のコールバック。
+     * - isEditing: 現在タブ名を編集中かどうか（true のとき no-op）
+     * - title: OSC から受け取った新しいタイトル（256 文字に切り詰め済み）
+     * TerminalPane の useEffect 内で `() => useAppStore.getState().editingId === tabId`
+     * と `(t) => updateTabTitle(tabId, t)` を渡す。
+     */
+    isEditing: () => boolean;
+    onOscTitle: (title: string) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -126,12 +147,22 @@ export function createRuntime(
     }
   });
 
+  // OSC タイトル変更を購読してタブ名を自動更新する。
+  // 編集中ガード: callbacks.isEditing() が true のとき OSC を無視してユーザー編集を保護する。
+  // 文字長制限: title.slice(0, 256) で切り詰めてから onOscTitle を呼ぶ。
+  const titleSub = term.onTitleChange((title) => {
+    if (isDisposed) return;
+    if (callbacks.isEditing()) return;
+    callbacks.onOscTitle(title.slice(0, 256));
+  });
+
   const runtime: TerminalRuntime = {
     get term() { return term; },
     get fitAddon() { return fitAddon; },
     get ptyHandle() { return ptyHandle; },
     get pendingInputs() { return pendingInputs; },
     onDataSub,
+    titleSub,
 
     setOnEvent(handler) {
       if (isDisposed) return;
@@ -173,11 +204,21 @@ export function createRuntime(
       spawning = false;
     },
 
+    applySettings(settings) {
+      // Settings 変更を xterm.options に即時反映する。
+      // Settings UI は Phase 3 送りのため、Phase 2 では機構のみ用意する。
+      term.options.fontSize = settings.fontSize;
+      term.options.fontFamily = settings.fontFamily;
+      term.options.scrollback = settings.scrollback;
+    },
+
     dispose() {
       // §3.2 の順序を厳守。この順序を変えない。
       isDisposed = true;
       onEventHandler = null;
       onDataSub.dispose();
+      // OSC タイトル購読を解放する（onDataSub の隣に配置）
+      titleSub.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();
@@ -280,6 +321,14 @@ export function recyclePty(
   runtime.startSpawn(opts, (err) => {
     onError(err.message);
   });
+}
+
+/**
+ * 全 runtime を配列で返す。
+ * App.tsx の settings subscribe から applySettings を broadcast するために使用する。
+ */
+export function getAllRuntimes(): TerminalRuntime[] {
+  return Array.from(runtimes.values()).map((e) => e.runtime);
 }
 
 /** テスト用: 登録済みの runtime 数を返す */

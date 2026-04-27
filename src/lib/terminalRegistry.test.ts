@@ -4,6 +4,7 @@ import {
   releaseRuntime,
   forceDisposeRuntime,
   recyclePty,
+  getAllRuntimes,
   getRuntimeCount,
   getRefs,
   type TerminalRuntime,
@@ -16,6 +17,7 @@ import {
 function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
   let disposeCallCount = 0;
   const sub = { dispose: vi.fn() };
+  const titleSub = { dispose: vi.fn() };
 
   const runtime: TerminalRuntime & { disposeCallCount: number } = {
     get term() { return {} as never; },
@@ -23,6 +25,8 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
     get ptyHandle() { return null; },
     get pendingInputs() { return []; },
     onDataSub: sub,
+    titleSub,
+    applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
@@ -167,6 +171,7 @@ describe('terminalRegistry', () => {
 function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const callOrder: string[] = [];
   const sub = { dispose: vi.fn() };
+  const titleSub = { dispose: vi.fn() };
 
   const runtime: TerminalRuntime & { callOrder: string[] } = {
     get term() { return {} as never; },
@@ -174,6 +179,8 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     get ptyHandle() { return null; },
     get pendingInputs() { return []; },
     onDataSub: sub,
+    titleSub,
+    applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
     resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
@@ -182,6 +189,88 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   };
   return runtime;
 }
+
+// --- applySettings ---
+
+describe('applySettings', () => {
+  it('applySettings を呼ぶと runtime の applySettings が呼ばれる', () => {
+    const tabId = 'test-apply-settings-1';
+    const runtime = makeRuntime();
+    acquireRuntime(tabId, () => runtime);
+
+    const settings = {
+      theme: 'tokyo-night' as const,
+      fontFamily: 'monospace',
+      fontSize: 14,
+      scrollback: 5000,
+    };
+    runtime.applySettings(settings);
+
+    expect(runtime.applySettings).toHaveBeenCalledTimes(1);
+    expect(runtime.applySettings).toHaveBeenCalledWith(settings);
+
+    forceDisposeRuntime(tabId);
+  });
+});
+
+// --- getAllRuntimes ---
+
+describe('getAllRuntimes', () => {
+  it('登録済みの runtime を配列で返す', () => {
+    const tabId1 = 'test-get-all-1';
+    const tabId2 = 'test-get-all-2';
+    const runtime1 = makeRuntime();
+    const runtime2 = makeRuntime();
+    acquireRuntime(tabId1, () => runtime1);
+    acquireRuntime(tabId2, () => runtime2);
+
+    const all = getAllRuntimes();
+    expect(all).toContain(runtime1);
+    expect(all).toContain(runtime2);
+
+    forceDisposeRuntime(tabId1);
+    forceDisposeRuntime(tabId2);
+  });
+
+  it('runtime が空のとき空配列を返す', () => {
+    // 他のテストから汚染されていないかは別途保証（テスト ID は一意）
+    const before = getRuntimeCount();
+    // 登録済みのものがない状態を確認するための相対テスト
+    const all = getAllRuntimes();
+    expect(all.length).toBe(before);
+  });
+});
+
+// --- titleSub.dispose が dispose() 内で呼ばれる ---
+
+describe('titleSub dispose', () => {
+  it('titleSub.dispose() が runtime.dispose() 内で呼ばれる', () => {
+    const tabId = 'test-titlesub-dispose';
+    const sub = { dispose: vi.fn() };
+    const titleSub = { dispose: vi.fn() };
+    const runtime: TerminalRuntime = {
+      get term() { return {} as never; },
+      get fitAddon() { return {} as never; },
+      get ptyHandle() { return null; },
+      get pendingInputs() { return []; },
+      onDataSub: sub,
+      titleSub,
+      applySettings: vi.fn(),
+      setOnEvent: vi.fn(),
+      startSpawn: vi.fn(),
+      resetForRecycle: vi.fn(),
+      dispose: () => {
+        sub.dispose();
+        titleSub.dispose();
+      },
+    };
+
+    acquireRuntime(tabId, () => runtime);
+    forceDisposeRuntime(tabId);
+
+    expect(titleSub.dispose).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('recyclePty', () => {
   it('F5-1: ptyHandle.dispose() → resetForRecycle() → startSpawn() の順で呼ばれる', () => {

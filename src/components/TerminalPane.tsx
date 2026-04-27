@@ -53,6 +53,7 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const settings = useAppStore((s) => s.settings);
   const setTabStatus = useAppStore((s) => s.setTabStatus);
+  const updateTabTitle = useAppStore((s) => s.updateTabTitle);
 
   const divRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalRuntime | null>(null);
@@ -64,6 +65,10 @@ export const TerminalPane = memo(function TerminalPane({
     const runtime = acquireRuntime(tabId, () =>
       createRuntime(divRef.current!, settings, tabId, {
         onLive: (ptyId) => setTabStatus(tabId, 'live', ptyId),
+        // 編集中ガード: editingId === tabId のとき OSC タイトルを無視する
+        isEditing: () => useAppStore.getState().editingId === tabId,
+        // OSC タイトルを受け取って updateTabTitle に渡す（256 文字制限は terminalRegistry 側で適用済み）
+        onOscTitle: (title) => updateTabTitle(tabId, title),
       }),
     );
     runtimeRef.current = runtime;

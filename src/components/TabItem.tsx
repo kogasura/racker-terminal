@@ -25,6 +25,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const startEditing = useAppStore((s) => s.startEditing);
   const updateTabTitle = useAppStore((s) => s.updateTabTitle);
   const duplicateTab = useAppStore((s) => s.duplicateTab);
+  const addFavorite = useAppStore((s) => s.addFavorite);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   if (!tab) return null;
@@ -91,6 +92,21 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
             onSelect={() => duplicateTab(tabId)}
           >
             複製
+          </ContextMenu.Item>
+
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => {
+              // 元タブの shell / cwd / env / title を引き継いでお気に入りに登録する
+              addFavorite({
+                title: tab.title,
+                shell: tab.shell,
+                cwd: tab.cwd,
+                env: tab.env,
+              });
+            }}
+          >
+            お気に入りに追加
           </ContextMenu.Item>
 
           <ContextMenu.Separator className="context-menu__separator" />

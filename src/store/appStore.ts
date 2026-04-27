@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, Group, Settings, Tab, TabStatus } from '../types';
+import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 
@@ -93,6 +93,26 @@ interface AppActions {
    * キーボード遷移（Ctrl+Tab 等）では navigateToTab を使うこと。
    */
   setActiveTab: (tabId: string | null) => void;
+
+  /**
+   * お気に入りを追加し、発行した id を返す。
+   * 同一 title でも別 id が発行されるため重複登録が可能。
+   */
+  addFavorite: (fav: Omit<Favorite, 'id'>) => string;
+
+  /**
+   * お気に入りを削除する。
+   * 存在しない favId は no-op。
+   */
+  removeFavorite: (favId: string) => void;
+
+  /**
+   * お気に入りの設定で新しいタブを spawn する。
+   * - shell / cwd / env を Favorite から引き継ぐ
+   * - title は Favorite.defaultTabTitle ?? Favorite.title
+   * - 存在しない favId は null を返す
+   */
+  spawnFavorite: (favId: string) => string | null;
   /**
    * tabId を active にし、その tabId を含むグループが折りたたまれていれば自動展開する。
    * Ctrl+Tab / Ctrl+Shift+Tab のキーボード遷移で使用する。
@@ -183,7 +203,7 @@ interface AppActions {
 
 type Store = AppState & AppActions;
 
-export const useAppStore = create<Store>()((set) => ({
+export const useAppStore = create<Store>()((set, get) => ({
   groups: [],
   tabs: {},
   favorites: [],
@@ -191,6 +211,32 @@ export const useAppStore = create<Store>()((set) => ({
   editingId: null,
   contextMenuOpen: false,
   settings: defaultSettings,
+
+  addFavorite: (fav) => {
+    const id = newId();
+    set((state) => ({
+      favorites: [...state.favorites, { ...fav, id }],
+    }));
+    return id;
+  },
+
+  removeFavorite: (favId) => {
+    set((state) => ({
+      favorites: state.favorites.filter((f) => f.id !== favId),
+    }));
+  },
+
+  spawnFavorite: (favId) => {
+    const fav = get().favorites.find((f) => f.id === favId);
+    if (!fav) return null;
+    const title = fav.defaultTabTitle ?? fav.title;
+    return get().createTab(undefined, {
+      title,
+      shell: fav.shell,
+      cwd: fav.cwd,
+      env: fav.env,
+    });
+  },
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
   navigateToTab: (tabId) =>
@@ -317,7 +363,7 @@ export const useAppStore = create<Store>()((set) => ({
 
   duplicateTab: (tabId) => {
     // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
-    if (!useAppStore.getState().tabs[tabId]) return null;
+    if (!get().tabs[tabId]) return null;
     const newTabId = newId();
     let inserted = false;
 

@@ -465,8 +465,23 @@ const sensors = useSensors(
 ```
 
 - `collisionDetection: closestCorners`
-- ドラッグ終了時に `onDragEnd` でインデックス更新 → Zustand の `reorderTabs` を呼ぶ
-- DragOverlay でドラッグ中の幽霊タブを描画（オプション）
+- ドラッグ終了時に `onDragEnd` でインデックス更新 → Zustand の `moveTab` を呼ぶ
+- DragOverlay でドラッグ中の幽霊タブを body に Portal 描画
+
+**Unit F 実装完了 (PR #13 相当)**
+
+`moveTab(tabId, toGroupId, toIndex)` API:
+- fromGroup の tabIds から対象を除去 → toGroup の tabIds の toIndex 位置に挿入
+- toIndex は `[0, toGroup.tabIds.length]` にクランプ
+- 同一グループ内並び替えにも使用（from 除去後の長さ基準でクランプ）
+- 不正な tabId / toGroupId は no-op
+- tab.groupId フィールドも更新
+
+コンポーネント構成:
+- `Sidebar.tsx`: `DndContext` + sensors + `onDragStart/End` + `DragOverlay` (body Portal)
+- `GroupSection.tsx`: `SortableContext` (verticalListSortingStrategy) + `useDroppable` (`group-{id}`)
+- `TabItem.tsx`: `useSortable({ id: tabId, data: { groupId }, disabled: isEditing })`
+- `TabItemPreview`: DragOverlay 内の最小プレビュー (status dot + title)
 
 ### 3.8 パフォーマンス方針
 

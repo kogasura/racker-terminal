@@ -287,6 +287,33 @@
   cursor: text;
 }
 
+/* ----- D&D スタイル ----- */
+
+/* ドロップ可能なグループ本体（デフォルト余白を確保して drop 領域を確保する） */
+.group-body {
+  min-height: 4px;
+  transition: background 120ms ease;
+}
+
+/* ドラッグ中にグループ本体がターゲットになった時のハイライト */
+.group-body--drop-over {
+  background: rgba(122, 162, 247, 0.08);
+}
+
+/* DragOverlay: body に Portal 描画されるドラッグ中プレビュー */
+.tab-item--drag-overlay {
+  /* サイドバーの実寸に合わせる（fixed 描画のため親に依存しない） */
+  width: 240px;
+  background: var(--tab-item-bg-active);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  /* ContextMenu などの Portal より前面に出す */
+  z-index: 10000;
+  cursor: grabbing;
+  opacity: 0.95;
+}
+
 /* ----- コンテキストメニュー ----- */
 .context-menu__content {
   background: var(--group-header-bg);

@@ -1,4 +1,6 @@
 import { memo } from 'react';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { useDroppable } from '@dnd-kit/core';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
@@ -7,6 +9,23 @@ import { InlineEdit } from './InlineEdit';
 
 interface GroupSectionProps {
   groupId: string;
+}
+
+/**
+ * グループ本体の droppable ラッパー。
+ * 空グループへのドロップや、タブリスト下部への drop を受け付ける。
+ * id は "group-{groupId}" 形式で Sidebar の onDragEnd から参照する。
+ */
+function GroupBody({ groupId, children }: { groupId: string; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `group-${groupId}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`group-body${isOver ? ' group-body--drop-over' : ''}`}
+    >
+      {children}
+    </div>
+  );
 }
 
 export const GroupSection = memo(function GroupSection({
@@ -148,14 +167,18 @@ export const GroupSection = memo(function GroupSection({
 
       {/* グループ本体（折りたたみ時は非表示） */}
       {!collapsed && (
-        <div className="group-body">
-          {tabIds.map((tabId) => (
-            <TabItem
-              key={tabId}
-              tabId={tabId}
-              isActive={tabId === activeTabId}
-            />
-          ))}
+        // GroupBody: useDroppable で空グループや末尾へのドロップを受け付ける
+        <GroupBody groupId={groupId}>
+          {/* SortableContext: 各タブを sortable にする */}
+          <SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
+            {tabIds.map((tabId) => (
+              <TabItem
+                key={tabId}
+                tabId={tabId}
+                isActive={tabId === activeTabId}
+              />
+            ))}
+          </SortableContext>
 
           {/* "+ Add Tab" インラインボタン（常に末尾に表示） */}
           {/* F3: type="button" 追加 */}
@@ -166,7 +189,7 @@ export const GroupSection = memo(function GroupSection({
           >
             + Add Tab
           </button>
-        </div>
+        </GroupBody>
       )}
     </div>
   );

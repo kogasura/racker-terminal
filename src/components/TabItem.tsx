@@ -26,13 +26,16 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
       className={`tab-item${isActive ? ' active' : ''}`}
       onClick={() => setActiveTab(tabId)}
     >
-      <span className={STATUS_DOT_CLASS[tab.status] ?? 'tab-item__status-dot'} />
+      {/* F4: ?? デッドコード削除（型上 TabStatus は exhaustive） */}
+      <span className={STATUS_DOT_CLASS[tab.status]} />
 
       <span className="tab-item__title" title={tab.title}>
         {tab.title}
       </span>
 
+      {/* F3: type="button" 追加 */}
       <button
+        type="button"
         className="tab-item__close-btn"
         title="Close tab"
         onClick={(e) => {

@@ -160,6 +160,13 @@ describe('appStore', () => {
       expect(useAppStore.getState().activeTabId).toBe(tab1);
     });
 
+    // T2: 存在しない tabId → no-op（例外を投げない）
+    it('存在しない tabId を渡しても例外を投げない', () => {
+      expect(() =>
+        useAppStore.getState().removeTab('non-existent-tab-id'),
+      ).not.toThrow();
+    });
+
     // T1: forceDisposeRuntime が set() より先に呼ばれることの検証
     it('forceDisposeRuntime は set より先に呼ばれる（タブがまだ store に残っている状態で呼ばれる）', () => {
       const groupId = useAppStore.getState().createGroup();
@@ -209,6 +216,17 @@ describe('appStore', () => {
 
       useAppStore.getState().removeGroup(g1);
 
+      expect(useAppStore.getState().groups).toHaveLength(2);
+    });
+
+    // T3: 存在しない groupId → no-op（例外を投げない）
+    it('存在しない groupId を渡しても例外を投げない', () => {
+      useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+
+      expect(() =>
+        useAppStore.getState().removeGroup('non-existent-group-id'),
+      ).not.toThrow();
       expect(useAppStore.getState().groups).toHaveLength(2);
     });
   });
@@ -281,6 +299,32 @@ describe('appStore', () => {
 
       const ids = useAppStore.getState().groups.map((g) => g.id);
       expect(ids).toEqual([g2, g1]);
+    });
+
+    // T1: 追加テスト
+    it('同 index 指定 → no-op（配列参照が変わらない）', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      void g2;
+      const before = useAppStore.getState().groups;
+
+      // g1 は index 0 → 同じ index 0 に移動
+      useAppStore.getState().moveGroup(g1, 0);
+
+      const after = useAppStore.getState().groups;
+      // no-op なので配列参照が同一のまま
+      expect(after).toBe(before);
+    });
+
+    it('存在しない groupId → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      void g1;
+      const before = useAppStore.getState().groups;
+
+      useAppStore.getState().moveGroup('non-existent', 0);
+
+      const after = useAppStore.getState().groups;
+      expect(after).toBe(before);
     });
   });
 

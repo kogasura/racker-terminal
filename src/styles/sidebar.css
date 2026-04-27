@@ -87,26 +87,19 @@
   padding: 0 2px;
   font-size: 14px;
   line-height: 1;
-  opacity: 0;
+  opacity: 0.5;
   flex-shrink: 0;
 }
 
-.group-header:hover .group-header__delete-btn {
-  opacity: 0.5;
-}
-
 .group-header__delete-btn:hover {
-  opacity: 1 !important;
+  opacity: 1;
 }
 
 .group-header__delete-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.2 !important;
+  opacity: 0.2;
 }
 
-.group-body {
-  /* collapsed 時は非表示（JS で要素ごと除去するので CSS は補完用） */
-}
 
 /* ----- Add Tab インラインボタン ----- */
 .group-add-tab-btn {
@@ -177,12 +170,8 @@
   padding: 0 2px;
   font-size: 14px;
   line-height: 1;
-  opacity: 0;
+  opacity: 0.5;
   flex-shrink: 0;
-}
-
-.tab-item:hover .tab-item__close-btn {
-  opacity: 0.6;
 }
 
 .tab-item__close-btn:hover {

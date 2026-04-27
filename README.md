@@ -4,13 +4,25 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 
 ## Status
 
-**Phase 2 (UI 本命) 完成 (2026-04-27) / Phase 3 で永続化・配布へ。**
+**Phase 3 (絞り込みスコープ) 完成 (2026-04-27) / Phase 4 で永続化・配布へ。**
 
 - **Phase 1**: Tauri 2 + React 19 + xterm.js + portable-pty で nushell が起動・入出力できる最小構成
 - **Phase 2**: 縦サイドバー（グループ + タブ 2 階層）、InlineEdit、右クリックメニュー、お気に入り、Ctrl+Tab 等のキーボードショートカット、D&D、OSC タイトル自動更新、StrictMode/HMR 復活
-- **Phase 3**: 永続化、Tab.title 構造分離、WebGL renderer、Settings UI、配布（インストーラー）など — [phase3-plan.md](docs/phase3-plan.md)
+- **Phase 3 (絞り込み)**: WebGL renderer 復活、detached thread リーク撲滅、spawning タイムアウト、IME 改善、e.code ベースキーバインド、異常終了の網羅検証
+- **Phase 4 (予定)**: 永続化 (zustand persist)、Tab.title 構造分離、グループ D&D、Settings UI、配布（インストーラー）など — [phase3-plan.md §4](docs/phase3-plan.md)
 
-### Phase 2 ハイライト
+### Phase 3 ハイライト
+
+| 機能 | 実装 |
+|---|---|
+| WebGL renderer 復活 | `setupWebglRenderer` ヘルパー + `onContextLoss` で Canvas フォールバック |
+| detached thread リーク撲滅 | Drop で reader/flush/watch を直接 join (Phase 1 の detached spawn 撤廃) |
+| spawning タイムアウト | 10 秒経過で自動 crashed (EDR 環境対応) |
+| IME 改善 | `term.textarea` の compositionstart/end + `attachCustomKeyEventHandler` の `e.isComposing` 二重ガード |
+| e.code 切替 | CapsLock / AZERTY / 非 ASCII レイアウト対応 |
+| 異常終了検証 | Ctrl-D / Exit / taskkill / ssh 切断 / タスクマネージャ強制終了の網羅性確認 |
+
+### Phase 2 ハイライト (継続)
 
 | 機能 | 実装 |
 |---|---|
@@ -25,14 +37,14 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 | restart | crashed タブで scrollback 維持しつつ PTY 差し替え |
 | Rust 側 | 2 スレッド reader + flush + child watcher、back-pressure (4MB) |
 
-詳細は [phase2-plan.md](docs/phase2-plan.md) と各 Unit 設計書 (`docs/unit-*-design.md`) 参照。
+詳細は [phase2-plan.md](docs/phase2-plan.md) / [phase3-plan.md](docs/phase3-plan.md) と各 Unit 設計書 (`docs/unit-*-design.md`) 参照。
 
 ### テスト
 
-| 種別 | 件数 |
-|---|---|
-| Frontend (vitest) | 131 |
-| Rust (cargo test) | 10 |
+| 種別 | Phase 2 完成 | Phase 3 完成 |
+|---|---|---|
+| Frontend (vitest) | 131 | **142** |
+| Rust (cargo test) | 10 | **10** |
 
 互換性マトリクス: [compatibility-matrix.md](docs/compatibility-matrix.md)
 
@@ -59,8 +71,10 @@ npm run tauri dev
 
 1. **タブのグループ化**: 縦サイドバーで折りたたみ可能なグループ + タブの 2 階層 — Phase 2 完了
 2. **お気に入り**: ワンクリックで頻用プロジェクトを新規タブ起動 — Phase 2 完了
-3. **永続化**: アプリ再起動時にタブ・グループ・お気に入りを復元 — Phase 3
-4. **タブのスリープ化**: 作業を寝かせる専用「sleep」グループ — Phase 3 で要否再検討
+3. **WebGL renderer**: パフォーマンス向上、Canvas フォールバック付き — Phase 3 完了
+4. **永続化**: アプリ再起動時にタブ・グループ・お気に入りを復元 — Phase 4
+5. **配布**: msi/exe インストーラー — Phase 4
+6. **タブのスリープ化**: 作業を寝かせる専用「sleep」グループ — Phase 4 で要否再検討
 
 設計書: [phase1-plan.md](docs/phase1-plan.md) / [phase2-plan.md](docs/phase2-plan.md) / [phase3-plan.md](docs/phase3-plan.md)
 

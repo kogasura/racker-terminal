@@ -181,6 +181,109 @@ describe('appStore', () => {
     });
   });
 
+  // --- removeGroup ---
+  describe('removeGroup', () => {
+    it('グループが 2 個 + 対象グループの tabIds が空 → 削除される', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().removeGroup(g1);
+
+      const { groups } = useAppStore.getState();
+      expect(groups).toHaveLength(1);
+      expect(groups.find((g) => g.id === g1)).toBeUndefined();
+    });
+
+    it('グループが 1 個 → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+
+      useAppStore.getState().removeGroup(g1);
+
+      expect(useAppStore.getState().groups).toHaveLength(1);
+    });
+
+    it('対象グループに tabIds がある → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+      useAppStore.getState().createTab(g1);
+
+      useAppStore.getState().removeGroup(g1);
+
+      expect(useAppStore.getState().groups).toHaveLength(2);
+    });
+  });
+
+  // --- updateGroupTitle ---
+  describe('updateGroupTitle', () => {
+    it('通常更新', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      useAppStore.getState().updateGroupTitle(g1, 'New');
+      expect(useAppStore.getState().groups[0].title).toBe('New');
+    });
+
+    it('trim される', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      useAppStore.getState().updateGroupTitle(g1, '  trimmed  ');
+      expect(useAppStore.getState().groups[0].title).toBe('trimmed');
+    });
+
+    it('64 文字超は 64 文字に切り詰められる', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      const long = 'a'.repeat(100);
+      useAppStore.getState().updateGroupTitle(g1, long);
+      expect(useAppStore.getState().groups[0].title).toHaveLength(64);
+    });
+  });
+
+  // --- toggleCollapse ---
+  describe('toggleCollapse', () => {
+    it('false → true → false の往復', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      expect(useAppStore.getState().groups[0].collapsed).toBe(false);
+
+      useAppStore.getState().toggleCollapse(g1);
+      expect(useAppStore.getState().groups[0].collapsed).toBe(true);
+
+      useAppStore.getState().toggleCollapse(g1);
+      expect(useAppStore.getState().groups[0].collapsed).toBe(false);
+    });
+  });
+
+  // --- moveGroup ---
+  describe('moveGroup', () => {
+    it('インデックスを入れ替える', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const g3 = useAppStore.getState().createGroup('G3');
+
+      // G1 (index 0) を index 2 に移動 → [G2, G3, G1]
+      useAppStore.getState().moveGroup(g1, 2);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g3, g1]);
+    });
+
+    it('負のインデックスは 0 にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().moveGroup(g2, -5);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g1]);
+    });
+
+    it('上限超えのインデックスは groups.length-1 にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().moveGroup(g1, 999);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g1]);
+    });
+  });
+
   // --- setTabStatus ---
   describe('setTabStatus', () => {
     it('spawning → live に変更し ptyId を設定する', () => {

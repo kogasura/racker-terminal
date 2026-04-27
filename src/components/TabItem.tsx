@@ -1,5 +1,7 @@
 import { memo } from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
+import { InlineEdit } from './InlineEdit';
 import type { TabStatus } from '../types';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
@@ -16,35 +18,91 @@ interface TabItemProps {
 export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) {
   // 個別 subscribe で他タブの status 変化による再レンダを防ぐ
   const tab = useAppStore((s) => s.tabs[tabId]);
+  // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
+  const isEditing = useAppStore((s) => s.editingId === tabId);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const removeTab = useAppStore((s) => s.removeTab);
+  const startEditing = useAppStore((s) => s.startEditing);
+  const updateTabTitle = useAppStore((s) => s.updateTabTitle);
+  const duplicateTab = useAppStore((s) => s.duplicateTab);
+  const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   if (!tab) return null;
 
+  function handleDoubleClick(e: React.MouseEvent) {
+    // 編集中のダブルクリックは無視
+    if (isEditing) return;
+    e.preventDefault();
+    startEditing(tabId);
+  }
+
+  function handleCommit(newTitle: string) {
+    updateTabTitle(tabId, newTitle);
+  }
+
   return (
-    <div
-      className={`tab-item${isActive ? ' active' : ''}`}
-      onClick={() => setActiveTab(tabId)}
-    >
-      {/* F4: ?? デッドコード削除（型上 TabStatus は exhaustive） */}
-      <span className={STATUS_DOT_CLASS[tab.status]} />
-
-      <span className="tab-item__title" title={tab.title}>
-        {tab.title}
-      </span>
-
-      {/* F3: type="button" 追加 */}
-      <button
-        type="button"
-        className="tab-item__close-btn"
-        title="Close tab"
-        onClick={(e) => {
-          e.stopPropagation();
-          removeTab(tabId);
-        }}
+    <ContextMenu.Root onOpenChange={(open) => setContextMenuOpen(open)}>
+      {/* 編集中は右クリックメニューを無効化する */}
+      <ContextMenu.Trigger
+        disabled={isEditing}
+        asChild
       >
-        ×
-      </button>
-    </div>
+        <div
+          className={`tab-item${isActive ? ' active' : ''}`}
+          onClick={() => setActiveTab(tabId)}
+          onDoubleClick={handleDoubleClick}
+          // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
+          onContextMenu={isEditing ? (e) => e.preventDefault() : undefined}
+        >
+          <span className={STATUS_DOT_CLASS[tab.status]} />
+
+          <InlineEdit
+            id={tabId}
+            title={tab.title}
+            onCommit={handleCommit}
+            className="tab-item__title"
+          />
+
+          <button
+            type="button"
+            className="tab-item__close-btn"
+            title="Close tab"
+            onClick={(e) => {
+              e.stopPropagation();
+              removeTab(tabId);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </ContextMenu.Trigger>
+
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => startEditing(tabId)}
+          >
+            リネーム
+          </ContextMenu.Item>
+
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => duplicateTab(tabId)}
+          >
+            複製
+          </ContextMenu.Item>
+
+          <ContextMenu.Separator className="context-menu__separator" />
+
+          <ContextMenu.Item
+            className="context-menu__item context-menu__item--danger"
+            onSelect={() => removeTab(tabId)}
+          >
+            閉じる
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 });

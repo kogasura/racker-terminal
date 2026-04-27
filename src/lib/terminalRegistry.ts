@@ -35,6 +35,13 @@ export interface TerminalRuntime {
   startSpawn(opts: SpawnOptions, onError: (e: Error) => void): void;
 
   /**
+   * recyclePty 専用: 旧 PTY ハンドルを null にして spawning フラグをリセットする。
+   * startSpawn の二重起動防止チェックを通過させるために必要。
+   * recyclePty 以外から呼ばないこと。
+   */
+  resetForRecycle(): void;
+
+  /**
    * 全リソース解放。§3.2 の順序を厳守。
    * ResizeObserver の disconnect は TerminalPane の useEffect cleanup 側の責務。
    */
@@ -158,6 +165,14 @@ export function createRuntime(
         });
     },
 
+    resetForRecycle() {
+      // 旧 ptyHandle 参照を null にして spawning フラグをリセットする。
+      // recyclePty から startSpawn を再実行するための前処理。
+      // dispose() との違い: xterm / fitAddon / onDataSub / isDisposed には触れない。
+      ptyHandle = null;
+      spawning = false;
+    },
+
     dispose() {
       // §3.2 の順序を厳守。この順序を変えない。
       isDisposed = true;
@@ -226,6 +241,45 @@ export function forceDisposeRuntime(tabId: string): void {
   if (!entry) return;
   entry.runtime.dispose();
   runtimes.delete(tabId);
+}
+
+/**
+ * crashed タブの PTY のみを差し替えて再起動する。
+ * xterm インスタンスはそのまま維持するため scrollback が保全される。
+ *
+ * 処理順:
+ * 1. 旧 PTY を fire-and-forget で dispose（xterm は維持）
+ * 2. resetForRecycle() で ptyHandle=null / spawning=false にリセット
+ * 3. startSpawn() で新規 PTY を spawn
+ *
+ * 呼び出し元責務:
+ * - 呼び出し前に setTabStatus(tabId, 'spawning') を呼んで UI 状態を更新すること
+ * - onLive 通知は createRuntime 時に渡した callbacks.onLive 経由で行われる
+ *   （TerminalPane の handlePtyEvent → setTabStatus が呼ばれる）
+ * - 失敗時は onError コールバックが呼ばれるので setTabStatus(tabId, 'crashed') を呼ぶこと
+ *
+ * NOTE: forceDisposeRuntime は使わない。xterm ごと破棄すると scrollback が失われる。
+ */
+export function recyclePty(
+  tabId: string,
+  opts: SpawnOptions,
+  onError: (msg: string) => void,
+): void {
+  const entry = runtimes.get(tabId);
+  if (!entry) return;
+  const runtime = entry.runtime;
+
+  // 旧 PTY を fire-and-forget で解放（xterm は維持）
+  void runtime.ptyHandle?.dispose();
+  // ptyHandle を null に、spawning フラグをリセット（startSpawn の二重起動防止を通過させる）
+  runtime.resetForRecycle();
+
+  // F7: dispose の async 処理中にタブが削除された場合は startSpawn を呼ばない
+  if (!runtimes.has(tabId)) return;
+
+  runtime.startSpawn(opts, (err) => {
+    onError(err.message);
+  });
 }
 
 /** テスト用: 登録済みの runtime 数を返す */

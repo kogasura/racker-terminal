@@ -3,6 +3,7 @@ import {
   acquireRuntime,
   releaseRuntime,
   forceDisposeRuntime,
+  recyclePty,
   getRuntimeCount,
   getRefs,
   type TerminalRuntime,
@@ -24,6 +25,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number } {
     onDataSub: sub,
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
+    resetForRecycle: vi.fn(),
     dispose: () => {
       disposeCallCount++;
     },
@@ -153,5 +155,76 @@ describe('terminalRegistry', () => {
 
     // dispose は forceDispose の 1 回のみ
     expect(runtime.disposeCallCount).toBe(1);
+  });
+});
+
+// --- recyclePty ---
+
+/**
+ * 呼び出し順序を記録する spy 付き TerminalRuntime を生成するヘルパー。
+ * F5: recyclePty の処理順・no-op・forceDisposeRuntime 非呼び出しを検証するために使用。
+ */
+function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
+  const callOrder: string[] = [];
+  const sub = { dispose: vi.fn() };
+
+  const runtime: TerminalRuntime & { callOrder: string[] } = {
+    get term() { return {} as never; },
+    get fitAddon() { return {} as never; },
+    get ptyHandle() { return null; },
+    get pendingInputs() { return []; },
+    onDataSub: sub,
+    setOnEvent: vi.fn(),
+    startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
+    resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
+    dispose: vi.fn(() => { callOrder.push('dispose'); }),
+    get callOrder() { return callOrder; },
+  };
+  return runtime;
+}
+
+describe('recyclePty', () => {
+  it('F5-1: ptyHandle.dispose() → resetForRecycle() → startSpawn() の順で呼ばれる', () => {
+    const tabId = 'test-recycle-order';
+    const runtime = makeRuntimeWithOrder();
+    acquireRuntime(tabId, () => runtime);
+
+    const onError = vi.fn();
+    recyclePty(tabId, { cols: 80, rows: 24 }, onError);
+
+    // dispose は ptyHandle が null のため void null?.dispose() = no-op だが、
+    // resetForRecycle と startSpawn の順序は保証される
+    expect(runtime.resetForRecycle).toHaveBeenCalledTimes(1);
+    expect(runtime.startSpawn).toHaveBeenCalledTimes(1);
+    // resetForRecycle → startSpawn の順であること
+    expect(runtime.callOrder.indexOf('resetForRecycle')).toBeLessThan(
+      runtime.callOrder.indexOf('startSpawn'),
+    );
+
+    forceDisposeRuntime(tabId);
+  });
+
+  it('F5-2: 存在しない tabId は no-op（例外を投げない）', () => {
+    const onError = vi.fn();
+    expect(() =>
+      recyclePty('non-existent-recycle-tab', { cols: 80, rows: 24 }, onError),
+    ).not.toThrow();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('F5-3: forceDisposeRuntime は呼ばれない（xterm を維持して scrollback を保全）', () => {
+    const tabId = 'test-recycle-no-force-dispose';
+    const runtime = makeRuntimeWithOrder();
+    acquireRuntime(tabId, () => runtime);
+
+    const onError = vi.fn();
+    recyclePty(tabId, { cols: 80, rows: 24 }, onError);
+
+    // dispose は ptyHandle?.dispose() の呼び出しのみ（forceDisposeRuntime ではない）
+    // forceDisposeRuntime を呼ぶと runtimes Map から削除されるが、Map はまだ有効のはず
+    expect(getRuntimeCount()).toBeGreaterThanOrEqual(1);
+    expect(getRefs(tabId)).toBe(1);
+
+    forceDisposeRuntime(tabId);
   });
 });

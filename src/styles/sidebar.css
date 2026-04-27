@@ -57,6 +57,8 @@
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
+  /* group-header__dblclick-overlay の absolute 配置基準 */
+  position: relative;
 }
 
 .group-header:hover {
@@ -176,4 +178,86 @@
 
 .tab-item__close-btn:hover {
   opacity: 1;
+}
+
+/* ----- InlineEdit ----- */
+.inline-edit__input {
+  flex: 1;
+  background: var(--tab-item-bg-active);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 3px;
+  color: var(--sidebar-fg);
+  font-size: inherit;
+  font-family: inherit;
+  padding: 0 4px;
+  /* 親の flex レイアウト内で縮まないように */
+  min-width: 0;
+  outline: none;
+  /* タブ名の省略表示と高さを合わせる */
+  height: 1.4em;
+  line-height: 1.4em;
+}
+
+.inline-edit__input:focus {
+  border-color: var(--status-live);
+}
+
+/* ----- グループ名ダブルクリック用オーバーレイ ----- */
+/* group-header__title の上に重ねて、ダブルクリックを受け取る */
+.group-header__dblclick-overlay {
+  position: absolute;
+  inset: 0;
+  /* chevron と delete ボタンの上には重ねない */
+  left: 24px;  /* chevron 幅 */
+  right: 28px; /* delete ボタン幅 */
+  cursor: text;
+}
+
+/* ----- コンテキストメニュー ----- */
+.context-menu__content {
+  background: var(--group-header-bg);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 160px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+  /* Radix は position: fixed で portal に描画するため z-index は最前面に設定 */
+}
+
+.context-menu__item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--sidebar-fg);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.context-menu__item:hover,
+.context-menu__item[data-highlighted] {
+  background: var(--tab-item-bg-active);
+}
+
+.context-menu__item[data-disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.context-menu__item--danger {
+  color: var(--status-crashed);
+}
+
+.context-menu__item--danger:hover,
+.context-menu__item--danger[data-highlighted] {
+  background: rgba(247, 118, 142, 0.12);
+}
+
+.context-menu__separator {
+  height: 1px;
+  background: var(--sidebar-border);
+  margin: 4px 0;
 }

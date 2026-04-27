@@ -85,5 +85,10 @@ export interface AppState {
    * 同時に複数の編集を許可しないために単一の ID で管理する。
    */
   editingId: string | null;
+  /**
+   * 右クリックコンテキストメニューが開いているとき true。
+   * TerminalPane の attachCustomKeyEventHandler でキーバインドを suspend するために使用する。
+   */
+  contextMenuOpen: boolean;
   settings: Settings;
 }

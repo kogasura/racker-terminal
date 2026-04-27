@@ -9,6 +9,7 @@ import {
   acquireRuntime,
   releaseRuntime,
   createRuntime,
+  recyclePty,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
 import { resizePty } from '../lib/pty';
@@ -113,7 +114,7 @@ export const TerminalPane = memo(function TerminalPane({
   }, [isActive]);
 
   // crashed 時は xterm への入力を遮断する（writePty が "session not found" エラーを返すのを防ぐ）
-  // Unit C で restart が実装された際に live 復帰時の false 戻しが機能する
+  // restart で live 復帰したとき false に戻ることで入力が再開される
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -150,6 +151,9 @@ export const TerminalPane = memo(function TerminalPane({
       if (e.type !== 'keydown') return true;
       if (!e.ctrlKey) return true;
 
+      // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
+      if (useAppStore.getState().contextMenuOpen) return true;
+
       // Ctrl+Shift+W: アクティブタブを閉じる
       if (e.shiftKey && (e.key === 'w' || e.key === 'W')) {
         e.preventDefault();
@@ -179,6 +183,28 @@ export const TerminalPane = memo(function TerminalPane({
 
   const isCrashed = tab.status === 'crashed';
 
+  function handleRestart() {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    // 1. UI 状態を spawning に更新
+    setTabStatus(tabId, 'spawning');
+    // 2. xterm を維持して PTY のみ差し替え（scrollback 保全）
+    recyclePty(
+      tabId,
+      {
+        shell: tab.shell,
+        cwd: tab.cwd,
+        env: tab.env,
+        cols: Math.max(1, runtime.term.cols || 80),
+        rows: Math.max(1, runtime.term.rows || 24),
+      },
+      (errMsg) => {
+        spawnErrorRef.current = errMsg;
+        setTabStatus(tabId, 'crashed');
+      },
+    );
+  }
+
   return (
     <div
       ref={divRef}
@@ -187,9 +213,20 @@ export const TerminalPane = memo(function TerminalPane({
     >
       {isCrashed && isActive && (
         <div className="terminal-crashed-overlay">
-          {exitCodeRef.current !== null
-            ? `[Exited (code: ${exitCodeRef.current})]`
-            : `[Spawn Error: ${spawnErrorRef.current ?? 'unknown'}]`}
+          <div className="terminal-crashed-overlay__message">
+            {exitCodeRef.current !== null
+              ? `[Exited (code: ${exitCodeRef.current})]`
+              : `[Spawn Error: ${spawnErrorRef.current ?? 'unknown'}]`}
+          </div>
+          <button
+            type="button"
+            className="terminal-crashed-overlay__restart-btn"
+            // F6: spawning 中の二重クリック防止（recyclePty の二重実行による PtyHandle.dispose 多重呼び出しを防ぐ）
+            disabled={tab.status === 'spawning'}
+            onClick={handleRestart}
+          >
+            Click to restart
+          </button>
         </div>
       )}
     </div>

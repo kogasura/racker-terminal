@@ -86,15 +86,29 @@ export function expandGroupContaining(
 }
 
 interface AppActions {
+  /**
+   * tabId を active に設定する（直接更新経路）。
+   * Sidebar のタブクリック等、ユーザーが直接タブを選択した場合に使用する。
+   * 折りたたみグループの自動展開は行わない。
+   * キーボード遷移（Ctrl+Tab 等）では navigateToTab を使うこと。
+   */
   setActiveTab: (tabId: string | null) => void;
   /**
    * tabId を active にし、その tabId を含むグループが折りたたまれていれば自動展開する。
-   * Ctrl+Tab / Ctrl+Shift+Tab のキーボード遷移で、隠れタブにジャンプして
-   * active が見えなくなる UX 問題を防ぐ。
+   * Ctrl+Tab / Ctrl+Shift+Tab のキーボード遷移で使用する。
+   * 隠れタブにジャンプして active が見えなくなる UX 問題を防ぐ。
+   * Sidebar クリック等の直接更新経路では setActiveTab を使うこと。
    */
   navigateToTab: (tabId: string) => void;
   startEditing: (id: string) => void;
   stopEditing: () => void;
+
+  /** 右クリックコンテキストメニューの open 状態を同期する。
+   * ContextMenu の onOpenChange から呼ぶ。
+   * TerminalPane の attachCustomKeyEventHandler で contextMenuOpen===true のとき
+   * Ctrl+Tab 等のキーバインドを suspend する。
+   */
+  setContextMenuOpen: (open: boolean) => void;
 
   /**
    * グループを新規作成し、そのグループ ID を返す。
@@ -127,6 +141,24 @@ interface AppActions {
   setTabStatus: (tabId: string, status: TabStatus, ptyId?: string) => void;
 
   /**
+   * タブのタイトルを更新する。
+   * title は trim され最大 64 文字に切り詰める。
+   * 結果が空文字列なら no-op（元タイトル維持）。
+   * 存在しない tabId は no-op。
+   */
+  updateTabTitle: (tabId: string, title: string) => void;
+
+  /**
+   * タブを同一グループ内に複製する。
+   * - 元タブの groupId / shell / cwd / env を引き継ぐ
+   * - title は元 title + " (copy)"
+   * - 元タブの直後に挿入
+   * - status は 'spawning'
+   * - 返り値: 新タブの ID。元タブが見つからなければ null
+   */
+  duplicateTab: (tabId: string) => string | null;
+
+  /**
    * グループを削除する。
    * - groups.length === 1 なら no-op（最後の 1 個保護）
    * - 対象グループの tabIds が空でなければ no-op（タブ残存防御）
@@ -157,6 +189,7 @@ export const useAppStore = create<Store>()((set) => ({
   favorites: [],
   activeTabId: null,
   editingId: null,
+  contextMenuOpen: false,
   settings: defaultSettings,
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
@@ -167,6 +200,7 @@ export const useAppStore = create<Store>()((set) => ({
     })),
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
+  setContextMenuOpen: (open) => set({ contextMenuOpen: open }),
 
   createGroup: (title = 'Default') => {
     const id = newId();
@@ -248,7 +282,9 @@ export const useAppStore = create<Store>()((set) => ({
           ? expandGroupContaining(newGroups, newActiveTabId)
           : newGroups;
 
-      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId };
+      // M2: 削除対象タブが編集中だった場合は editingId をクリアする
+      const newEditingId = state.editingId === tabId ? null : state.editingId;
+      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId, editingId: newEditingId };
     });
   },
 
@@ -269,22 +305,84 @@ export const useAppStore = create<Store>()((set) => ({
     });
   },
 
+  updateTabTitle: (tabId, title) => {
+    const trimmed = title.trim().slice(0, 64);
+    if (trimmed.length === 0) return;  // 空文字列は no-op
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};  // 存在しない tabId は no-op
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, title: trimmed } } };
+    });
+  },
+
+  duplicateTab: (tabId) => {
+    // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
+    if (!useAppStore.getState().tabs[tabId]) return null;
+    const newTabId = newId();
+    let inserted = false;
+
+    set((state) => {
+      const src = state.tabs[tabId];
+      if (!src) return {};
+
+      const newTab: Tab = {
+        id: newTabId,
+        groupId: src.groupId,
+        title: `${src.title} (copy)`,
+        shell: src.shell,
+        cwd: src.cwd,
+        env: src.env,
+        status: 'spawning',
+      };
+
+      // 元タブの直後に挿入
+      const updatedGroups = state.groups.map((g) => {
+        if (g.id !== src.groupId) return g;
+        const idx = g.tabIds.indexOf(tabId);
+        const newTabIds = [...g.tabIds];
+        if (idx === -1) {
+          newTabIds.push(newTabId);
+        } else {
+          newTabIds.splice(idx + 1, 0, newTabId);
+        }
+        return { ...g, tabIds: newTabIds };
+      });
+
+      inserted = true;
+      return {
+        groups: updatedGroups,
+        tabs: { ...state.tabs, [newTabId]: newTab },
+        activeTabId: newTabId,
+      };
+    });
+
+    return inserted ? newTabId : null;
+  },
+
   removeGroup: (groupId) => {
     set((state) => {
       if (state.groups.length === 1) return {};
       const target = state.groups.find((g) => g.id === groupId);
       if (!target || target.tabIds.length > 0) return {};
-      return { groups: state.groups.filter((g) => g.id !== groupId) };
+      // M2: 削除対象グループが編集中だった場合は editingId をクリアする
+      const newEditingId = state.editingId === groupId ? null : state.editingId;
+      return { groups: state.groups.filter((g) => g.id !== groupId), editingId: newEditingId };
     });
   },
 
   updateGroupTitle: (groupId, title) => {
-    const trimmed = title.trim().slice(0, 64);
-    set((state) => ({
-      groups: state.groups.map((g) =>
-        g.id === groupId ? { ...g, title: trimmed } : g,
-      ),
-    }));
+    set((state) => {
+      // M2: 存在しない groupId は no-op
+      if (!state.groups.some((g) => g.id === groupId)) return {};
+      const trimmed = title.trim().slice(0, 64);
+      // M2: trim 後が空文字列なら no-op（元タイトル維持）
+      if (!trimmed) return {};
+      return {
+        groups: state.groups.map((g) =>
+          g.id === groupId ? { ...g, title: trimmed } : g,
+        ),
+      };
+    });
   },
 
   toggleCollapse: (groupId) => {

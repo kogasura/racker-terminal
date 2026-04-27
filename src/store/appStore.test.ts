@@ -160,6 +160,13 @@ describe('appStore', () => {
       expect(useAppStore.getState().activeTabId).toBe(tab1);
     });
 
+    // T2: 存在しない tabId → no-op（例外を投げない）
+    it('存在しない tabId を渡しても例外を投げない', () => {
+      expect(() =>
+        useAppStore.getState().removeTab('non-existent-tab-id'),
+      ).not.toThrow();
+    });
+
     // T1: forceDisposeRuntime が set() より先に呼ばれることの検証
     it('forceDisposeRuntime は set より先に呼ばれる（タブがまだ store に残っている状態で呼ばれる）', () => {
       const groupId = useAppStore.getState().createGroup();
@@ -178,6 +185,146 @@ describe('appStore', () => {
       expect(tabsAtDisposeTime![tabId]).toBeDefined();
       // set 完了後はタブが削除されている
       expect(useAppStore.getState().tabs[tabId]).toBeUndefined();
+    });
+  });
+
+  // --- removeGroup ---
+  describe('removeGroup', () => {
+    it('グループが 2 個 + 対象グループの tabIds が空 → 削除される', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().removeGroup(g1);
+
+      const { groups } = useAppStore.getState();
+      expect(groups).toHaveLength(1);
+      expect(groups.find((g) => g.id === g1)).toBeUndefined();
+    });
+
+    it('グループが 1 個 → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+
+      useAppStore.getState().removeGroup(g1);
+
+      expect(useAppStore.getState().groups).toHaveLength(1);
+    });
+
+    it('対象グループに tabIds がある → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+      useAppStore.getState().createTab(g1);
+
+      useAppStore.getState().removeGroup(g1);
+
+      expect(useAppStore.getState().groups).toHaveLength(2);
+    });
+
+    // T3: 存在しない groupId → no-op（例外を投げない）
+    it('存在しない groupId を渡しても例外を投げない', () => {
+      useAppStore.getState().createGroup('G1');
+      useAppStore.getState().createGroup('G2');
+
+      expect(() =>
+        useAppStore.getState().removeGroup('non-existent-group-id'),
+      ).not.toThrow();
+      expect(useAppStore.getState().groups).toHaveLength(2);
+    });
+  });
+
+  // --- updateGroupTitle ---
+  describe('updateGroupTitle', () => {
+    it('通常更新', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      useAppStore.getState().updateGroupTitle(g1, 'New');
+      expect(useAppStore.getState().groups[0].title).toBe('New');
+    });
+
+    it('trim される', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      useAppStore.getState().updateGroupTitle(g1, '  trimmed  ');
+      expect(useAppStore.getState().groups[0].title).toBe('trimmed');
+    });
+
+    it('64 文字超は 64 文字に切り詰められる', () => {
+      const g1 = useAppStore.getState().createGroup('Old');
+      const long = 'a'.repeat(100);
+      useAppStore.getState().updateGroupTitle(g1, long);
+      expect(useAppStore.getState().groups[0].title).toHaveLength(64);
+    });
+  });
+
+  // --- toggleCollapse ---
+  describe('toggleCollapse', () => {
+    it('false → true → false の往復', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      expect(useAppStore.getState().groups[0].collapsed).toBe(false);
+
+      useAppStore.getState().toggleCollapse(g1);
+      expect(useAppStore.getState().groups[0].collapsed).toBe(true);
+
+      useAppStore.getState().toggleCollapse(g1);
+      expect(useAppStore.getState().groups[0].collapsed).toBe(false);
+    });
+  });
+
+  // --- moveGroup ---
+  describe('moveGroup', () => {
+    it('インデックスを入れ替える', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      const g3 = useAppStore.getState().createGroup('G3');
+
+      // G1 (index 0) を index 2 に移動 → [G2, G3, G1]
+      useAppStore.getState().moveGroup(g1, 2);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g3, g1]);
+    });
+
+    it('負のインデックスは 0 にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().moveGroup(g2, -5);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g1]);
+    });
+
+    it('上限超えのインデックスは groups.length-1 にクランプされる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+
+      useAppStore.getState().moveGroup(g1, 999);
+
+      const ids = useAppStore.getState().groups.map((g) => g.id);
+      expect(ids).toEqual([g2, g1]);
+    });
+
+    // T1: 追加テスト
+    it('同 index 指定 → no-op（配列参照が変わらない）', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const g2 = useAppStore.getState().createGroup('G2');
+      void g2;
+      const before = useAppStore.getState().groups;
+
+      // g1 は index 0 → 同じ index 0 に移動
+      useAppStore.getState().moveGroup(g1, 0);
+
+      const after = useAppStore.getState().groups;
+      // no-op なので配列参照が同一のまま
+      expect(after).toBe(before);
+    });
+
+    it('存在しない groupId → no-op', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      void g1;
+      const before = useAppStore.getState().groups;
+
+      useAppStore.getState().moveGroup('non-existent', 0);
+
+      const after = useAppStore.getState().groups;
+      expect(after).toBe(before);
     });
   });
 

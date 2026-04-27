@@ -74,6 +74,28 @@ interface AppActions {
    * removeTab 後の非同期更新（spawn Promise の resolve）に対して防御コードを持つ。
    */
   setTabStatus: (tabId: string, status: TabStatus, ptyId?: string) => void;
+
+  /**
+   * グループを削除する。
+   * - groups.length === 1 なら no-op（最後の 1 個保護）
+   * - 対象グループの tabIds が空でなければ no-op（タブ残存防御）
+   */
+  removeGroup: (groupId: string) => void;
+
+  /**
+   * グループタイトルを更新する。
+   * title は trim され、最大 64 文字に切り詰める。
+   */
+  updateGroupTitle: (groupId: string, title: string) => void;
+
+  /** グループの collapsed 状態をトグルする。 */
+  toggleCollapse: (groupId: string) => void;
+
+  /**
+   * groups 配列の並び順を変更する（Unit F D&D 用の先回り実装）。
+   * toIndex は [0, groups.length-1] にクランプされる。
+   */
+  moveGroup: (groupId: string, toIndex: number) => void;
 }
 
 type Store = AppState & AppActions;
@@ -182,6 +204,45 @@ export const useAppStore = create<Store>()((set) => ({
           },
         },
       };
+    });
+  },
+
+  removeGroup: (groupId) => {
+    set((state) => {
+      if (state.groups.length === 1) return {};
+      const target = state.groups.find((g) => g.id === groupId);
+      if (!target || target.tabIds.length > 0) return {};
+      return { groups: state.groups.filter((g) => g.id !== groupId) };
+    });
+  },
+
+  updateGroupTitle: (groupId, title) => {
+    const trimmed = title.trim().slice(0, 64);
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId ? { ...g, title: trimmed } : g,
+      ),
+    }));
+  },
+
+  toggleCollapse: (groupId) => {
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId ? { ...g, collapsed: !g.collapsed } : g,
+      ),
+    }));
+  },
+
+  moveGroup: (groupId, toIndex) => {
+    set((state) => {
+      const from = state.groups.findIndex((g) => g.id === groupId);
+      if (from === -1) return {};
+      const clamped = Math.max(0, Math.min(toIndex, state.groups.length - 1));
+      if (from === clamped) return {};
+      const next = [...state.groups];
+      const [item] = next.splice(from, 1);
+      next.splice(clamped, 0, item);
+      return { groups: next };
     });
   },
 }));

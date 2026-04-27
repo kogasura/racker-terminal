@@ -23,9 +23,6 @@ export const FavoritesSection = memo(function FavoritesSection() {
           if (e.key === 'Enter' || e.key === ' ') setCollapsed((c) => !c);
         }}
       >
-        <span className="favorites-header__chevron">
-          {collapsed ? '›' : '›'}
-        </span>
         <span className="favorites-header__title">
           {collapsed ? '› Favorites' : '⌄ Favorites'}
         </span>

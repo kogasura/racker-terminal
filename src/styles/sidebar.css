@@ -70,10 +70,6 @@
   filter: brightness(1.15);
 }
 
-.favorites-header__chevron {
-  display: none; /* chevron はタイトル内に含めている */
-}
-
 .favorites-header__title {
   flex: 1;
   overflow: hidden;

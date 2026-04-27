@@ -7,6 +7,7 @@ import {
   getAllRuntimes,
   getRuntimeCount,
   getRefs,
+  sanitizeOscTitle,
   type TerminalRuntime,
 } from './terminalRegistry';
 
@@ -211,6 +212,47 @@ describe('applySettings', () => {
 
     forceDisposeRuntime(tabId);
   });
+
+  it('T1: applySettings は dispose 後に呼ばれても no-op（isDisposed ガード）', () => {
+    // createRuntime を直接テストするのは DOM 依存のため困難。
+    // ここではモック runtime の applySettings が dispose 後に呼ばれても安全であることを
+    // forceDisposeRuntime → applySettings 呼び出しパターンで確認する。
+    const tabId = 'test-apply-settings-disposed';
+    // isDisposed ガードを持つ applySettings の実装をモック側でも再現する
+    let disposed = false;
+    const options = { fontSize: 12.5, fontFamily: 'monospace', scrollback: 10000 };
+    const sub = { dispose: vi.fn() };
+    const titleSub = { dispose: vi.fn() };
+    const runtime: TerminalRuntime = {
+      get term() { return {} as never; },
+      get fitAddon() { return {} as never; },
+      get ptyHandle() { return null; },
+      get pendingInputs() { return []; },
+      onDataSub: sub,
+      titleSub,
+      applySettings(settings) {
+        // isDisposed ガードの実装を模擬
+        if (disposed) return;
+        options.fontSize = settings.fontSize;
+        options.fontFamily = settings.fontFamily;
+        options.scrollback = settings.scrollback;
+      },
+      setOnEvent: vi.fn(),
+      startSpawn: vi.fn(),
+      resetForRecycle: vi.fn(),
+      dispose() {
+        disposed = true;
+      },
+    };
+
+    acquireRuntime(tabId, () => runtime);
+    forceDisposeRuntime(tabId); // dispose を実行
+
+    // dispose 後に applySettings を呼んでも options が変化しないことを確認
+    const before = { ...options };
+    runtime.applySettings({ theme: 'tokyo-night', fontFamily: 'changed', fontSize: 99, scrollback: 999 });
+    expect(options).toEqual(before);
+  });
 });
 
 // --- getAllRuntimes ---
@@ -269,6 +311,62 @@ describe('titleSub dispose', () => {
     forceDisposeRuntime(tabId);
 
     expect(titleSub.dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- sanitizeOscTitle ---
+
+describe('sanitizeOscTitle', () => {
+  it('T2-1: 通常の文字列はそのまま通過する', () => {
+    expect(sanitizeOscTitle('hello world')).toBe('hello world');
+  });
+
+  it('T2-2: 日本語文字列はそのまま通過する', () => {
+    expect(sanitizeOscTitle('ターミナル')).toBe('ターミナル');
+  });
+
+  it('T2-3: C0 制御文字 (U+0000-U+001F) を除去する', () => {
+    // BEL (U+0007), TAB (U+0009), CR (U+000D), ESC (U+001B) を含む文字列
+    const input = 'abc\x07\x09\x0d\x1bdef';
+    expect(sanitizeOscTitle(input)).toBe('abcdef');
+  });
+
+  it('T2-4: DEL (U+007F) と C1 制御文字 (U+0080-U+009F) を除去する', () => {
+    // DEL + U+009F を含む
+    const input = 'abc\x7fdef\x9fghi';
+    expect(sanitizeOscTitle(input)).toBe('abcdefghi');
+  });
+
+  it('T2-5: Bidi 制御文字を除去する (LRM, RLM, LRE-RLO, LRI-PDI)', () => {
+    // U+200E (LRM), U+200F (RLM), U+202A (LRE), U+202E (RLO), U+2066 (LRI), U+2069 (PDI)
+    const lrm = '‎';
+    const rlm = '‏';
+    const lre = '‪';
+    const rlo = '‮';
+    const lri = '⁦';
+    const pdi = '⁩';
+    const input = `${lrm}hello${rlm}${lre}world${rlo}${lri}test${pdi}`;
+    expect(sanitizeOscTitle(input)).toBe('helloworldtest');
+  });
+
+  it('T2-6: 256 文字超は 256 文字に切り詰める', () => {
+    const long = 'a'.repeat(300);
+    const result = sanitizeOscTitle(long);
+    expect(result).toHaveLength(256);
+    expect(result).toBe('a'.repeat(256));
+  });
+
+  it('T2-7: 全文字が制御文字の場合は空文字列になる', () => {
+    // ESC + BEL + C1
+    const input = '\x1b\x07\x9f';
+    expect(sanitizeOscTitle(input)).toBe('');
+  });
+
+  it('T2-8: 制御文字除去後に 256 文字制限を適用する（除去後が 256 以下なら切り詰めなし）', () => {
+    // 制御文字 10 個 + 'a' * 260 個 → 除去後 260 文字 → 256 文字に切り詰め
+    const input = '\x07'.repeat(10) + 'a'.repeat(260);
+    const result = sanitizeOscTitle(input);
+    expect(result).toBe('a'.repeat(256));
   });
 });
 

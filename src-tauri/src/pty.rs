@@ -28,8 +28,8 @@ macro_rules! dbg_log {
 /// 1 回の read で受け取ったバイト数がこの値未満のとき、flush スレッドを即時起床させる。
 const TINY_READ_THRESHOLD: usize = 256;
 
-/// tiny read 判定で使用する前回 flush からの最小間隔（ミリ秒）。
-const TINY_READ_MIN_INTERVAL_MS: u64 = 2;
+/// tiny read 判定で使用する前回 flush からの最小間隔。
+const TINY_READ_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// raw_buf の上限バイト数（4MB）。
 /// `yes` / `find /` 等の暴走出力で OOM になるのを防ぐための back-pressure 上限。
@@ -341,6 +341,8 @@ fn spawn_reader_threads(
 
                     // back-pressure: raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄する。
                     // `yes` / `find /` 等の暴走出力による OOM を防ぐ。
+                    // drain 直後は pending と raw_buf が非連続になり、UTF-8 検証で
+                    // 数バイト分が U+FFFD になる場合がある（許容）。
                     if s.raw_buf.len() > RAW_BUF_LIMIT_BYTES {
                         let drain_len = s.raw_buf.len() / 2;
                         s.raw_buf.drain(0..drain_len);
@@ -352,7 +354,7 @@ fn spawn_reader_threads(
                     // n < TINY_READ_THRESHOLD かつ前回 flush から TINY_READ_MIN_INTERVAL_MS 以上経過
                     // → flush スレッドを即時起床（DSR-CPR 応答等の遅延を回避）
                     // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
-                    let tiny = n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= std::time::Duration::from_millis(TINY_READ_MIN_INTERVAL_MS);
+                    let tiny = n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
                     if read_count <= 5 {
                         dbg_log!("[pty-read] tiny={tiny} n={n}");
                     }
@@ -905,6 +907,6 @@ mod tests {
         // 定数が期待値であることを確認する（値の変更検知）
         assert_eq!(RAW_BUF_LIMIT_BYTES, 4 * 1024 * 1024);
         assert_eq!(TINY_READ_THRESHOLD, 256);
-        assert_eq!(TINY_READ_MIN_INTERVAL_MS, 2);
+        assert_eq!(TINY_READ_MIN_INTERVAL, std::time::Duration::from_millis(2));
     }
 }

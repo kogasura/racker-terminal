@@ -215,7 +215,10 @@ export const useAppStore = create<Store>()((set, get) => ({
   addFavorite: (fav) => {
     const id = newId();
     set((state) => ({
-      favorites: [...state.favorites, { ...fav, id }],
+      favorites: [
+        ...state.favorites,
+        { ...fav, id, env: fav.env ? { ...fav.env } : undefined },
+      ],
     }));
     return id;
   },

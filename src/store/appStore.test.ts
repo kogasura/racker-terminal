@@ -529,6 +529,25 @@ describe('appStore', () => {
     });
   });
 
+  // --- addFavorite (env シャローコピー) ---
+  describe('addFavorite (env shallow copy)', () => {
+    it('T3: env はシャローコピーされる（元の参照と独立）', () => {
+      const env = { FOO: 'bar' };
+      const id = useAppStore.getState().addFavorite({ title: 'X', env });
+      // 元オブジェクトを変更
+      env.FOO = 'changed';
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      // ストア内の env は変更前の値を保持する
+      expect(fav?.env?.FOO).toBe('bar');
+    });
+
+    it('T3-2: env が undefined の場合は undefined のまま（クラッシュしない）', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'Y' });
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      expect(fav?.env).toBeUndefined();
+    });
+  });
+
   // --- removeFavorite ---
   describe('removeFavorite', () => {
     it('指定した favId のお気に入りを削除する', () => {

@@ -11,7 +11,17 @@ export type TabStatus = 'spawning' | 'live' | 'crashed';
 export interface Tab {
   id: string;
   groupId: string;
-  title: string;
+  /**
+   * ユーザーが手動編集したタイトル。優先表示。
+   * Phase 4 P-A で title を userTitle / oscTitle に分離。
+   * undefined の場合は oscTitle → デフォルト値 ('Terminal') の順にフォールバックする。
+   */
+  userTitle?: string;
+  /**
+   * shell が OSC タイトルシーケンスで送ってきたタイトル。
+   * userTitle が undefined のときに表示される。永続化対象外 (起動時に再取得)。
+   */
+  oscTitle?: string;
   /** 未指定の場合は Rust 側のデフォルトシェル（nu）を使用 */
   shell?: string;
   /** 未指定の場合は Rust 側の home_dir を使用 */
@@ -25,6 +35,17 @@ export interface Tab {
    * Phase 3 の sleep/wake でタブ ID を保ちつつ PTY だけ付け替えるための設計。
    */
   ptyId?: string;
+}
+
+/**
+ * タブの表示タイトルを返すヘルパー。
+ * userTitle → oscTitle → defaultTitle の順にフォールバックする。
+ *
+ * @param tab - 表示対象の Tab
+ * @param defaultTitle - userTitle も oscTitle も未設定のときのデフォルト値
+ */
+export function getTabDisplayTitle(tab: Tab, defaultTitle = 'Terminal'): string {
+  return tab.userTitle ?? tab.oscTitle ?? defaultTitle;
 }
 
 export interface Group {
@@ -69,9 +90,9 @@ export interface Settings {
  * アクション（createTab / removeTab / setActiveTab 等）は Unit A1 / D+E で追加予定。
  * 本 Unit では型のみを定義する。
  *
- * Phase 3 永続化時の partialize 方針（memo）:
- * - Persist OFF（ランタイム状態）: activeTabId, editingId, tabs[*].status, tabs[*].ptyId
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, title, shell, cwd, env}, favorites, settings
+ * Phase 4 A1 永続化 partialize 方針:
+ * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, env}, favorites, settings
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

@@ -14,7 +14,7 @@ import { useAppStore } from '../store/appStore';
 import { GroupSection } from './GroupSection';
 import { FavoritesSection } from './FavoritesSection';
 import { resolveDropTarget } from '../lib/dndResolve';
-import type { Tab, TabStatus } from '../types';
+import { getTabDisplayTitle, type TabStatus } from '../types';
 import '../styles/sidebar.css';
 
 /** ドラッグ中に Portal 描画される最小プレビュー（status dot + title） */
@@ -24,11 +24,18 @@ const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   crashed: 'tab-item__status-dot tab-item__status-dot--crashed',
 };
 
-function TabItemPreview({ tab }: { tab: Pick<Tab, 'title' | 'status'> }) {
+/** ドラッグプレビュー用に必要な最小タブ情報 */
+interface TabPreviewData {
+  id: string;
+  displayTitle: string;
+  status: TabStatus;
+}
+
+function TabItemPreview({ tab }: { tab: TabPreviewData }) {
   return (
     <div className="tab-item tab-item--drag-overlay">
       <span className={STATUS_DOT_CLASS[tab.status]} />
-      <span className="tab-item__title">{tab.title}</span>
+      <span className="tab-item__title">{tab.displayTitle}</span>
     </div>
   );
 }
@@ -40,14 +47,14 @@ export const Sidebar = memo(function Sidebar() {
   const createGroup = useAppStore((s) => s.createGroup);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-  // F2: useShallow で id/title/status の 3 フィールドのみ抽出する。
+  // F2: useShallow で id/displayTitle/status の 3 フィールドのみ抽出する。
   // Tab オブジェクト全体を返すと OSC タイトル更新等で Sidebar 全体が再レンダーされ、
   // DndContext の collision 計算が走り直す問題を防ぐ。
   const activeDragTab = useAppStore(
     useShallow((s) => {
       if (!activeDragId) return null;
       const t = s.tabs[activeDragId];
-      return t ? { id: t.id, title: t.title, status: t.status } : null;
+      return t ? { id: t.id, displayTitle: getTabDisplayTitle(t), status: t.status } : null;
     }),
   );
 

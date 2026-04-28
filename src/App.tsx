@@ -7,11 +7,27 @@ import './styles/variables.css';
 
 function App() {
   useEffect(() => {
-    const { groups, tabs, createGroup, createTab } = useAppStore.getState();
-    if (groups.length === 0 || Object.keys(tabs).length === 0) {
-      const groupId = createGroup('Default');
-      createTab(groupId, { title: 'Terminal' });
+    // persist の rehydrate 完了を待ってから自動初期化する。
+    // 復元データがある場合は createGroup/createTab を呼ばない。
+    function initIfEmpty() {
+      const { groups, tabs, createGroup, createTab } = useAppStore.getState();
+      if (groups.length === 0 || Object.keys(tabs).length === 0) {
+        const groupId = createGroup('Default');
+        createTab(groupId, { userTitle: 'Terminal' });
+      }
     }
+
+    // 既に hydrate 済みの場合（HMR 等）は即時チェック
+    if (useAppStore.persist.hasHydrated()) {
+      initIfEmpty();
+      return;
+    }
+
+    // hydration 完了時に初期化する
+    const unsub = useAppStore.persist.onFinishHydration(() => {
+      initIfEmpty();
+    });
+    return unsub;
   }, []);
 
   // Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。

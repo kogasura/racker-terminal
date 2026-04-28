@@ -66,7 +66,7 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const settings = useAppStore((s) => s.settings);
   const setTabStatus = useAppStore((s) => s.setTabStatus);
-  const updateTabTitle = useAppStore((s) => s.updateTabTitle);
+  const updateTabOscTitle = useAppStore((s) => s.updateTabOscTitle);
 
   const divRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalRuntime | null>(null);
@@ -80,8 +80,9 @@ export const TerminalPane = memo(function TerminalPane({
         onLive: (ptyId) => setTabStatus(tabId, 'live', ptyId),
         // 編集中ガード: editingId === tabId のとき OSC タイトルを無視する
         isEditing: () => useAppStore.getState().editingId === tabId,
-        // OSC タイトルを受け取って updateTabTitle に渡す（256 文字制限は terminalRegistry 側で適用済み）
-        onOscTitle: (title) => updateTabTitle(tabId, title),
+        // OSC タイトルを受け取って updateTabOscTitle に渡す（256 文字制限は terminalRegistry 側で適用済み）
+        // userTitle を上書きせず oscTitle のみ更新する (A2 の title 構造分離)
+        onOscTitle: (title) => updateTabOscTitle(tabId, title),
         // OSC 7 cwd 変更通知を受け取って updateTabCwd に渡す（Phase 4 P-G で追加）
         onCwdChange: (cwd) => useAppStore.getState().updateTabCwd(tabId, cwd),
       }),

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
@@ -148,10 +149,12 @@ interface AppActions {
    * タブを新規作成し、そのタブ ID を返す。
    * groupId 未指定時は groups[0] を使うか、なければ createGroup('Default') を自動呼び出し。
    * PTY 操作は行わない。TerminalPane が mount されてから status=spawning を検知して startSpawn を呼ぶ。
+   *
+   * opts.title は後方互換のために受け付け、userTitle にセットする。
    */
   createTab: (
     groupId?: string,
-    opts?: Partial<Pick<Tab, 'title' | 'shell' | 'cwd' | 'env'>>,
+    opts?: Partial<Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env'>> & { title?: string },
   ) => string;
 
   /**
@@ -168,12 +171,20 @@ interface AppActions {
   setTabStatus: (tabId: string, status: TabStatus, ptyId?: string) => void;
 
   /**
-   * タブのタイトルを更新する。
+   * ユーザー手動編集によるタイトルを更新する (userTitle を更新)。
    * title は trim され最大 64 文字に切り詰める。
    * 結果が空文字列なら no-op（元タイトル維持）。
    * 存在しない tabId は no-op。
    */
   updateTabTitle: (tabId: string, title: string) => void;
+
+  /**
+   * shell の OSC タイトルシーケンス経由で受信したタイトルを更新する (oscTitle を更新)。
+   * userTitle が設定されている場合は OSC タイトルより優先されるが、oscTitle は保存される。
+   * 存在しない tabId は no-op。
+   * Phase 4 P-A で追加。
+   */
+  updateTabOscTitle: (tabId: string, oscTitle: string) => void;
 
   /**
    * OSC 7 経由で受信した shell の現在 cwd を tab.cwd に反映する。
@@ -228,7 +239,9 @@ interface AppActions {
 
 type Store = AppState & AppActions;
 
-export const useAppStore = create<Store>()((set, get) => ({
+export const useAppStore = create<Store>()(
+  persist(
+    (set, get) => ({
   groups: [],
   tabs: {},
   favorites: [],
@@ -270,9 +283,9 @@ export const useAppStore = create<Store>()((set, get) => ({
   spawnFavorite: (favId) => {
     const fav = get().favorites.find((f) => f.id === favId);
     if (!fav) return null;
-    const title = fav.defaultTabTitle ?? fav.title;
+    const userTitle = fav.defaultTabTitle ?? fav.title;
     return get().createTab(undefined, {
-      title,
+      userTitle,
       shell: fav.shell,
       cwd: fav.cwd,
       // F-M2: fav.env を shallow clone して参照を独立させる
@@ -326,7 +339,8 @@ export const useAppStore = create<Store>()((set, get) => ({
       const tab: Tab = {
         id: tabId,
         groupId: resolvedGroupId,
-        title: opts?.title ?? 'Terminal',
+        // opts.title は後方互換のために受け付け、userTitle にセットする
+        userTitle: opts?.userTitle ?? opts?.title,
         shell: opts?.shell,
         cwd: opts?.cwd,
         env: opts?.env,
@@ -399,7 +413,15 @@ export const useAppStore = create<Store>()((set, get) => ({
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};  // 存在しない tabId は no-op
-      return { tabs: { ...state.tabs, [tabId]: { ...tab, title: trimmed } } };
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, userTitle: trimmed } } };
+    });
+  },
+
+  updateTabOscTitle: (tabId, oscTitle) => {
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};  // 存在しない tabId は no-op
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, oscTitle } } };
     });
   },
 
@@ -423,10 +445,12 @@ export const useAppStore = create<Store>()((set, get) => ({
       const src = state.tabs[tabId];
       if (!src) return {};
 
+      // getTabDisplayTitle 相当のロジックで表示タイトルを取得して "(copy)" を付加する
+      const displayTitle = src.userTitle ?? src.oscTitle ?? 'Terminal';
       const newTab: Tab = {
         id: newTabId,
         groupId: src.groupId,
-        title: `${src.title} (copy)`,
+        userTitle: `${displayTitle} (copy)`,
         shell: src.shell,
         cwd: src.cwd,
         // F-M3: src.env を shallow clone して参照を独立させる
@@ -558,15 +582,54 @@ export const useAppStore = create<Store>()((set, get) => ({
       return { groups: updatedGroups, tabs: updatedTab };
     });
   },
-}));
-
-// Phase 3 persist 方針の詳細は src/types/index.ts の AppState JSDoc を参照。
-// partialize で OFF にすべきランタイム状態: activeTabId, editingId, tabs[*].status, tabs[*].ptyId
-//
-// Phase 3 persist 追加時:
-//   create<Store>()(persist((set, get) => ({ ... }), {
-//     name: 'racker-terminal',
-//     partialize: (state) => ({ groups: state.groups, tabs: state.tabs, ... }),
-//   }))
-// 現状の curried 記法からスムーズに移行できる。
+    }),
+    {
+      name: 'racker-terminal',
+      version: 1,
+      migrate: (persistedState, _version) => {
+        // 将来のスキーマ変更時にここで変換する
+        // Phase 4 では version: 1 がベースラインなのでそのまま返す
+        return persistedState;
+      },
+      partialize: (state) => ({
+        groups: state.groups,
+        tabs: Object.fromEntries(
+          Object.entries(state.tabs).map(([id, tab]) => [
+            id,
+            {
+              id: tab.id,
+              groupId: tab.groupId,
+              userTitle: tab.userTitle,   // ユーザー編集タイトルのみ永続化 (oscTitle は保存しない)
+              shell: tab.shell,
+              cwd: tab.cwd,
+              env: tab.env,
+              // status / ptyId / oscTitle は OFF (ランタイム状態)
+            },
+          ]),
+        ),
+        favorites: state.favorites,
+        settings: state.settings,
+        // activeTabId / editingId / contextMenuOpen は OFF
+      }),
+      onRehydrateStorage: () => (state) => {
+        // 復元完了時: すべての tab を status='spawning', ptyId=undefined にリセットする。
+        // PTY セッションは前回終了時に解放済みのため、再 spawn が必要。
+        if (state) {
+          for (const tabId of Object.keys(state.tabs)) {
+            state.tabs[tabId] = {
+              ...state.tabs[tabId],
+              status: 'spawning',
+              ptyId: undefined,
+              // oscTitle は persist 対象外なので存在しないはずだが念のためクリア
+              oscTitle: undefined,
+            };
+          }
+          // ランタイム状態は復元しない
+          state.editingId = null;
+          state.contextMenuOpen = false;
+        }
+      },
+    },
+  ),
+);
 

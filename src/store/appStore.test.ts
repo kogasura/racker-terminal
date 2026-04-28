@@ -8,6 +8,7 @@ import {
 } from './appStore';
 import { SPAWN_TIMEOUT_MS } from '../components/TerminalPane';
 import type { AppState } from '../types';
+import { getTabDisplayTitle } from '../types';
 import * as terminalRegistry from '../lib/terminalRegistry';
 
 // forceDisposeRuntime を no-op にしてテストから Tauri IPC を切り離す
@@ -66,7 +67,7 @@ describe('appStore', () => {
 
       const state = useAppStore.getState();
       expect(state.tabs[tabId]).toBeDefined();
-      expect(state.tabs[tabId].title).toBe('My Tab');
+      expect(state.tabs[tabId].userTitle).toBe('My Tab');
       expect(state.tabs[tabId].status).toBe('spawning');
       expect(state.tabs[tabId].groupId).toBe(groupId);
       expect(state.groups[0].tabIds).toContain(tabId);
@@ -414,37 +415,61 @@ describe('appStore', () => {
 
   // --- updateTabTitle ---
   describe('updateTabTitle', () => {
-    it('通常更新', () => {
+    it('通常更新: userTitle が更新される', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
       useAppStore.getState().updateTabTitle(tabId, 'New');
-      expect(useAppStore.getState().tabs[tabId].title).toBe('New');
+      expect(useAppStore.getState().tabs[tabId].userTitle).toBe('New');
     });
 
     it('trim される', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
       useAppStore.getState().updateTabTitle(tabId, '  trimmed  ');
-      expect(useAppStore.getState().tabs[tabId].title).toBe('trimmed');
+      expect(useAppStore.getState().tabs[tabId].userTitle).toBe('trimmed');
     });
 
     it('64 文字超は 64 文字に切り詰められる', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
       useAppStore.getState().updateTabTitle(tabId, 'a'.repeat(100));
-      expect(useAppStore.getState().tabs[tabId].title).toHaveLength(64);
+      expect(useAppStore.getState().tabs[tabId].userTitle).toHaveLength(64);
     });
 
-    it('空文字列は no-op（元タイトル維持）', () => {
+    it('空文字列は no-op（userTitle が変わらない）', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId, { title: 'Old' });
       useAppStore.getState().updateTabTitle(tabId, '   ');
-      expect(useAppStore.getState().tabs[tabId].title).toBe('Old');
+      expect(useAppStore.getState().tabs[tabId].userTitle).toBe('Old');
     });
 
     it('存在しない tabId は no-op', () => {
       expect(() =>
         useAppStore.getState().updateTabTitle('non-existent', 'New'),
+      ).not.toThrow();
+    });
+  });
+
+  // --- updateTabOscTitle ---
+  describe('updateTabOscTitle', () => {
+    it('oscTitle が更新される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+      useAppStore.getState().updateTabOscTitle(tabId, 'osc-title');
+      expect(useAppStore.getState().tabs[tabId].oscTitle).toBe('osc-title');
+    });
+
+    it('userTitle は変わらない', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'UserTitle' });
+      useAppStore.getState().updateTabOscTitle(tabId, 'osc-title');
+      expect(useAppStore.getState().tabs[tabId].userTitle).toBe('UserTitle');
+      expect(useAppStore.getState().tabs[tabId].oscTitle).toBe('osc-title');
+    });
+
+    it('存在しない tabId は no-op（例外を投げない）', () => {
+      expect(() =>
+        useAppStore.getState().updateTabOscTitle('non-existent', 'title'),
       ).not.toThrow();
     });
   });
@@ -485,11 +510,20 @@ describe('appStore', () => {
       expect(state.groups[0].tabIds).toContain(newTabId);
     });
 
-    it('title に " (copy)" が付与される', () => {
+    it('userTitle に " (copy)" が付与される（元の表示タイトルを引き継ぐ）', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId, { title: 'Terminal' });
       const newTabId = useAppStore.getState().duplicateTab(tabId);
-      expect(useAppStore.getState().tabs[newTabId!].title).toBe('Terminal (copy)');
+      expect(useAppStore.getState().tabs[newTabId!].userTitle).toBe('Terminal (copy)');
+    });
+
+    it('userTitle が未設定・oscTitle あり: oscTitle + " (copy)" になる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      // oscTitle のみ設定
+      useAppStore.getState().updateTabOscTitle(tabId, 'OscTab');
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      expect(useAppStore.getState().tabs[newTabId!].userTitle).toBe('OscTab (copy)');
     });
 
     it('shell / cwd / env が引き継がれる', () => {
@@ -685,18 +719,18 @@ describe('appStore', () => {
       expect(tab.env).toEqual({ X: '1' });
     });
 
-    it('title は defaultTabTitle ?? title を使う（defaultTabTitle あり）', () => {
+    it('userTitle は defaultTabTitle ?? title を使う（defaultTabTitle あり）', () => {
       useAppStore.getState().createGroup();
       const favId = useAppStore.getState().addFavorite({ title: 'FavName', defaultTabTitle: 'CustomTab' });
       const tabId = useAppStore.getState().spawnFavorite(favId);
-      expect(useAppStore.getState().tabs[tabId!].title).toBe('CustomTab');
+      expect(useAppStore.getState().tabs[tabId!].userTitle).toBe('CustomTab');
     });
 
-    it('title は defaultTabTitle ?? title を使う（defaultTabTitle なし）', () => {
+    it('userTitle は defaultTabTitle ?? title を使う（defaultTabTitle なし）', () => {
       useAppStore.getState().createGroup();
       const favId = useAppStore.getState().addFavorite({ title: 'FavName' });
       const tabId = useAppStore.getState().spawnFavorite(favId);
-      expect(useAppStore.getState().tabs[tabId!].title).toBe('FavName');
+      expect(useAppStore.getState().tabs[tabId!].userTitle).toBe('FavName');
     });
 
     it('存在しない favId は null を返す', () => {
@@ -1306,5 +1340,237 @@ describe('spawning タイムアウト (2.11) — setTabStatus による状態遷
 
     clearTimeout(timeoutId);
     vi.useRealTimers();
+  });
+});
+
+// --- getTabDisplayTitle (純関数テスト) ---
+
+describe('getTabDisplayTitle', () => {
+  const baseTab = {
+    id: 't1',
+    groupId: 'g1',
+    status: 'spawning' as const,
+  };
+
+  it('userTitle が設定されているとき userTitle を返す', () => {
+    const tab = { ...baseTab, userTitle: 'User', oscTitle: 'Osc' };
+    expect(getTabDisplayTitle(tab)).toBe('User');
+  });
+
+  it('userTitle が未設定・oscTitle あり: oscTitle を返す', () => {
+    const tab = { ...baseTab, oscTitle: 'Osc' };
+    expect(getTabDisplayTitle(tab)).toBe('Osc');
+  });
+
+  it('userTitle も oscTitle も未設定: デフォルト "Terminal" を返す', () => {
+    const tab = { ...baseTab };
+    expect(getTabDisplayTitle(tab)).toBe('Terminal');
+  });
+
+  it('userTitle も oscTitle も未設定: カスタムデフォルト値が使われる', () => {
+    const tab = { ...baseTab };
+    expect(getTabDisplayTitle(tab, 'Custom Default')).toBe('Custom Default');
+  });
+
+  it('userTitle が空文字列のとき oscTitle にフォールバックしない（空文字列は有効な userTitle）', () => {
+    // userTitle が '' の場合は '' が返る（undefined でないため）
+    // 実際には updateTabTitle で空文字列は弾くが型上は可能
+    const tab = { ...baseTab, userTitle: '', oscTitle: 'Osc' };
+    // '' ?? 'Osc' → '' (空文字列は nullish ではない)
+    expect(getTabDisplayTitle(tab)).toBe('');
+  });
+});
+
+// --- persist partialize テスト ---
+
+describe('persist partialize — ランタイム状態が保存対象外であること', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      contextMenuOpen: false,
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('partialize: status と ptyId がシリアライズ対象外になる', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+    useAppStore.getState().setTabStatus(tabId, 'live', 'pty-001');
+
+    // partialize 関数を直接呼び出して検証
+    const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState());
+
+    const serializedTab = (partializeResult as { tabs: Record<string, unknown> }).tabs[tabId];
+    expect(serializedTab).toBeDefined();
+    // status / ptyId は含まれない
+    expect((serializedTab as Record<string, unknown>).status).toBeUndefined();
+    expect((serializedTab as Record<string, unknown>).ptyId).toBeUndefined();
+    // userTitle / shell / cwd / env は保存される
+    expect((serializedTab as Record<string, unknown>).id).toBe(tabId);
+    expect((serializedTab as Record<string, unknown>).groupId).toBe(groupId);
+  });
+
+  it('partialize: oscTitle がシリアライズ対象外になる', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+    useAppStore.getState().updateTabOscTitle(tabId, 'shell-title');
+
+    const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState());
+    const serializedTab = (partializeResult as { tabs: Record<string, unknown> }).tabs[tabId];
+
+    // oscTitle は含まれない
+    expect((serializedTab as Record<string, unknown>).oscTitle).toBeUndefined();
+    // userTitle は保存される（ここでは opts.title='T' で userTitle='T'）
+    expect((serializedTab as Record<string, unknown>).userTitle).toBe('T');
+  });
+
+  it('partialize: activeTabId / editingId / contextMenuOpen が保存されない', () => {
+    const groupId = useAppStore.getState().createGroup();
+    useAppStore.getState().createTab(groupId, { title: 'T' });
+    useAppStore.getState().startEditing('some-id');
+    useAppStore.getState().setContextMenuOpen(true);
+
+    const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState()) as Record<string, unknown>;
+
+    expect(partializeResult.activeTabId).toBeUndefined();
+    expect(partializeResult.editingId).toBeUndefined();
+    expect(partializeResult.contextMenuOpen).toBeUndefined();
+  });
+
+  it('partialize: userTitle が保存される', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'MyTitle' });
+
+    const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState());
+    const serializedTab = (partializeResult as { tabs: Record<string, unknown> }).tabs[tabId];
+
+    expect((serializedTab as Record<string, unknown>).userTitle).toBe('MyTitle');
+  });
+});
+
+// --- F-S6: persist onRehydrateStorage 整合性ガード ---
+
+describe('persist onRehydrateStorage 整合性ガード', () => {
+  /**
+   * onRehydrateStorage のコールバックを直接呼び出して動作を検証する。
+   * zustand の persist は onRehydrateStorage() の戻り値 (コールバック) を
+   * hydration 完了時に呼ぶ。ここでは直接呼び出して内部ロジックをテストする。
+   */
+  function callOnRehydrate(state: Record<string, any>) {
+    const opts = useAppStore.persist.getOptions();
+    // onRehydrateStorage は () => (state) => void の形
+    const cb = (opts.onRehydrateStorage as () => (s: any) => void)();
+    cb(state);
+    return state;
+  }
+
+  it('orphan tab (どの group の tabIds にも含まれていない) を削除する', () => {
+    const state = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
+      tabs: {
+        t1: { id: 't1', groupId: 'g1', status: 'live', ptyId: 'p1' },
+        orphan: { id: 'orphan', groupId: 'g1', status: 'live', ptyId: 'p2' },
+      },
+      editingId: 'something',
+      contextMenuOpen: true,
+    };
+    callOnRehydrate(state);
+    expect(state.tabs['orphan']).toBeUndefined();
+    expect(state.tabs['t1']).toBeDefined();
+  });
+
+  it('group.tabIds に存在しない tabId が含まれていれば除去する', () => {
+    const state = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1', 'ghost'] }],
+      tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    expect(state.groups[0].tabIds).toEqual(['t1']);
+    expect(state.groups[0].tabIds).not.toContain('ghost');
+  });
+
+  it('重複 tabId を最初の group のみ残す', () => {
+    const state = {
+      groups: [
+        { id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1', 't2'] },
+        { id: 'g2', title: 'G2', collapsed: false, tabIds: ['t2', 't3'] }, // t2 が重複
+      ],
+      tabs: {
+        t1: { id: 't1', groupId: 'g1', status: 'live' },
+        t2: { id: 't2', groupId: 'g1', status: 'live' },
+        t3: { id: 't3', groupId: 'g2', status: 'live' },
+      },
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    // t2 は g1 に残り、g2 から除去される
+    expect(state.groups[0].tabIds).toContain('t2');
+    expect(state.groups[1].tabIds).not.toContain('t2');
+    // t3 は g2 に残る
+    expect(state.groups[1].tabIds).toContain('t3');
+  });
+
+  it('status/ptyId をリセットする', () => {
+    const state = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
+      tabs: {
+        t1: { id: 't1', groupId: 'g1', status: 'live', ptyId: 'pty-123' },
+      },
+      editingId: 'edit-id',
+      contextMenuOpen: true,
+    };
+    callOnRehydrate(state);
+    expect(state.tabs['t1'].status).toBe('spawning');
+    expect(state.tabs['t1'].ptyId).toBeUndefined();
+    expect(state.editingId).toBeNull();
+    expect(state.contextMenuOpen).toBe(false);
+  });
+});
+
+// --- F-S6: persist migrate v0 → v1 ---
+
+describe('persist migrate v0 → v1', () => {
+  it('tab.title が tab.userTitle に変換される', () => {
+    const opts = useAppStore.persist.getOptions();
+    const oldState = {
+      tabs: { t1: { id: 't1', groupId: 'g1', title: 'Old Title' } },
+    };
+    const migrated = opts.migrate!(oldState, 0) as Record<string, any>;
+    expect(migrated.tabs.t1.userTitle).toBe('Old Title');
+    expect(migrated.tabs.t1.title).toBeUndefined();
+  });
+
+  it('userTitle が既にあれば title は変換されない', () => {
+    const opts = useAppStore.persist.getOptions();
+    const oldState = {
+      tabs: { t1: { id: 't1', groupId: 'g1', title: 'OldTitle', userTitle: 'ExistingUserTitle' } },
+    };
+    const migrated = opts.migrate!(oldState, 0) as Record<string, any>;
+    // userTitle が既にある場合は title → userTitle 変換をスキップ（title は残る可能性があるが userTitle は上書きされない）
+    expect(migrated.tabs.t1.userTitle).toBe('ExistingUserTitle');
+  });
+
+  it('version 1 ならパススルー (title は変換されない)', () => {
+    const opts = useAppStore.persist.getOptions();
+    const state = {
+      tabs: { t1: { id: 't1', groupId: 'g1', title: 'ShouldNotChange' } },
+    };
+    const migrated = opts.migrate!(state, 1) as Record<string, any>;
+    // version >= 1 では title→userTitle 変換を行わない
+    expect(migrated.tabs.t1.title).toBe('ShouldNotChange');
+    expect(migrated.tabs.t1.userTitle).toBeUndefined();
   });
 });

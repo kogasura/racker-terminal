@@ -4,12 +4,36 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 
 ## Status
 
-**Phase 3 (絞り込みスコープ) 完成 (2026-04-27) / Phase 4 で永続化・配布へ。**
+**Phase 4 進行中 (2026-04-25〜) / Unit P4-G + P4-A 完了。**
 
 - **Phase 1**: Tauri 2 + React 19 + xterm.js + portable-pty で nushell が起動・入出力できる最小構成
 - **Phase 2**: 縦サイドバー（グループ + タブ 2 階層）、InlineEdit、右クリックメニュー、お気に入り、Ctrl+Tab 等のキーボードショートカット、D&D、OSC タイトル自動更新、StrictMode/HMR 復活
 - **Phase 3 (絞り込み)**: WebGL renderer 復活、detached thread リーク撲滅、spawning タイムアウト、IME 改善、e.code ベースキーバインド、異常終了の網羅検証
-- **Phase 4 (予定)**: 永続化 (zustand persist)、Tab.title 構造分離、グループ D&D、Settings UI、配布（インストーラー）など — [phase3-plan.md §4](docs/phase3-plan.md)
+- **Phase 4 (進行中)**: 永続化 (zustand persist)、Tab.title 構造分離 (P4-A)、お気に入り改善 (P4-G)、Settings UI、配布（インストーラー）など — [phase4-plan.md](docs/phase4-plan.md)
+
+### 永続化される情報
+
+- ✅ タブ・グループ・お気に入りの構成
+- ✅ shell / cwd / 環境変数 (env)
+- ✅ ユーザー編集したタブ名 (userTitle)
+- ✅ Settings (フォント等)
+
+| 情報 | 永続化 | 備考 |
+|---|---|---|
+| タブ・グループ・お気に入りの構成 | ✅ | localStorage に保存 |
+| shell / cwd / 環境変数 | ✅ | 起動時に再 spawn |
+| ユーザー編集したタブ名 (userTitle) | ✅ | OSC タイトルより優先 |
+| Settings (フォント等) | ✅ | |
+| scrollback (PTY 出力履歴) | ❌ | PTY と一蓮托生のため復元不可 |
+| 実行中状態 (active タブ・編集中) | ❌ | ランタイム情報 |
+| shell 側の OSC タイトル | ❌ | 起動後に shell が再送信 |
+
+### ⚠️ 機密値の取り扱い注意
+
+`env` (環境変数) は **localStorage に平文 JSON で保存** されます。
+WebView2 の DevTools や `%LOCALAPPDATA%\<app>\EBWebView\` の LevelDB から読み取れる可能性があります。
+**API キー・パスワード・個人トークン等の機密値は env に入れないでください**。
+将来 (Phase 5+) で OS keyring (Windows Credential Manager 等) への退避を検討中です。
 
 ### Phase 3 ハイライト
 

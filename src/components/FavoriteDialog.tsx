@@ -132,6 +132,9 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
               <span className="dialog-label">
                 環境変数 (1 行 1 件、<code>KEY=VALUE</code> 形式)
               </span>
+              <small className="dialog-hint">
+                ⚠️ env はローカルに平文保存されます。機密値 (API キー等) は入れないでください。
+              </small>
               <textarea
                 className="dialog-textarea"
                 value={envText}

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
@@ -148,10 +149,12 @@ interface AppActions {
    * タブを新規作成し、そのタブ ID を返す。
    * groupId 未指定時は groups[0] を使うか、なければ createGroup('Default') を自動呼び出し。
    * PTY 操作は行わない。TerminalPane が mount されてから status=spawning を検知して startSpawn を呼ぶ。
+   *
+   * opts.title は後方互換のために受け付け、userTitle にセットする。
    */
   createTab: (
     groupId?: string,
-    opts?: Partial<Pick<Tab, 'title' | 'shell' | 'cwd' | 'env'>>,
+    opts?: Partial<Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env'>> & { title?: string },
   ) => string;
 
   /**
@@ -168,12 +171,20 @@ interface AppActions {
   setTabStatus: (tabId: string, status: TabStatus, ptyId?: string) => void;
 
   /**
-   * タブのタイトルを更新する。
+   * ユーザー手動編集によるタイトルを更新する (userTitle を更新)。
    * title は trim され最大 64 文字に切り詰める。
    * 結果が空文字列なら no-op（元タイトル維持）。
    * 存在しない tabId は no-op。
    */
   updateTabTitle: (tabId: string, title: string) => void;
+
+  /**
+   * shell の OSC タイトルシーケンス経由で受信したタイトルを更新する (oscTitle を更新)。
+   * userTitle が設定されている場合は OSC タイトルより優先されるが、oscTitle は保存される。
+   * 存在しない tabId は no-op。
+   * Phase 4 P-A で追加。
+   */
+  updateTabOscTitle: (tabId: string, oscTitle: string) => void;
 
   /**
    * OSC 7 経由で受信した shell の現在 cwd を tab.cwd に反映する。
@@ -228,7 +239,9 @@ interface AppActions {
 
 type Store = AppState & AppActions;
 
-export const useAppStore = create<Store>()((set, get) => ({
+export const useAppStore = create<Store>()(
+  persist(
+    (set, get) => ({
   groups: [],
   tabs: {},
   favorites: [],
@@ -270,9 +283,9 @@ export const useAppStore = create<Store>()((set, get) => ({
   spawnFavorite: (favId) => {
     const fav = get().favorites.find((f) => f.id === favId);
     if (!fav) return null;
-    const title = fav.defaultTabTitle ?? fav.title;
+    const userTitle = fav.defaultTabTitle ?? fav.title;
     return get().createTab(undefined, {
-      title,
+      userTitle,
       shell: fav.shell,
       cwd: fav.cwd,
       // F-M2: fav.env を shallow clone して参照を独立させる
@@ -326,7 +339,8 @@ export const useAppStore = create<Store>()((set, get) => ({
       const tab: Tab = {
         id: tabId,
         groupId: resolvedGroupId,
-        title: opts?.title ?? 'Terminal',
+        // opts.title は後方互換のために受け付け、userTitle にセットする
+        userTitle: opts?.userTitle ?? opts?.title,
         shell: opts?.shell,
         cwd: opts?.cwd,
         env: opts?.env,
@@ -399,9 +413,17 @@ export const useAppStore = create<Store>()((set, get) => ({
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};  // 存在しない tabId は no-op
-      return { tabs: { ...state.tabs, [tabId]: { ...tab, title: trimmed } } };
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, userTitle: trimmed } } };
     });
   },
+
+  updateTabOscTitle: (tabId, oscTitle) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};  // 存在しない tabId は no-op
+      if (tab.oscTitle === oscTitle) return {};  // 同値 no-op (partialize オーバヘッド回避)
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, oscTitle } } };
+    }),
 
   updateTabCwd: (tabId, cwd) =>
     set((state) => {
@@ -423,10 +445,16 @@ export const useAppStore = create<Store>()((set, get) => ({
       const src = state.tabs[tabId];
       if (!src) return {};
 
+      // getTabDisplayTitle 相当のロジックで表示タイトルを取得して "(copy)" を付加する
+      // 空文字列の userTitle は未設定と同様に扱い oscTitle にフォールバックする
+      const displayTitle =
+        src.userTitle && src.userTitle.length > 0
+          ? src.userTitle
+          : (src.oscTitle ?? 'Terminal');
       const newTab: Tab = {
         id: newTabId,
         groupId: src.groupId,
-        title: `${src.title} (copy)`,
+        userTitle: `${displayTitle} (copy)`,
         shell: src.shell,
         cwd: src.cwd,
         // F-M3: src.env を shallow clone して参照を独立させる
@@ -558,15 +586,113 @@ export const useAppStore = create<Store>()((set, get) => ({
       return { groups: updatedGroups, tabs: updatedTab };
     });
   },
-}));
+    }),
+    {
+      name: 'racker-terminal',
+      version: 1,
+      // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
+      storage: createJSONStorage(() => ({
+        getItem: (key) => {
+          try { return localStorage.getItem(key); }
+          catch (e) { console.error('[racker] persist getItem failed:', e); return null; }
+        },
+        setItem: (key, value) => {
+          try { localStorage.setItem(key, value); }
+          catch (e) {
+            if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+              console.error('[racker] localStorage quota exceeded — persistence disabled until restart');
+            } else {
+              console.error('[racker] persist setItem failed:', e);
+            }
+          }
+        },
+        removeItem: (key) => {
+          try { localStorage.removeItem(key); }
+          catch (e) { console.error('[racker] persist removeItem failed:', e); }
+        },
+      })),
+      // F-M3: スキーマ migration (v0 → v1: tab.title → tab.userTitle)
+      migrate: (persistedState: unknown, version: number) => {
+        const state = persistedState as Record<string, any>;
 
-// Phase 3 persist 方針の詳細は src/types/index.ts の AppState JSDoc を参照。
-// partialize で OFF にすべきランタイム状態: activeTabId, editingId, tabs[*].status, tabs[*].ptyId
-//
-// Phase 3 persist 追加時:
-//   create<Store>()(persist((set, get) => ({ ... }), {
-//     name: 'racker-terminal',
-//     partialize: (state) => ({ groups: state.groups, tabs: state.tabs, ... }),
-//   }))
-// 現状の curried 記法からスムーズに移行できる。
+        // v0 → v1: tab.title → tab.userTitle に変換
+        if (version < 1) {
+          if (state?.tabs) {
+            for (const id of Object.keys(state.tabs)) {
+              const tab = state.tabs[id];
+              if (tab.title !== undefined && tab.userTitle === undefined) {
+                tab.userTitle = tab.title;
+                delete tab.title;
+              }
+            }
+          }
+        }
+
+        // 将来: if (version < 2) { ... } をここに追加
+
+        return state;
+      },
+      partialize: (state) => ({
+        groups: state.groups,
+        tabs: Object.fromEntries(
+          Object.entries(state.tabs).map(([id, tab]) => [
+            id,
+            {
+              id: tab.id,
+              groupId: tab.groupId,
+              userTitle: tab.userTitle,   // ユーザー編集タイトルのみ永続化 (oscTitle は保存しない)
+              shell: tab.shell,
+              cwd: tab.cwd,
+              env: tab.env,
+              // status / ptyId / oscTitle は OFF (ランタイム状態)
+            },
+          ]),
+        ),
+        favorites: state.favorites,
+        settings: state.settings,
+        // activeTabId / editingId / contextMenuOpen は OFF
+      }),
+      // F-M2: 復元時の整合性ガード
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+
+        // 1. group.tabIds から state.tabs に存在しない ID を除去
+        const validTabIds = new Set(Object.keys(state.tabs));
+        state.groups = state.groups.map((g) => ({
+          ...g,
+          tabIds: g.tabIds.filter((id) => validTabIds.has(id)),
+        }));
+
+        // 2. 重複 tabId を除去 (最初に現れた group に属させる)
+        const seen = new Set<string>();
+        state.groups = state.groups.map((g) => ({
+          ...g,
+          tabIds: g.tabIds.filter((id) => {
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+          }),
+        }));
+
+        // 3. 孤立 tab (どの group の tabIds にも参照されていない) を削除
+        const referenced = new Set(state.groups.flatMap((g) => g.tabIds));
+        for (const id of Object.keys(state.tabs)) {
+          if (!referenced.has(id)) delete state.tabs[id];
+        }
+
+        // 4. status/ptyId をリセット (一括代入で性能改善)
+        // oscTitle は partialize 対象外なので保存されないが、念のためクリア不要 (型上も存在しないはず)
+        const newTabs: Record<string, Tab> = {};
+        for (const [id, t] of Object.entries(state.tabs)) {
+          newTabs[id] = { ...t, status: 'spawning', ptyId: undefined };
+        }
+        state.tabs = newTabs;
+
+        // ランタイム状態は復元しない
+        state.editingId = null;
+        state.contextMenuOpen = false;
+      },
+    },
+  ),
+);
 

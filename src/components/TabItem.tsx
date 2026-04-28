@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
-import type { TabStatus } from '../types';
+import { getTabDisplayTitle, type TabStatus } from '../types';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   live: 'tab-item__status-dot tab-item__status-dot--live',
@@ -79,7 +79,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
 
           <InlineEdit
             id={tabId}
-            title={tab.title}
+            title={getTabDisplayTitle(tab)}
             onCommit={handleCommit}
             className="tab-item__title"
           />
@@ -118,9 +118,9 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => {
-              // 元タブの shell / cwd / env / title を引き継いでお気に入りに登録する
+              // 元タブの shell / cwd / env / userTitle を引き継いでお気に入りに登録する
               addFavorite({
-                title: tab.title,
+                title: getTabDisplayTitle(tab),
                 shell: tab.shell,
                 cwd: tab.cwd,
                 env: tab.env,

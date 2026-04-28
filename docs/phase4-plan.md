@@ -1,12 +1,42 @@
 # Racker Terminal — Phase 4 実装計画
 
-> **Phase 4 開始 (2026-04-28〜)**: Unit P4-G (お気に入り改善) から実装中。
+> **Phase 4 開始 (2026-04-28〜)**: Unit P4-G (お気に入り改善) 完了。Unit P4-A (永続化 + Tab.title 構造分離) 完了。
 
 ---
 
 ## 1. 概要・スコープ
 
 Phase 3 完成後のユーザー使用試験で発覚した実用上の問題を解消する。
+
+### Unit P4-A: 永続化 + Tab.title 構造分離
+
+**A1**: `zustand/middleware/persist` を `useAppStore` に追加。アプリ再起動時にタブ・グループ・お気に入りを復元する。
+
+**A2**: `Tab.title` を `userTitle` (ユーザー編集) と `oscTitle` (shell の OSC タイトル) に分離。永続化されるのは `userTitle` のみ。
+
+**A3**: scrollback は復元しない（PTY と一蓮托生のため）。この仕様は設計上の制約として明示する。
+
+#### 永続化される情報
+
+- ✅ タブ・グループ・お気に入りの構成
+- ✅ shell / cwd / 環境変数
+- ✅ ユーザー編集したタブ名 (userTitle)
+- ✅ Settings (フォント等)
+
+#### 永続化されない情報
+
+- ❌ scrollback (PTY 出力履歴): PTY と一蓮托生のため復元不可。Phase 5 で別途対応を検討する
+- ❌ 実行中の状態 (active タブ・編集中状態): ランタイム情報のため
+- ❌ shell 側の OSC タイトル (oscTitle): 起動後に shell が再送信する
+
+#### 設計判断
+
+1. **persist の storage は localStorage**: Tauri WebView2 で安定動作。IndexedDB / file system 等の選択肢もあるが Phase 4 では localStorage で十分。
+2. **version: 1 + migrate スケルトン**: 将来 Tab 型が変わった時のために `version: 1` を設定。`migrate` オプションは現在パススルー。
+3. **onRehydrateStorage で status リセット**: 復元したタブは PTY セッションが切断されているため `status='spawning'` に戻して TerminalPane が再 spawn する。
+4. **Tab.title 廃止 (破壊的変更)**: 旧 `tab.title` は完全に廃止し、`userTitle` または `getTabDisplayTitle(tab)` に統一。
+
+---
 
 ### Unit P4-G: お気に入り改善 (OSC 7 cwd 追跡 + 手動登録 + 編集)
 

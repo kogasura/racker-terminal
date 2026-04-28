@@ -413,6 +413,64 @@ describe('appStore', () => {
     });
   });
 
+  // --- moveFavorite (Phase 4 P-B-1) ---
+  describe('moveFavorite', () => {
+    it('インデックスを入れ替える', () => {
+      const f1 = useAppStore.getState().addFavorite({ title: 'F1' });
+      const f2 = useAppStore.getState().addFavorite({ title: 'F2' });
+      const f3 = useAppStore.getState().addFavorite({ title: 'F3' });
+
+      // F1 (index 0) を index 2 に移動 → [F2, F3, F1]
+      useAppStore.getState().moveFavorite(f1, 2);
+
+      const ids = useAppStore.getState().favorites.map((f) => f.id);
+      expect(ids).toEqual([f2, f3, f1]);
+    });
+
+    it('負のインデックスは 0 にクランプされる', () => {
+      const f1 = useAppStore.getState().addFavorite({ title: 'F1' });
+      const f2 = useAppStore.getState().addFavorite({ title: 'F2' });
+
+      useAppStore.getState().moveFavorite(f2, -5);
+
+      const ids = useAppStore.getState().favorites.map((f) => f.id);
+      expect(ids).toEqual([f2, f1]);
+    });
+
+    it('上限超えのインデックスは favorites.length-1 にクランプされる', () => {
+      const f1 = useAppStore.getState().addFavorite({ title: 'F1' });
+      const f2 = useAppStore.getState().addFavorite({ title: 'F2' });
+
+      useAppStore.getState().moveFavorite(f1, 999);
+
+      const ids = useAppStore.getState().favorites.map((f) => f.id);
+      expect(ids).toEqual([f2, f1]);
+    });
+
+    it('同 index 指定 → no-op（配列参照が変わらない）', () => {
+      const f1 = useAppStore.getState().addFavorite({ title: 'F1' });
+      const f2 = useAppStore.getState().addFavorite({ title: 'F2' });
+      void f2;
+      const before = useAppStore.getState().favorites;
+
+      // f1 は index 0 → 同じ index 0 に移動
+      useAppStore.getState().moveFavorite(f1, 0);
+
+      const after = useAppStore.getState().favorites;
+      expect(after).toBe(before);
+    });
+
+    it('存在しない favId → no-op', () => {
+      useAppStore.getState().addFavorite({ title: 'F1' });
+      const before = useAppStore.getState().favorites;
+
+      useAppStore.getState().moveFavorite('non-existent', 0);
+
+      const after = useAppStore.getState().favorites;
+      expect(after).toBe(before);
+    });
+  });
+
   // --- updateTabTitle ---
   describe('updateTabTitle', () => {
     it('通常更新: userTitle が更新される', () => {

@@ -7,6 +7,17 @@ import type { AppState } from '../types';
 export const GROUP_DROPPABLE_PREFIX = 'group-';
 
 /**
+ * GroupSection ヘッダの auto-expand 用 useDroppable id のプレフィックス (B4a)。
+ * handleDragEnd でグループ自体への drop と区別するために使用する。
+ */
+export const GROUP_HEADER_DROPPABLE_PREFIX = 'group-header-';
+
+/**
+ * 「新規グループとして drop」エリアの useDroppable id (B4b)。
+ */
+export const DROP_AS_NEW_GROUP_ID = 'drop-as-new-group';
+
+/**
  * dnd-kit の over.id を解析してドロップ先 (toGroupId / toIndex) を決定する純関数。
  *
  * - `'group-{groupId}'` 形式: 該当グループの末尾追加

@@ -227,6 +227,13 @@ interface AppActions {
   moveGroup: (groupId: string, toIndex: number) => void;
 
   /**
+   * favorites 配列の並び順を変更する。
+   * toIndex は [0, favorites.length-1] にクランプされる。
+   * Phase 4 P-B-1 で追加。
+   */
+  moveFavorite: (favId: string, toIndex: number) => void;
+
+  /**
    * タブを別グループの指定 index に移動する。
    * - fromGroup の tabIds から対象を除去
    * - toGroup の tabIds の toIndex 位置に挿入 (toIndex は [0, toGroup.tabIds.length] にクランプ)
@@ -530,6 +537,19 @@ export const useAppStore = create<Store>()(
       const [item] = next.splice(from, 1);
       next.splice(clamped, 0, item);
       return { groups: next };
+    });
+  },
+
+  moveFavorite: (favId, toIndex) => {
+    set((state) => {
+      const from = state.favorites.findIndex((f) => f.id === favId);
+      if (from === -1) return {};
+      const clamped = Math.max(0, Math.min(toIndex, state.favorites.length - 1));
+      if (from === clamped) return {};
+      const next = [...state.favorites];
+      const [item] = next.splice(from, 1);
+      next.splice(clamped, 0, item);
+      return { favorites: next };
     });
   },
 

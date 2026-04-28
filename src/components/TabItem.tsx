@@ -30,10 +30,10 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const addFavorite = useAppStore((s) => s.addFavorite);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
-  // groupId を data に持たせることで onDragEnd で所属グループを参照できる
+  // groupId と kind を data に持たせることで onDragEnd で所属グループと D&D 種別を参照できる
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tabId,
-    data: { groupId: tab?.groupId },
+    data: { kind: 'tab', groupId: tab?.groupId },
     // 編集中はドラッグ操作を無効にする
     disabled: isEditing,
   });

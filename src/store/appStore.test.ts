@@ -31,6 +31,7 @@ function resetStore() {
       fontFamily: '"MonaspiceNe NF", monospace',
       fontSize: 12.5,
       scrollback: 10000,
+      transparency: 1.0,
     },
   });
 }
@@ -1000,6 +1001,41 @@ describe('appStore', () => {
       expect(useAppStore.getState().groups).toBe(before);
     });
   });
+
+  // --- updateSettings ---
+  describe('updateSettings', () => {
+    it('patch を適用して settings が更新される', () => {
+      useAppStore.getState().updateSettings({ fontSize: 16 });
+      expect(useAppStore.getState().settings.fontSize).toBe(16);
+    });
+
+    it('部分更新: 変更しないフィールドは維持される', () => {
+      const before = useAppStore.getState().settings;
+      useAppStore.getState().updateSettings({ fontSize: 20 });
+      const after = useAppStore.getState().settings;
+      expect(after.fontSize).toBe(20);
+      expect(after.fontFamily).toBe(before.fontFamily);
+      expect(after.scrollback).toBe(before.scrollback);
+      expect(after.theme).toBe(before.theme);
+    });
+
+    it('transparency を更新できる', () => {
+      useAppStore.getState().updateSettings({ transparency: 0.8 });
+      expect(useAppStore.getState().settings.transparency).toBe(0.8);
+    });
+
+    it('defaultSettings に transparency: 1.0 が含まれる', () => {
+      const { settings } = useAppStore.getState();
+      expect(settings.transparency).toBe(1.0);
+    });
+
+    it('複数フィールドを同時更新できる', () => {
+      useAppStore.getState().updateSettings({ fontSize: 18, transparency: 0.9 });
+      const { settings } = useAppStore.getState();
+      expect(settings.fontSize).toBe(18);
+      expect(settings.transparency).toBe(0.9);
+    });
+  });
 });
 
 // --- selectFallbackTab ---
@@ -1056,7 +1092,7 @@ function makeState(
     activeTabId,
     editingId: null,
     contextMenuOpen: false,
-    settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000 },
+    settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
   };
 }
 

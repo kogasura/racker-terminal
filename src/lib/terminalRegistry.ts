@@ -386,12 +386,25 @@ export function createRuntime(
 
     applySettings(settings) {
       // Settings 変更を xterm.options に即時反映する。
-      // Settings UI は Phase 3 送りのため、Phase 2 では機構のみ用意する。
       // dispose 済みの xterm に options を書き込むと例外になるため isDisposed ガードを入れる。
       if (isDisposed) return;
       term.options.fontSize = settings.fontSize;
       term.options.fontFamily = settings.fontFamily;
       term.options.scrollback = settings.scrollback;
+      // 透明度反映: theme.background を rgba 化
+      if (settings.transparency !== undefined && settings.transparency < 1.0) {
+        const bg = term.options.theme?.background ?? '#1a1b26';
+        term.options.theme = {
+          ...term.options.theme,
+          background: hexToRgba(bg, settings.transparency),
+        };
+      } else {
+        // transparency が 1.0 (不透明) のとき: 元の不透明 hex に戻す
+        term.options.theme = {
+          ...term.options.theme,
+          background: '#1a1b26',
+        };
+      }
     },
 
     dispose() {
@@ -547,6 +560,24 @@ export function forceDisposeAll(): void {
     entry.runtime.dispose();
     runtimes.delete(tabId);
   }
+}
+
+/**
+ * 6 桁 hex カラーコードを rgba 文字列に変換する純関数。
+ * - 入力: '#1a1b26' または '1a1b26' (# なしも可)
+ * - 出力: 'rgba(26, 27, 38, 0.8)' のような文字列
+ * - 不正な hex → 元の文字列をそのまま返す
+ *
+ * テスト容易性のためモジュール外から import できる形で export する。
+ * Phase 4 P-B-2 で追加。
+ */
+export function hexToRgba(hex: string, alpha: number): string {
+  const m = hex.match(/^#?([a-fA-F0-9]{2})([a-fA-F0-9]{2})([a-fA-F0-9]{2})$/);
+  if (!m) return hex;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /**

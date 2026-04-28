@@ -25,4 +25,12 @@
 
   /* フォーカスアウトライン */
   --focus-ring: #7aa2f7;
+
+  /* 透明度制御 (Phase 4 P-B-2) */
+  /* JS 側から --bg-alpha を書き換えて透明度を動的制御する */
+  --bg-alpha: 1.0;
+
+  /* タイトルバー */
+  --title-bar-bg: rgba(26, 27, 38, 0.95);
+  --title-bar-fg: #c0caf5;
 }

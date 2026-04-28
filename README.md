@@ -4,12 +4,12 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 
 ## Status
 
-**Phase 4 進行中 (2026-04-25〜) / Unit P4-G + P4-A 完了。**
+**Phase 4 進行中 (2026-04-25〜) / Unit P4-G + P4-A + P4-B-1 + P4-B-2 完了。**
 
 - **Phase 1**: Tauri 2 + React 19 + xterm.js + portable-pty で nushell が起動・入出力できる最小構成
 - **Phase 2**: 縦サイドバー（グループ + タブ 2 階層）、InlineEdit、右クリックメニュー、お気に入り、Ctrl+Tab 等のキーボードショートカット、D&D、OSC タイトル自動更新、StrictMode/HMR 復活
 - **Phase 3 (絞り込み)**: WebGL renderer 復活、detached thread リーク撲滅、spawning タイムアウト、IME 改善、e.code ベースキーバインド、異常終了の網羅検証
-- **Phase 4 (進行中)**: 永続化 (zustand persist)、Tab.title 構造分離 (P4-A)、お気に入り改善 (P4-G)、Settings UI、配布（インストーラー）など — [phase4-plan.md](docs/phase4-plan.md)
+- **Phase 4 (進行中)**: 永続化 (zustand persist)、Tab.title 構造分離 (P4-A)、お気に入り改善 (P4-G)、D&D 拡張 (P4-B-1)、Settings UI + frameless window + 背景透過 (P4-B-2)、配布（インストーラー）など — [phase4-plan.md](docs/phase4-plan.md)
 
 ### 永続化される情報
 
@@ -34,6 +34,18 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 WebView2 の DevTools や `%LOCALAPPDATA%\<app>\EBWebView\` の LevelDB から読み取れる可能性があります。
 **API キー・パスワード・個人トークン等の機密値は env に入れないでください**。
 将来 (Phase 5+) で OS keyring (Windows Credential Manager 等) への退避を検討中です。
+
+### Phase 4 ハイライト (v0.5)
+
+| 機能 | 実装 |
+|---|---|
+| 永続化 (P4-A) | `zustand/middleware/persist` で localStorage に状態保存。アプリ再起動後もタブ・グループ・設定が復元される |
+| Tab.title 構造分離 (P4-A) | `userTitle` (手動編集) と `oscTitle` (shell の OSC) に分離 |
+| お気に入り改善 (P4-G) | OSC 7 で cwd を動的追跡、手動登録 UI、編集メニュー |
+| D&D 拡張 (P4-B-1) | グループ並び替え、Favorites 並び替え、折りたたみグループへの auto-expand drop、新規グループとして drop |
+| **Settings UI (P4-B-2)** | サイドバーフッタの ⚙ ボタンから設定ダイアログを開く。フォントサイズ・フォントファミリ・スクロールバック・透明度を GUI で変更可能 |
+| **frameless window (P4-B-2)** | `decorations: false` + カスタム TitleBar (最小化/最大化/閉じる + ドラッグ領域) |
+| **背景透過 (P4-B-2)** | `transparent: true` + Settings で透明度 0.7〜1.0 を調整。xterm.js の theme.background を rgba で制御 |
 
 ### Phase 3 ハイライト
 

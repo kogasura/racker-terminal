@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { SettingsDialog } from './SettingsDialog';
 import {
   DndContext,
   DragOverlay,
@@ -96,6 +97,8 @@ export const Sidebar = memo(function Sidebar() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   // B1/B2/B4: ドラッグ中の kind を管理（DropAsNewGroupArea 表示制御・DragOverlay 分岐に使用）
   const [activeDragKind, setActiveDragKind] = useState<DragKind | null>(null);
+  // B3: Settings Dialog の開閉状態
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // F2: useShallow で id/displayTitle/status の 3 フィールドのみ抽出する。
   // Tab オブジェクト全体を返すと OSC タイトル更新等で Sidebar 全体が再レンダーされ、
@@ -247,14 +250,29 @@ export const Sidebar = memo(function Sidebar() {
           {/* B4b: タブドラッグ中のみ「新規グループとして追加」drop エリアを表示 */}
           {activeDragKind === DRAG_KIND.TAB && <DropAsNewGroupArea />}
 
-          {/* F3: type="button" 追加 / F-M3: nextNewGroupTitle で連番崩壊を防ぐ */}
-          <button
-            type="button"
-            className="sidebar__new-group-btn"
-            onClick={() => createGroup(nextNewGroupTitle(groupTitles.map((t) => ({ title: t }))))}
-          >
-            + New Group
-          </button>
+          <div className="sidebar__footer-buttons">
+            {/* F3: type="button" 追加 / F-M3: nextNewGroupTitle で連番崩壊を防ぐ */}
+            <button
+              type="button"
+              className="sidebar__new-group-btn"
+              onClick={() => createGroup(nextNewGroupTitle(groupTitles.map((t) => ({ title: t }))))}
+            >
+              + New Group
+            </button>
+            {/* B3: Settings ボタン */}
+            <button
+              type="button"
+              className="sidebar__settings-btn"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              aria-label="Settings"
+            >
+              ⚙
+            </button>
+          </div>
+
+          {/* B3: Settings Dialog */}
+          {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
         </div>
       </div>
 

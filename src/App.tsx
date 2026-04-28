@@ -2,8 +2,10 @@ import { useEffect } from 'react';
 import { useAppStore } from './store/appStore';
 import { getAllRuntimes } from './lib/terminalRegistry';
 import { Sidebar } from './components/Sidebar';
+import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import './styles/variables.css';
+import './styles/title-bar.css';
 
 function App() {
   useEffect(() => {
@@ -48,10 +50,28 @@ function App() {
     return unsub;
   }, []);
 
+  // Settings の transparency を CSS 変数 --bg-alpha に反映する。
+  // CSS で rgba() を動的に制御するために使用する。
+  // Phase 4 P-B-2 で追加。
+  useEffect(() => {
+    // 初期値を即時反映
+    const initialAlpha = useAppStore.getState().settings.transparency ?? 1.0;
+    document.documentElement.style.setProperty('--bg-alpha', initialAlpha.toString());
+
+    const unsub = useAppStore.subscribe((state) => {
+      const t = state.settings.transparency ?? 1.0;
+      document.documentElement.style.setProperty('--bg-alpha', t.toString());
+    });
+    return unsub;
+  }, []);
+
   return (
-    <div className="h-screen w-screen" style={{ display: 'flex' }}>
-      <Sidebar />
-      <TerminalPaneContainer />
+    <div className="app-root">
+      <TitleBar />
+      <div className="app-body">
+        <Sidebar />
+        <TerminalPaneContainer />
+      </div>
     </div>
   );
 }

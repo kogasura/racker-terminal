@@ -836,3 +836,42 @@ describe('parseOsc7Path', () => {
     expect(parseOsc7Path('file://host/C:/Users/foo/')).toBe('C:\\Users\\foo');
   });
 });
+
+// --- hexToRgba (Phase 4 P-B-2) ---
+
+import { hexToRgba } from './terminalRegistry';
+
+describe('hexToRgba', () => {
+  it('通常変換: #1a1b26 + 0.8 → rgba(26, 27, 38, 0.8)', () => {
+    expect(hexToRgba('#1a1b26', 0.8)).toBe('rgba(26, 27, 38, 0.8)');
+  });
+
+  it('# なしも受け付ける: 1a1b26 + 0.5 → rgba(26, 27, 38, 0.5)', () => {
+    expect(hexToRgba('1a1b26', 0.5)).toBe('rgba(26, 27, 38, 0.5)');
+  });
+
+  it('alpha=1.0: rgba(26, 27, 38, 1)', () => {
+    expect(hexToRgba('#1a1b26', 1.0)).toBe('rgba(26, 27, 38, 1)');
+  });
+
+  it('大文字 hex も変換できる', () => {
+    expect(hexToRgba('#FFFFFF', 0.9)).toBe('rgba(255, 255, 255, 0.9)');
+  });
+
+  it('不正な hex (短い) → 元の文字列をそのまま返す', () => {
+    expect(hexToRgba('#1a1b', 0.8)).toBe('#1a1b');
+  });
+
+  it('不正な hex (非 hex 文字) → 元の文字列をそのまま返す', () => {
+    expect(hexToRgba('#gggggg', 0.8)).toBe('#gggggg');
+  });
+
+  it('空文字列 → 元の文字列をそのまま返す', () => {
+    expect(hexToRgba('', 0.8)).toBe('');
+  });
+
+  it('rgba(...) 形式の既存値 → 元の文字列をそのまま返す（不正 hex 扱い）', () => {
+    const rgba = 'rgba(26, 27, 38, 0.8)';
+    expect(hexToRgba(rgba, 0.5)).toBe(rgba);
+  });
+});

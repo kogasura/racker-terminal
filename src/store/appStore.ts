@@ -10,6 +10,7 @@ const defaultSettings: Settings = {
   fontFamily: '"MonaspiceNe NF", "Cascadia Code", "Consolas", monospace',
   fontSize: 12.5,
   scrollback: 10000,
+  transparency: 1.0,
 };
 
 /**
@@ -242,6 +243,12 @@ interface AppActions {
    * - tab.groupId フィールドも更新
    */
   moveTab: (tabId: string, toGroupId: string, toIndex: number) => void;
+
+  /**
+   * Settings を一括更新する。Phase 4 P-B-2 で追加。
+   * applySettings broadcast 機構経由で全 runtime に反映される。
+   */
+  updateSettings: (patch: Partial<Settings>) => void;
 }
 
 type Store = AppState & AppActions;
@@ -606,6 +613,9 @@ export const useAppStore = create<Store>()(
       return { groups: updatedGroups, tabs: updatedTab };
     });
   },
+
+  updateSettings: (patch) =>
+    set((state) => ({ settings: { ...state.settings, ...patch } })),
     }),
     {
       name: 'racker-terminal',

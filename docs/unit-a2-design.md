@@ -104,6 +104,7 @@ dispose() {
   setOnEvent(null);           // PTY イベントハンドラ参照を切る
   onDataSub.dispose();        // xterm の onData 購読停止
   titleSub.dispose();         // OSC タイトル購読停止 (Unit D+E)
+  oscSub.dispose();           // OSC 7 cwd 追跡購読停止 (Phase 4 P-G)
   compositionAbort.abort();   // IME compositionstart/end リスナー解除 (P-D3)
   webglAddon?.dispose();      // WebGL context 解放 (Phase 3 Unit P-C1)
   fitAddon.dispose();

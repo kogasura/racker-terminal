@@ -325,6 +325,177 @@
   opacity: 0.95;
 }
 
+/* ----- お気に入り追加ボタン ----- */
+.favorites-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--sidebar-fg);
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.5;
+  text-align: left;
+}
+
+.favorites-add-btn:hover {
+  opacity: 1;
+  background: var(--tab-item-bg-hover);
+}
+
+/* ----- FavoriteDialog (Radix Dialog) ----- */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+}
+
+.dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--group-header-bg);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 8px;
+  padding: 20px;
+  width: 480px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  z-index: 10001;
+  color: var(--sidebar-fg);
+}
+
+.dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--sidebar-fg);
+}
+
+/* F-M5: a11y — Dialog.Description */
+.dialog-description {
+  font-size: 11px;
+  color: var(--sidebar-fg);
+  opacity: 0.6;
+  margin: 0 0 16px;
+}
+
+/* F-S3: env パースエラー表示 */
+.dialog-error {
+  font-size: 11px;
+  color: var(--status-crashed);
+  background: rgba(247, 118, 142, 0.08);
+  border: 1px solid rgba(247, 118, 142, 0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dialog-label {
+  font-size: 11px;
+  color: var(--sidebar-fg);
+  opacity: 0.8;
+}
+
+.dialog-label code {
+  background: rgba(122, 162, 247, 0.12);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+}
+
+.dialog-required {
+  color: var(--status-crashed);
+}
+
+.dialog-input {
+  background: #0d0e14;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  color: var(--sidebar-fg);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.dialog-input:focus {
+  border-color: var(--focus-ring);
+}
+
+.dialog-textarea {
+  background: #0d0e14;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  color: var(--sidebar-fg);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 6px 8px;
+  outline: none;
+  resize: vertical;
+}
+
+.dialog-textarea:focus {
+  border-color: var(--focus-ring);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dialog-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid var(--sidebar-border);
+}
+
+.dialog-btn--cancel {
+  background: none;
+  color: var(--sidebar-fg);
+}
+
+.dialog-btn--cancel:hover {
+  background: var(--tab-item-bg-hover);
+}
+
+.dialog-btn--submit {
+  background: var(--focus-ring);
+  color: #1a1b26;
+  border-color: var(--focus-ring);
+  font-weight: 600;
+}
+
+.dialog-btn--submit:hover {
+  filter: brightness(1.1);
+}
+
 /* ----- コンテキストメニュー ----- */
 .context-menu__content {
   background: var(--group-header-bg);

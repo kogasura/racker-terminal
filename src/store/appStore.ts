@@ -107,6 +107,13 @@ interface AppActions {
   removeFavorite: (favId: string) => void;
 
   /**
+   * お気に入りを編集する。
+   * id は変更されない。存在しない favId は no-op。
+   * Phase 4 P-G で追加 (FavoriteDialog 編集機能)。
+   */
+  updateFavorite: (favId: string, patch: Omit<Favorite, 'id'>) => void;
+
+  /**
    * お気に入りの設定で新しいタブを spawn する。
    * - shell / cwd / env を Favorite から引き継ぐ
    * - title は Favorite.defaultTabTitle ?? Favorite.title
@@ -167,6 +174,14 @@ interface AppActions {
    * 存在しない tabId は no-op。
    */
   updateTabTitle: (tabId: string, title: string) => void;
+
+  /**
+   * OSC 7 経由で受信した shell の現在 cwd を tab.cwd に反映する。
+   * 同じ値なら no-op（不要な再レンダーを回避）。
+   * 存在しない tabId は no-op。
+   * Phase 4 P-G で追加。
+   */
+  updateTabCwd: (tabId: string, cwd: string) => void;
 
   /**
    * タブを同一グループ内に複製する。
@@ -239,6 +254,19 @@ export const useAppStore = create<Store>()((set, get) => ({
     }));
   },
 
+  updateFavorite: (favId, patch) =>
+    set((state) => {
+      if (!state.favorites.some((f) => f.id === favId)) return {};  // 存在しない favId は no-op
+      return {
+        favorites: state.favorites.map((f) =>
+          // F-M4: patch.env を shallow clone して addFavorite と対称化する
+          f.id === favId
+            ? { ...patch, id: favId, env: patch.env ? { ...patch.env } : undefined }
+            : f,
+        ),
+      };
+    }),
+
   spawnFavorite: (favId) => {
     const fav = get().favorites.find((f) => f.id === favId);
     if (!fav) return null;
@@ -247,7 +275,8 @@ export const useAppStore = create<Store>()((set, get) => ({
       title,
       shell: fav.shell,
       cwd: fav.cwd,
-      env: fav.env,
+      // F-M2: fav.env を shallow clone して参照を独立させる
+      env: fav.env ? { ...fav.env } : undefined,
     });
   },
 
@@ -374,6 +403,16 @@ export const useAppStore = create<Store>()((set, get) => ({
     });
   },
 
+  updateTabCwd: (tabId, cwd) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};         // 存在しない tabId は no-op
+      if (tab.cwd === cwd) return {};  // 同じ値なら no-op (不要な再レンダーを回避)
+      return {
+        tabs: { ...state.tabs, [tabId]: { ...tab, cwd } },
+      };
+    }),
+
   duplicateTab: (tabId) => {
     // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
     if (!get().tabs[tabId]) return null;
@@ -390,7 +429,8 @@ export const useAppStore = create<Store>()((set, get) => ({
         title: `${src.title} (copy)`,
         shell: src.shell,
         cwd: src.cwd,
-        env: src.env,
+        // F-M3: src.env を shallow clone して参照を独立させる
+        env: src.env ? { ...src.env } : undefined,
         status: 'spawning',
       };
 

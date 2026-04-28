@@ -10,6 +10,7 @@ import {
   getRefs,
   sanitizeOscTitle,
   setupWebglRenderer,
+  parseOsc7Path,
   type TerminalRuntime,
 } from './terminalRegistry';
 
@@ -47,6 +48,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   let disposeCallCount = 0;
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
+  const oscSub = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
   const disposeFn = vi.fn(() => { disposeCallCount++; });
 
@@ -58,6 +60,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     onDataSub: sub,
     compositionAbort,
     titleSub,
+    oscSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
@@ -202,6 +205,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const callOrder: string[] = [];
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
+  const oscSub = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
 
   const runtime: TerminalRuntime & { callOrder: string[] } = {
@@ -212,6 +216,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     onDataSub: sub,
     compositionAbort,
     titleSub,
+    oscSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
@@ -254,6 +259,7 @@ describe('applySettings', () => {
     const options = { fontSize: 12.5, fontFamily: 'monospace', scrollback: 10000 };
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
+    const oscSub = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -263,6 +269,7 @@ describe('applySettings', () => {
       onDataSub: sub,
       compositionAbort,
       titleSub,
+      oscSub,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
         if (disposed) return;
@@ -323,6 +330,7 @@ describe('titleSub dispose', () => {
     const tabId = 'test-titlesub-dispose';
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
+    const oscSub = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -332,6 +340,7 @@ describe('titleSub dispose', () => {
       onDataSub: sub,
       compositionAbort,
       titleSub,
+      oscSub,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
@@ -339,6 +348,7 @@ describe('titleSub dispose', () => {
       dispose: () => {
         sub.dispose();
         titleSub.dispose();
+        oscSub.dispose();
         compositionAbort.abort();
       },
     };
@@ -347,6 +357,7 @@ describe('titleSub dispose', () => {
     forceDisposeRuntime(tabId);
 
     expect(titleSub.dispose).toHaveBeenCalledTimes(1);
+    expect(oscSub.dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -438,6 +449,7 @@ describe('memory leak', () => {
       const id = `ml-loop-${i}`;
       const sub = { dispose: vi.fn() };
       const titleSub = { dispose: vi.fn() };
+      const oscSub = { dispose: vi.fn() };
       const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
         get term() { return {} as never; },
@@ -447,6 +459,7 @@ describe('memory leak', () => {
         onDataSub: sub,
         compositionAbort,
         titleSub,
+        oscSub,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
@@ -544,6 +557,7 @@ describe('IME compositionAbort (2.13)', () => {
 
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
+    const oscSub = { dispose: vi.fn() };
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
       get fitAddon() { return {} as never; },
@@ -552,6 +566,7 @@ describe('IME compositionAbort (2.13)', () => {
       onDataSub: sub,
       compositionAbort,
       titleSub,
+      oscSub,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
@@ -559,6 +574,7 @@ describe('IME compositionAbort (2.13)', () => {
       dispose() {
         sub.dispose();
         titleSub.dispose();
+        oscSub.dispose();
         compositionAbort.abort();
       },
     };
@@ -723,4 +739,100 @@ describe('setupWebglRenderer (P-C1)', () => {
 
   // new WebglAddon() 自体が throw するケースは vi.mock 差し替えが複雑なためスキップ。
   // loadAddon throw テスト (上記) でエラー吸収パスは十分にカバーされている。
+});
+
+// --- parseOsc7Path (Phase 4 P-G) ---
+
+describe('parseOsc7Path', () => {
+  it('Windows パス: file://host/C:/Users/foo → C:\\Users\\foo', () => {
+    expect(parseOsc7Path('file://hostname/C:/Users/foo')).toBe('C:\\Users\\foo');
+  });
+
+  it('Windows パス (空ホスト): file:///C:/path/to → C:\\path\\to', () => {
+    expect(parseOsc7Path('file:///C:/path/to')).toBe('C:\\path\\to');
+  });
+
+  it('スラッシュをバックスラッシュに正規化する', () => {
+    expect(parseOsc7Path('file://host/D:/projects/app')).toBe('D:\\projects\\app');
+  });
+
+  it('URL エンコードされたパスをデコードする', () => {
+    // スペースが %20 でエンコードされているケース
+    expect(parseOsc7Path('file://host/C:/Users/my%20user/docs')).toBe('C:\\Users\\my user\\docs');
+  });
+
+  it('Linux パス → null を返す（無視）', () => {
+    expect(parseOsc7Path('file://hostname/home/user/proj')).toBeNull();
+  });
+
+  it('Linux パス (空ホスト): file:///home/user → null', () => {
+    expect(parseOsc7Path('file:///home/user')).toBeNull();
+  });
+
+  it('不正な data (file:// でない) → null', () => {
+    expect(parseOsc7Path('http://example.com/path')).toBeNull();
+  });
+
+  it('空文字列 → null', () => {
+    expect(parseOsc7Path('')).toBeNull();
+  });
+
+  it('小文字ドライブレター (C: → 変換される)', () => {
+    // Windows パスは大文字/小文字どちらも有効
+    expect(parseOsc7Path('file://host/c:/users/foo')).toBe('c:\\users\\foo');
+  });
+
+  // --- F-M1 / F-S1 / F-S2 / F-S4 追加テスト ---
+
+  it('F-M1: malformed percent-encoding (%ZZ) → null', () => {
+    expect(parseOsc7Path('file://host/C:/foo%ZZ')).toBeNull();
+  });
+
+  it('F-M1: 不正な % エンコード (%GG) → null', () => {
+    expect(parseOsc7Path('file://host/C:/path%GGbar')).toBeNull();
+  });
+
+  it('F-S1: NUL 文字混入 (%00) → null', () => {
+    // %00 は decodeURIComponent で \x00 になり、制御文字フィルタで弾かれる
+    expect(parseOsc7Path('file://host/C:/foo%00bar')).toBeNull();
+  });
+
+  it('F-S1: CR 文字混入 (%0D) → null', () => {
+    expect(parseOsc7Path('file://host/C:/foo%0Dbar')).toBeNull();
+  });
+
+  it('F-S1: LF 文字混入 (%0A) → null', () => {
+    expect(parseOsc7Path('file://host/C:/foo%0Abar')).toBeNull();
+  });
+
+  it('F-S1: ESC 文字混入 (%1B) → null', () => {
+    expect(parseOsc7Path('file://host/C:/foo%1Bbar')).toBeNull();
+  });
+
+  it('F-S2: 4KB 超のパス → null', () => {
+    // "C:/" + 4094 文字 = 4097 文字 > 4096
+    const longPath = 'file://host/C:/' + 'a'.repeat(4094);
+    expect(parseOsc7Path(longPath)).toBeNull();
+  });
+
+  it('F-S2: ちょうど 4096 文字のパスは通過する', () => {
+    // "C:" + "\" + 4093 文字 = 4096 文字 (スラッシュ除去後)
+    // file://host/C:/ + 4093 文字 → 先頭スラッシュ除去後 "C:/" + 4093 文字 = 4096 文字
+    const path = 'file://host/C:/' + 'a'.repeat(4093);
+    const result = parseOsc7Path(path);
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(4096);
+  });
+
+  it('F-S4: trailing slash 正規化 — 末尾 \\ が除去される', () => {
+    expect(parseOsc7Path('file://host/C:/foo/')).toBe('C:\\foo');
+  });
+
+  it('F-S4: ルートパス C:\\ の trailing slash は維持される', () => {
+    expect(parseOsc7Path('file://host/C:/')).toBe('C:\\');
+  });
+
+  it('F-S4: ネストされたパスの trailing slash が除去される', () => {
+    expect(parseOsc7Path('file://host/C:/Users/foo/')).toBe('C:\\Users\\foo');
+  });
 });

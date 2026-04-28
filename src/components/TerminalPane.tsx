@@ -82,6 +82,8 @@ export const TerminalPane = memo(function TerminalPane({
         isEditing: () => useAppStore.getState().editingId === tabId,
         // OSC タイトルを受け取って updateTabTitle に渡す（256 文字制限は terminalRegistry 側で適用済み）
         onOscTitle: (title) => updateTabTitle(tabId, title),
+        // OSC 7 cwd 変更通知を受け取って updateTabCwd に渡す（Phase 4 P-G で追加）
+        onCwdChange: (cwd) => useAppStore.getState().updateTabCwd(tabId, cwd),
       }),
     );
     runtimeRef.current = runtime;

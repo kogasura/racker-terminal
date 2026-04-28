@@ -64,6 +64,33 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
 }
 
 /**
+ * OSC 7 データ文字列を Windows パスに変換する純関数。
+ * - data 形式: "file://hostname/C:/Users/foo/path" (Windows) or "file://hostname/home/user" (Linux)
+ * - Windows パス ("/C:/" 形式) のみ変換する。Linux パスは null を返す。
+ * - Phase 4 P-G で追加。WSL の Linux パス対応は Phase 5 送り。
+ *
+ * テスト容易性のためモジュール外から import できる形で export する。
+ */
+export function parseOsc7Path(data: string): string | null {
+  // data = "file://hostname/C:/path" のような形式
+  const match = data.match(/^file:\/\/[^/]*(.*)$/);
+  if (!match) return null;
+
+  let path = decodeURIComponent(match[1]);
+
+  // Windows パスのみ反映: 先頭が "/X:" の形式 (例: "/C:/Users/foo")
+  // Linux パス (例: "/home/user") は無視する (WSL 対応は Phase 5 検討)
+  if (!/^\/[a-zA-Z]:/.test(path)) return null;
+
+  // 先頭のスラッシュを除去: "/C:/foo" → "C:/foo"
+  path = path.slice(1);
+  // スラッシュをバックスラッシュに正規化 (Windows)
+  path = path.replace(/\//g, '\\');
+
+  return path;
+}
+
+/**
  * TerminalPane のライフサイクル全体を React 外で管理する runtime。
  * xterm / PTY / onData 購読 / pendingInputs バッファ / 状態フラグのすべての所有者。
  *
@@ -113,6 +140,14 @@ export interface TerminalRuntime {
   titleSub: IDisposable;
 
   /**
+   * OSC 7 (cwd 変更通知) 購読の IDisposable。
+   * createRuntime 内で term.parser.registerOscHandler(7, ...) で取得する。
+   * dispose() の中で oscSub.dispose() を呼ぶ (titleSub の後)。
+   * Phase 4 P-G で追加。
+   */
+  oscSub: { dispose: () => void };
+
+  /**
    * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
    * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
    * fontSize / fontFamily / scrollback を term.options に直接書き込む。
@@ -153,6 +188,13 @@ export function createRuntime(
      */
     isEditing: () => boolean;
     onOscTitle: (title: string) => void;
+    /**
+     * OSC 7 (cwd 変更通知) 受信時のコールバック。
+     * parseOsc7Path で Windows パスに変換済みの値が渡される。
+     * TerminalPane の useEffect 内で `(cwd) => updateTabCwd(tabId, cwd)` を渡す。
+     * Phase 4 P-G で追加。
+     */
+    onCwdChange: (cwd: string) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -252,6 +294,19 @@ export function createRuntime(
     callbacks.onOscTitle(sanitized);
   });
 
+  // OSC 7 (cwd 変更通知) を購読して tab.cwd を動的追跡する。
+  // nushell / PowerShell / fish 等が標準で発信する: ESC ] 7 ; file://hostname/path BEL
+  // parseOsc7Path で Windows パスに変換し、Linux パスは無視する (Phase 5 で対応検討)。
+  // false を返すことで xterm が他のハンドラにも伝播する (default behavior 維持)。
+  const oscSub = term.parser.registerOscHandler(7, (data) => {
+    if (isDisposed) return false;
+    const path = parseOsc7Path(data);
+    if (path !== null) {
+      callbacks.onCwdChange(path);
+    }
+    return false;
+  });
+
   const runtime: TerminalRuntime = {
     get term() { return term; },
     get fitAddon() { return fitAddon; },
@@ -260,6 +315,7 @@ export function createRuntime(
     onDataSub,
     compositionAbort,
     titleSub,
+    oscSub,
 
     setOnEvent(handler) {
       if (isDisposed) return;
@@ -318,6 +374,8 @@ export function createRuntime(
       onDataSub.dispose();
       // OSC タイトル購読を解放する（onDataSub の隣に配置）
       titleSub.dispose();
+      // OSC 7 cwd 追跡購読を解放する (Phase 4 P-G で追加)
+      oscSub.dispose();
       // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
       compositionAbort.abort();
       // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)

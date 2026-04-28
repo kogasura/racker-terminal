@@ -449,6 +449,30 @@ describe('appStore', () => {
     });
   });
 
+  // --- updateTabCwd ---
+  describe('updateTabCwd', () => {
+    it('通常更新: cwd が新しい値に変わる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'T', cwd: 'C:\\old' });
+      useAppStore.getState().updateTabCwd(tabId, 'C:\\new');
+      expect(useAppStore.getState().tabs[tabId].cwd).toBe('C:\\new');
+    });
+
+    it('同じ値なら no-op（tabs 参照が変わらない）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'T', cwd: 'C:\\same' });
+      const tabsBefore = useAppStore.getState().tabs;
+      useAppStore.getState().updateTabCwd(tabId, 'C:\\same');
+      expect(useAppStore.getState().tabs).toBe(tabsBefore);
+    });
+
+    it('存在しない tabId は no-op（例外を投げない）', () => {
+      expect(() =>
+        useAppStore.getState().updateTabCwd('non-existent', 'C:\\path'),
+      ).not.toThrow();
+    });
+  });
+
   // --- duplicateTab ---
   describe('duplicateTab', () => {
     it('同一グループに新タブが追加される', () => {
@@ -561,6 +585,34 @@ describe('appStore', () => {
       useAppStore.getState().addFavorite({ title: 'Existing' });
       expect(() => useAppStore.getState().removeFavorite('non-existent-fav')).not.toThrow();
       expect(useAppStore.getState().favorites).toHaveLength(1);
+    });
+  });
+
+  // --- updateFavorite ---
+  describe('updateFavorite', () => {
+    it('通常更新: 内容が新しい値に変わる', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'Old', shell: 'nu', cwd: 'C:\\old' });
+      useAppStore.getState().updateFavorite(id, { title: 'New', shell: 'pwsh.exe', cwd: 'C:\\new' });
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      expect(fav?.title).toBe('New');
+      expect(fav?.shell).toBe('pwsh.exe');
+      expect(fav?.cwd).toBe('C:\\new');
+    });
+
+    it('存在しない favId は no-op（例外を投げない）', () => {
+      useAppStore.getState().addFavorite({ title: 'Existing' });
+      const favoritesBefore = useAppStore.getState().favorites;
+      expect(() =>
+        useAppStore.getState().updateFavorite('non-existent-fav', { title: 'Changed' }),
+      ).not.toThrow();
+      expect(useAppStore.getState().favorites).toBe(favoritesBefore);
+    });
+
+    it('id が変わらないこと', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'Original' });
+      useAppStore.getState().updateFavorite(id, { title: 'Updated' });
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      expect(fav?.id).toBe(id);
     });
   });
 

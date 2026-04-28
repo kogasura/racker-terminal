@@ -2,14 +2,24 @@ import { useState, memo } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
+import { FavoriteDialog } from './FavoriteDialog';
+import type { Favorite } from '../types';
+
+type DialogState =
+  | { mode: 'add' }
+  | { mode: 'edit'; favorite: Favorite }
+  | null;
 
 export const FavoritesSection = memo(function FavoritesSection() {
   const [collapsed, setCollapsed] = useState(false);
+  const [dialogState, setDialogState] = useState<DialogState>(null);
 
   // favorites 配列のみ subscribe（id/title/shell 等の変化のみで再レンダー）
   const favorites = useAppStore(useShallow((s) => s.favorites));
   const spawnFavorite = useAppStore((s) => s.spawnFavorite);
   const removeFavorite = useAppStore((s) => s.removeFavorite);
+  const addFavorite = useAppStore((s) => s.addFavorite);
+  const updateFavorite = useAppStore((s) => s.updateFavorite);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   return (
@@ -32,7 +42,7 @@ export const FavoritesSection = memo(function FavoritesSection() {
         <div className="favorites-list">
           {favorites.length === 0 ? (
             <div className="favorites-empty">
-              お気に入りはまだありません。タブを右クリックして登録できます
+              お気に入りはまだありません。タブを右クリックするか、下のボタンから登録してください。
             </div>
           ) : (
             favorites.map((fav) => (
@@ -64,6 +74,13 @@ export const FavoritesSection = memo(function FavoritesSection() {
                       ここから spawn
                     </ContextMenu.Item>
 
+                    <ContextMenu.Item
+                      className="context-menu__item"
+                      onSelect={() => setDialogState({ mode: 'edit', favorite: fav })}
+                    >
+                      編集
+                    </ContextMenu.Item>
+
                     <ContextMenu.Separator className="context-menu__separator" />
 
                     <ContextMenu.Item
@@ -77,7 +94,37 @@ export const FavoritesSection = memo(function FavoritesSection() {
               </ContextMenu.Root>
             ))
           )}
+
+          <button
+            type="button"
+            className="favorites-add-btn"
+            onClick={() => setDialogState({ mode: 'add' })}
+          >
+            + Add Favorite
+          </button>
         </div>
+      )}
+
+      {dialogState?.mode === 'add' && (
+        <FavoriteDialog
+          mode="add"
+          onSubmit={(data) => {
+            addFavorite(data);
+            setDialogState(null);
+          }}
+          onClose={() => setDialogState(null)}
+        />
+      )}
+      {dialogState?.mode === 'edit' && (
+        <FavoriteDialog
+          mode="edit"
+          initial={dialogState.favorite}
+          onSubmit={(data) => {
+            updateFavorite(dialogState.favorite.id, data);
+            setDialogState(null);
+          }}
+          onClose={() => setDialogState(null)}
+        />
       )}
     </div>
   );

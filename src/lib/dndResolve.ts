@@ -18,8 +18,35 @@ export const GROUP_HEADER_DROPPABLE_PREFIX = 'group-header-';
 export const DROP_AS_NEW_GROUP_ID = 'drop-as-new-group';
 
 /**
+ * F-M6: D&D の kind を表す定数オブジェクト。
+ * リテラル文字列から定数経由に変更することで typo を型レベルで検出できる。
+ */
+export const DRAG_KIND = {
+  TAB: 'tab',
+  GROUP: 'group',
+  FAVORITE: 'favorite',
+} as const;
+
+/**
+ * F-M6: D&D の kind 型。DRAG_KIND の値 union から導出する。
+ */
+export type DragKind = typeof DRAG_KIND[keyof typeof DRAG_KIND];
+
+/**
+ * F-M3: 既存グループのタイトルから "New Group N" の最大 N を求め、N+1 のタイトルを返す純関数。
+ * 削除→追加による連番崩壊（重複）を防ぐ。
+ */
+export function nextNewGroupTitle(groups: { title: string }[]): string {
+  const maxSuffix = groups
+    .map((g) => /^New Group (\d+)$/.exec(g.title)?.[1])
+    .reduce((max, s) => (s ? Math.max(max, parseInt(s, 10)) : max), 0);
+  return `New Group ${maxSuffix + 1}`;
+}
+
+/**
  * dnd-kit の over.id を解析してドロップ先 (toGroupId / toIndex) を決定する純関数。
  *
+ * - `'group-header-{groupId}'` 形式: auto-expand 専用のため drop ターゲット外 → null
  * - `'group-{groupId}'` 形式: 該当グループの末尾追加
  * - タブ ID 形式: そのタブの現在位置に挿入
  * - 不整合（グループ消滅・タブ不在・tabIds 内に over タブが存在しない）: null を返す
@@ -30,6 +57,11 @@ export function resolveDropTarget(
   overId: string,
   state: Pick<AppState, 'groups' | 'tabs'>,
 ): { toGroupId: string; toIndex: number } | null {
+  // F-M7: header (auto-expand 専用) は drop ターゲット外
+  // 注意: GROUP_HEADER_DROPPABLE_PREFIX ('group-header-') は GROUP_DROPPABLE_PREFIX ('group-') の
+  // サブストリングなので、header チェックを先に行う必要がある。
+  if (overId.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return null;
+
   if (overId.startsWith(GROUP_DROPPABLE_PREFIX)) {
     const toGroupId = overId.slice(GROUP_DROPPABLE_PREFIX.length);
     const g = state.groups.find((g) => g.id === toGroupId);

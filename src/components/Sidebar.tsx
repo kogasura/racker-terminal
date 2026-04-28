@@ -17,8 +17,12 @@ import { GroupSection } from './GroupSection';
 import { FavoritesSection } from './FavoritesSection';
 import {
   resolveDropTarget,
+  GROUP_DROPPABLE_PREFIX,
   GROUP_HEADER_DROPPABLE_PREFIX,
   DROP_AS_NEW_GROUP_ID,
+  DRAG_KIND,
+  type DragKind,
+  nextNewGroupTitle,
 } from '../lib/dndResolve';
 import { getTabDisplayTitle, type TabStatus } from '../types';
 import '../styles/sidebar.css';
@@ -80,13 +84,13 @@ function DropAsNewGroupArea() {
   );
 }
 
-/** D&D の kind 型 */
-type DragKind = 'tab' | 'group' | 'favorite';
+// F-M6: DragKind 型は dndResolve.ts から import して使用する（型の一元管理）
 
 export const Sidebar = memo(function Sidebar() {
   // beta P1: id 配列のみ subscribe（グループ内の title/collapsed 変化で Sidebar が再レンダーされない）
+  // F-M3: nextNewGroupTitle のために groups 全体（title のみ）を subscribe する
   const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
-  const groupsCount = groupIds.length;
+  const groupTitles = useAppStore(useShallow((s) => s.groups.map((g) => g.title)));
   const createGroup = useAppStore((s) => s.createGroup);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -98,7 +102,7 @@ export const Sidebar = memo(function Sidebar() {
   // DndContext の collision 計算が走り直す問題を防ぐ。
   const activeDragTab = useAppStore(
     useShallow((s) => {
-      if (!activeDragId || activeDragKind !== 'tab') return null;
+      if (!activeDragId || activeDragKind !== DRAG_KIND.TAB) return null;
       const t = s.tabs[activeDragId];
       return t ? { id: t.id, displayTitle: getTabDisplayTitle(t), status: t.status } : null;
     }),
@@ -107,7 +111,7 @@ export const Sidebar = memo(function Sidebar() {
   // B1: ドラッグ中のグループタイトルを取得（DragOverlay 用）
   const activeDragGroupTitle = useAppStore(
     useShallow((s) => {
-      if (!activeDragId || activeDragKind !== 'group') return null;
+      if (!activeDragId || activeDragKind !== DRAG_KIND.GROUP) return null;
       const g = s.groups.find((g) => g.id === activeDragId);
       return g ? g.title : null;
     }),
@@ -116,7 +120,7 @@ export const Sidebar = memo(function Sidebar() {
   // B2: ドラッグ中のお気に入りタイトルを取得（DragOverlay 用）
   const activeDragFavoriteTitle = useAppStore(
     useShallow((s) => {
-      if (!activeDragId || activeDragKind !== 'favorite') return null;
+      if (!activeDragId || activeDragKind !== DRAG_KIND.FAVORITE) return null;
       const f = s.favorites.find((f) => f.id === activeDragId);
       return f ? f.title : null;
     }),
@@ -131,10 +135,13 @@ export const Sidebar = memo(function Sidebar() {
 
   function handleDragStart(event: DragStartEvent) {
     const id = event.active.id as string;
+    // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
     const kind = event.active.data.current?.kind as DragKind | undefined;
     setActiveDragId(id);
     setActiveDragKind(kind ?? null);
     // InlineEdit が編集中なら確定 or キャンセルして D&D を優先する
+    // 注意: GroupSection の useSortable に disabled: isEditingGroup を追加済み (F-M4) のため、
+    // グループ編集中はここに到達しないが、タブ編集中のケースでは引き続き stopEditing が有効。
     useAppStore.getState().stopEditing();
   }
 
@@ -147,22 +154,29 @@ export const Sidebar = memo(function Sidebar() {
     // 同一要素上での drop は no-op（group sentinel 上の drop は別経路で末尾追加扱い）
     if (active.id === over.id) return;
 
+    // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
     const activeKind = active.data.current?.kind as DragKind | undefined;
 
-    if (activeKind === 'group') {
+    if (activeKind === DRAG_KIND.GROUP) {
       // B1: グループ自体の並び替え
-      // group-header-{id} へのドロップは並び替えのトリガーにしない（auto-expand 用）
       const overIdStr = over.id as string;
+
+      // F-M1: header (auto-expand 専用) は並び替え対象外
+      // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
       if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
 
+      // F-M1: 'group-{id}' (GroupBody) でも生 groupId でもターゲット解決可能にする
+      const overGroupId = overIdStr.startsWith(GROUP_DROPPABLE_PREFIX)
+        ? overIdStr.slice(GROUP_DROPPABLE_PREFIX.length)
+        : overIdStr;
+
       const groupId = active.id as string;
-      const overGroupId = overIdStr;
       const groups = useAppStore.getState().groups;
       const toIdx = groups.findIndex((g) => g.id === overGroupId);
       if (toIdx === -1) return;
       useAppStore.getState().moveGroup(groupId, toIdx);
 
-    } else if (activeKind === 'favorite') {
+    } else if (activeKind === DRAG_KIND.FAVORITE) {
       // B2: お気に入りの並び替え
       const favId = active.id as string;
       const overFavId = over.id as string;
@@ -177,17 +191,26 @@ export const Sidebar = memo(function Sidebar() {
       const fromGroupId = active.data.current?.groupId as string | undefined;
       if (!fromGroupId) return;
 
+      const overIdStr = over.id as string;
+
       // B4b: 新規グループとして drop
       if (over.id === DROP_AS_NEW_GROUP_ID) {
-        const newGroupId = useAppStore.getState().createGroup(`New Group ${useAppStore.getState().groups.length}`);
+        // F-M3: max suffix + 1 で連番崩壊を防ぐ
+        const newTitle = nextNewGroupTitle(useAppStore.getState().groups);
+        const newGroupId = useAppStore.getState().createGroup(newTitle);
         useAppStore.getState().moveTab(activeTabId, newGroupId, 0);
         return;
       }
 
-      // group-header-{id} へのドロップは auto-expand のみで移動不要
-      if ((over.id as string).startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
+      // F-M5: 折りたたみグループのヘッダに drop された場合、即時展開して操作をユーザーに委ねる
+      if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) {
+        const targetGroupId = overIdStr.slice(GROUP_HEADER_DROPPABLE_PREFIX.length);
+        const g = useAppStore.getState().groups.find((g) => g.id === targetGroupId);
+        if (g?.collapsed) useAppStore.getState().toggleCollapse(targetGroupId);
+        return;
+      }
 
-      const target = resolveDropTarget(over.id as string, useAppStore.getState());
+      const target = resolveDropTarget(overIdStr, useAppStore.getState());
       if (!target) return;
       useAppStore.getState().moveTab(activeTabId, target.toGroupId, target.toIndex);
     }
@@ -222,13 +245,13 @@ export const Sidebar = memo(function Sidebar() {
 
         <div className="sidebar__footer">
           {/* B4b: タブドラッグ中のみ「新規グループとして追加」drop エリアを表示 */}
-          {activeDragKind === 'tab' && <DropAsNewGroupArea />}
+          {activeDragKind === DRAG_KIND.TAB && <DropAsNewGroupArea />}
 
-          {/* F3: type="button" 追加 / F6: 連番タイトル化 */}
+          {/* F3: type="button" 追加 / F-M3: nextNewGroupTitle で連番崩壊を防ぐ */}
           <button
             type="button"
             className="sidebar__new-group-btn"
-            onClick={() => createGroup(`New Group ${groupsCount + 1}`)}
+            onClick={() => createGroup(nextNewGroupTitle(groupTitles.map((t) => ({ title: t }))))}
           >
             + New Group
           </button>
@@ -238,13 +261,13 @@ export const Sidebar = memo(function Sidebar() {
       {/* DragOverlay: sidebar の overflow に影響されないよう body に Portal 描画 */}
       {createPortal(
         <DragOverlay>
-          {activeDragKind === 'tab' && activeDragTab && (
+          {activeDragKind === DRAG_KIND.TAB && activeDragTab && (
             <TabItemPreview tab={activeDragTab} />
           )}
-          {activeDragKind === 'group' && activeDragGroupTitle && (
+          {activeDragKind === DRAG_KIND.GROUP && activeDragGroupTitle && (
             <GroupHeaderPreview title={activeDragGroupTitle} />
           )}
-          {activeDragKind === 'favorite' && activeDragFavoriteTitle && (
+          {activeDragKind === DRAG_KIND.FAVORITE && activeDragFavoriteTitle && (
             <FavoriteItemPreview title={activeDragFavoriteTitle} />
           )}
         </DragOverlay>,

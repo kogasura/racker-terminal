@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { FavoriteDialog } from './FavoriteDialog';
 import type { Favorite } from '../types';
+import { DRAG_KIND } from '../lib/dndResolve';
 
 type DialogState =
   | { mode: 'add' }
@@ -26,9 +27,10 @@ function SortableFavoriteItem({
   onRemove: () => void;
   onContextMenuOpen: (open: boolean) => void;
 }) {
+  // F-M6: kind は DRAG_KIND 定数経由で指定（typo を型レベルで検出）
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: fav.id,
-    data: { kind: 'favorite' },
+    data: { kind: DRAG_KIND.FAVORITE },
   });
 
   const style = {

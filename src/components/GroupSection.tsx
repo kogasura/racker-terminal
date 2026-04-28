@@ -7,7 +7,7 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { InlineEdit } from './InlineEdit';
-import { GROUP_DROPPABLE_PREFIX } from '../lib/dndResolve';
+import { GROUP_DROPPABLE_PREFIX, DRAG_KIND } from '../lib/dndResolve';
 
 interface GroupSectionProps {
   groupId: string;
@@ -55,6 +55,7 @@ export const GroupSection = memo(function GroupSection({
   const canDelete = useAppStore((s) => s.groups.length > 1);
 
   // B1: グループ自体を D&D 並び替え可能にする（kind=group でタブ用と区別）
+  // F-M4: 編集中 (isEditingGroup) は D&D を無効化する（stopEditing が未確定入力を確定してしまうため）
   const {
     attributes: groupAttributes,
     listeners: groupListeners,
@@ -62,7 +63,7 @@ export const GroupSection = memo(function GroupSection({
     transform: groupTransform,
     transition: groupTransition,
     isDragging: isGroupDragging,
-  } = useSortable({ id: groupId, data: { kind: 'group' } });
+  } = useSortable({ id: groupId, data: { kind: DRAG_KIND.GROUP }, disabled: isEditingGroup });
 
   const groupStyle = {
     transform: CSS.Transform.toString(groupTransform),
@@ -111,7 +112,13 @@ export const GroupSection = memo(function GroupSection({
 
   return (
     // setGroupNodeRef: グループ全体を sortable 要素として登録する
-    <div ref={setGroupNodeRef} style={groupStyle} data-dragging={isGroupDragging || undefined}>
+    // F-M2: className="group-section-wrapper" を追加（[data-dragging].group-section-wrapper CSS selector が機能するように）
+    <div
+      ref={setGroupNodeRef}
+      className="group-section-wrapper"
+      style={groupStyle}
+      data-dragging={isGroupDragging || undefined}
+    >
       <ContextMenu.Root onOpenChange={(open) => setContextMenuOpen(open)}>
         {/* 編集中は右クリックメニューを無効化する */}
         <ContextMenu.Trigger

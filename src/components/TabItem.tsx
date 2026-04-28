@@ -5,6 +5,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
 import { getTabDisplayTitle, type TabStatus } from '../types';
+import { DRAG_KIND } from '../lib/dndResolve';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   live: 'tab-item__status-dot tab-item__status-dot--live',
@@ -31,9 +32,10 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   // groupId と kind を data に持たせることで onDragEnd で所属グループと D&D 種別を参照できる
+  // F-M6: kind は DRAG_KIND 定数経由で指定（typo を型レベルで検出）
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tabId,
-    data: { kind: 'tab', groupId: tab?.groupId },
+    data: { kind: DRAG_KIND.TAB, groupId: tab?.groupId },
     // 編集中はドラッグ操作を無効にする
     disabled: isEditing,
   });

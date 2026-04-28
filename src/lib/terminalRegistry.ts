@@ -76,7 +76,16 @@ export function parseOsc7Path(data: string): string | null {
   const match = data.match(/^file:\/\/[^/]*(.*)$/);
   if (!match) return null;
 
-  let path = decodeURIComponent(match[1]);
+  let path: string;
+  try {
+    path = decodeURIComponent(match[1]);
+  } catch {
+    // F-M1: 不正な %ZZ 等の malformed percent-encoding は無視する
+    return null;
+  }
+
+  // F-S1: 制御文字フィルタ (NUL/CR/LF/ESC 等 U+0000-U+001F, DEL U+007F)
+  if (/[\x00-\x1f\x7f]/.test(path)) return null;
 
   // Windows パスのみ反映: 先頭が "/X:" の形式 (例: "/C:/Users/foo")
   // Linux パス (例: "/home/user") は無視する (WSL 対応は Phase 5 検討)
@@ -86,6 +95,14 @@ export function parseOsc7Path(data: string): string | null {
   path = path.slice(1);
   // スラッシュをバックスラッシュに正規化 (Windows)
   path = path.replace(/\//g, '\\');
+
+  // F-S4: trailing slash 正規化 (ルート "C:\" は維持、それ以外の末尾 \ を除去)
+  if (path.length > 3 && path.endsWith('\\')) {
+    path = path.slice(0, -1);
+  }
+
+  // F-S2: パス長上限 (4KB)
+  if (path.length > 4096) return null;
 
   return path;
 }
@@ -286,23 +303,33 @@ export function createRuntime(
   // OSC タイトル変更を購読してタブ名を自動更新する。
   // 編集中ガード: callbacks.isEditing() が true のとき OSC を無視してユーザー編集を保護する。
   // 文字長制限: 256 文字に切り詰め。制御文字フィルタ: sanitizeOscTitle を通してから onOscTitle を呼ぶ。
+  // F-S6: onOscTitle callback 内の例外を catch して xterm parser に伝播させない。
   const titleSub = term.onTitleChange((title) => {
     if (isDisposed) return;
     if (callbacks.isEditing()) return;
     const sanitized = sanitizeOscTitle(title);
     if (sanitized.length === 0) return;
-    callbacks.onOscTitle(sanitized);
+    try {
+      callbacks.onOscTitle(sanitized);
+    } catch (e) {
+      console.warn('[terminalRegistry] onOscTitle threw:', e);
+    }
   });
 
   // OSC 7 (cwd 変更通知) を購読して tab.cwd を動的追跡する。
   // nushell / PowerShell / fish 等が標準で発信する: ESC ] 7 ; file://hostname/path BEL
   // parseOsc7Path で Windows パスに変換し、Linux パスは無視する (Phase 5 で対応検討)。
   // false を返すことで xterm が他のハンドラにも伝播する (default behavior 維持)。
+  // F-S6: onCwdChange callback 内の例外を catch して xterm parser に伝播させない。
   const oscSub = term.parser.registerOscHandler(7, (data) => {
     if (isDisposed) return false;
     const path = parseOsc7Path(data);
     if (path !== null) {
-      callbacks.onCwdChange(path);
+      try {
+        callbacks.onCwdChange(path);
+      } catch (e) {
+        console.warn('[terminalRegistry] onCwdChange threw:', e);
+      }
     }
     return false;
   });

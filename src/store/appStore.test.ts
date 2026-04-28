@@ -531,6 +531,33 @@ describe('appStore', () => {
       const result = useAppStore.getState().duplicateTab('non-existent');
       expect(result).toBeNull();
     });
+
+    // F-M3: duplicateTab で env が shallow clone される
+    it('F-M3: env はシャローコピーされる（元タブの env を変更しても複製タブに影響しない）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, {
+        title: 'Original',
+        env: { FOO: 'original' },
+      });
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      // 元タブの env を直接 setState で変更
+      useAppStore.setState((s) => ({
+        tabs: {
+          ...s.tabs,
+          [tabId]: { ...s.tabs[tabId], env: { FOO: 'mutated' } },
+        },
+      }));
+      // 複製タブの env は変更前の値を保持する
+      const newTab = useAppStore.getState().tabs[newTabId!];
+      expect(newTab.env?.FOO).toBe('original');
+    });
+
+    it('F-M3: env が undefined の場合は undefined のまま（クラッシュしない）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+      const newTabId = useAppStore.getState().duplicateTab(tabId);
+      expect(useAppStore.getState().tabs[newTabId!].env).toBeUndefined();
+    });
   });
 
   // --- addFavorite ---
@@ -614,6 +641,25 @@ describe('appStore', () => {
       const fav = useAppStore.getState().favorites.find((f) => f.id === id);
       expect(fav?.id).toBe(id);
     });
+
+    // F-M4: updateFavorite で env が shallow clone される
+    it('F-M4: env はシャローコピーされる（patch.env を変更してもストア内に影響しない）', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'X' });
+      const patchEnv = { MY_VAR: 'original' };
+      useAppStore.getState().updateFavorite(id, { title: 'X', env: patchEnv });
+      // patch.env を変更
+      patchEnv.MY_VAR = 'changed';
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      // ストア内の env は変更前の値を保持する
+      expect(fav?.env?.MY_VAR).toBe('original');
+    });
+
+    it('F-M4: env が undefined の場合は undefined のまま（クラッシュしない）', () => {
+      const id = useAppStore.getState().addFavorite({ title: 'Y' });
+      useAppStore.getState().updateFavorite(id, { title: 'Y' });
+      const fav = useAppStore.getState().favorites.find((f) => f.id === id);
+      expect(fav?.env).toBeUndefined();
+    });
   });
 
   // --- spawnFavorite ---
@@ -656,6 +702,30 @@ describe('appStore', () => {
     it('存在しない favId は null を返す', () => {
       const result = useAppStore.getState().spawnFavorite('non-existent-fav');
       expect(result).toBeNull();
+    });
+
+    // F-M2: spawnFavorite で env が shallow clone される
+    it('F-M2: env はシャローコピーされる（fav.env を変更しても spawn 後タブに影響しない）', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'X', env: { KEY: 'val' } });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      // spawn 後に fav.env を直接変更（ストア上の fav を変更してタブへの影響を確認）
+      // favorites から fav を取得して env を上書きする
+      useAppStore.setState((s) => ({
+        favorites: s.favorites.map((f) =>
+          f.id === favId ? { ...f, env: { KEY: 'mutated' } } : f,
+        ),
+      }));
+      // 既に作成されたタブの env は変更前の値を保持する
+      const tab = useAppStore.getState().tabs[tabId!];
+      expect(tab.env?.KEY).toBe('val');
+    });
+
+    it('F-M2: env が undefined の場合は undefined のまま（クラッシュしない）', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'Y' });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      expect(useAppStore.getState().tabs[tabId!].env).toBeUndefined();
     });
   });
 

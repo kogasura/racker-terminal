@@ -112,7 +112,11 @@ export const FavoritesSection = memo(function FavoritesSection() {
             addFavorite(data);
             setDialogState(null);
           }}
-          onClose={() => setDialogState(null)}
+          onClose={() => {
+            setDialogState(null);
+            // F-S5: ContextMenu → Dialog 遷移で contextMenuOpen が true で残るリスクに対する念のためリセット
+            setContextMenuOpen(false);
+          }}
         />
       )}
       {dialogState?.mode === 'edit' && (
@@ -123,7 +127,11 @@ export const FavoritesSection = memo(function FavoritesSection() {
             updateFavorite(dialogState.favorite.id, data);
             setDialogState(null);
           }}
-          onClose={() => setDialogState(null)}
+          onClose={() => {
+            setDialogState(null);
+            // F-S5: ContextMenu → Dialog 遷移で contextMenuOpen が true で残るリスクに対する念のためリセット
+            setContextMenuOpen(false);
+          }}
         />
       )}
     </div>

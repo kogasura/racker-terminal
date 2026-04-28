@@ -10,6 +10,35 @@ interface FavoriteDialogProps {
   onClose: () => void;
 }
 
+/**
+ * env テキストをパースする純関数。
+ * 1 行 1 件の "KEY=VALUE" 形式を受け取り、env オブジェクトとエラーリストを返す。
+ * KEY は POSIX 慣例 [A-Za-z_][A-Za-z0-9_]* に準拠していること。
+ * テスト容易性のため export する。
+ */
+export function parseEnvText(text: string): { env: Record<string, string>; errors: string[] } {
+  const env: Record<string, string> = {};
+  const errors: string[] = [];
+  text.split('\n').forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) {
+      errors.push(`L${i + 1}: '=' が見つかりません`);
+      return;
+    }
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    // F-S3: POSIX env 慣例: [A-Za-z_][A-Za-z0-9_]*
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      errors.push(`L${i + 1}: KEY が無効 (${key})`);
+      return;
+    }
+    env[key] = value;
+  });
+  return { env, errors };
+}
+
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [shell, setShell] = useState(initial?.shell ?? '');
@@ -20,22 +49,21 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
       : '',
   );
   const [defaultTabTitle, setDefaultTabTitle] = useState(initial?.defaultTabTitle ?? '');
+  // F-S3: env パースエラー表示用 state
+  const [envError, setEnvError] = useState<string | null>(null);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;  // title 必須
 
-    // env のパース: "KEY=VALUE" を 1 行ずつ
-    const env: Record<string, string> = {};
-    for (const line of envText.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq <= 0) continue;
-      const key = trimmed.slice(0, eq).trim();
-      const value = trimmed.slice(eq + 1).trim();
-      if (key) env[key] = value;
+    // F-S3: env のパース（不正 KEY はエラーとして form を弾く）
+    const { env, errors } = parseEnvText(envText);
+
+    if (errors.length > 0) {
+      setEnvError(errors.join('\n'));
+      return;
     }
+    setEnvError(null);
 
     onSubmit({
       title: title.trim(),
@@ -54,6 +82,12 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
           <Dialog.Title className="dialog-title">
             {mode === 'add' ? 'お気に入りを追加' : 'お気に入りを編集'}
           </Dialog.Title>
+          {/* F-M5: a11y 対応 — Dialog.Description を追加 */}
+          <Dialog.Description className="dialog-description">
+            {mode === 'add'
+              ? 'shell・cwd・環境変数を指定して新しいお気に入りを登録します。'
+              : 'お気に入りの設定を編集します。'}
+          </Dialog.Description>
 
           <form onSubmit={handleSubmit} className="dialog-form">
             <label className="dialog-field">
@@ -101,10 +135,20 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
               <textarea
                 className="dialog-textarea"
                 value={envText}
-                onChange={(e) => setEnvText(e.target.value)}
+                onChange={(e) => {
+                  setEnvText(e.target.value);
+                  // テキスト変更時にエラーをクリアする（再 submit まで保留）
+                  if (envError) setEnvError(null);
+                }}
                 rows={4}
                 placeholder={"例:\nPATH=C:\\custom\\bin;%PATH%\nNODE_ENV=development"}
               />
+              {/* F-S3: env パースエラー表示 */}
+              {envError && (
+                <div className="dialog-error" role="alert">
+                  {envError}
+                </div>
+              )}
             </label>
 
             <label className="dialog-field">

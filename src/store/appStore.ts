@@ -259,7 +259,10 @@ export const useAppStore = create<Store>()((set, get) => ({
       if (!state.favorites.some((f) => f.id === favId)) return {};  // 存在しない favId は no-op
       return {
         favorites: state.favorites.map((f) =>
-          f.id === favId ? { ...patch, id: favId } : f,
+          // F-M4: patch.env を shallow clone して addFavorite と対称化する
+          f.id === favId
+            ? { ...patch, id: favId, env: patch.env ? { ...patch.env } : undefined }
+            : f,
         ),
       };
     }),
@@ -272,7 +275,8 @@ export const useAppStore = create<Store>()((set, get) => ({
       title,
       shell: fav.shell,
       cwd: fav.cwd,
-      env: fav.env,
+      // F-M2: fav.env を shallow clone して参照を独立させる
+      env: fav.env ? { ...fav.env } : undefined,
     });
   },
 
@@ -425,7 +429,8 @@ export const useAppStore = create<Store>()((set, get) => ({
         title: `${src.title} (copy)`,
         shell: src.shell,
         cwd: src.cwd,
-        env: src.env,
+        // F-M3: src.env を shallow clone して参照を独立させる
+        env: src.env ? { ...src.env } : undefined,
         status: 'spawning',
       };
 

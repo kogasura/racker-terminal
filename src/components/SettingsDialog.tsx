@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useAppStore } from '../store/appStore';
 import type { Settings } from '../types';
@@ -7,15 +7,66 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
+// F-M2: 入力値クランプ用定数
+const FONT_MIN = 8;
+const FONT_MAX = 48;
+const SCROLLBACK_MIN = 100;
+const SCROLLBACK_MAX = 100000;
+const TRANSPARENCY_MIN = 0.7;
+const TRANSPARENCY_MAX = 1.0;
+
+/**
+ * 数値を [min, max] にクランプする純関数。
+ * NaN / Infinity / -Infinity は fallback を返す。
+ * F-M2: コピペや IME 経由の範囲外値を防止する。
+ */
+function clamp(val: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(val)) return fallback;
+  return Math.min(max, Math.max(min, val));
+}
+
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [draft, setDraft] = useState<Settings>(settings);
 
+  // F-S3: ダイアログを開いている間に外部から settings が変わった場合の lost update を防ぐ。
+  // 案B: patch ベースで diff のみ送るため、draft stale は submit 時に解決する。
+  // settings の参照変化を監視して draft を同期する（案A 相当の安全網として追加）。
+  useEffect(() => {
+    setDraft(settings);
+  }, [settings]);
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    updateSettings(draft);
+
+    // F-S3 案B: patch ベースで diff のみ updateSettings に渡す（lost update 解消）
+    // F-M2: 各フィールドを clamp してから比較する
+    const patch: Partial<Settings> = {};
+
+    const sanitizedFontSize = clamp(draft.fontSize, FONT_MIN, FONT_MAX, 14);
+    if (sanitizedFontSize !== settings.fontSize) patch.fontSize = sanitizedFontSize;
+
+    if (draft.fontFamily !== settings.fontFamily) patch.fontFamily = draft.fontFamily;
+
+    const sanitizedScrollback = clamp(draft.scrollback, SCROLLBACK_MIN, SCROLLBACK_MAX, 1000);
+    if (sanitizedScrollback !== settings.scrollback) patch.scrollback = sanitizedScrollback;
+
+    const sanitizedTransparency = clamp(
+      draft.transparency ?? 1.0,
+      TRANSPARENCY_MIN,
+      TRANSPARENCY_MAX,
+      1.0,
+    );
+    if (sanitizedTransparency !== (settings.transparency ?? 1.0)) {
+      patch.transparency = sanitizedTransparency;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      updateSettings({ ...settings, ...patch });
+    }
+
     onClose();
   }
 

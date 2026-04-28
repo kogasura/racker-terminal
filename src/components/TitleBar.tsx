@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Window } from '@tauri-apps/api/window';
 
 /**
@@ -5,9 +6,12 @@ import { Window } from '@tauri-apps/api/window';
  * data-tauri-drag-region 属性によりドラッグ領域を宣言する。
  * 最小化・最大化トグル・閉じるボタンを提供する。
  * Phase 4 P-B-2 で追加。
+ *
+ * F-S2: Window.getCurrent() を useMemo でメモ化し、描画ごとの再呼び出しを防ぐ。
  */
 export function TitleBar() {
-  const win = Window.getCurrent();
+  // F-S2: Window.getCurrent() は描画ごとに呼ばれないよう useMemo でメモ化する
+  const win = useMemo(() => Window.getCurrent(), []);
 
   return (
     <div className="title-bar" data-tauri-drag-region>
@@ -18,7 +22,9 @@ export function TitleBar() {
         <button
           type="button"
           className="title-bar__btn"
-          onClick={() => void win.minimize()}
+          onClick={() => {
+            win.minimize().catch((e) => console.warn('[TitleBar] minimize failed:', e));
+          }}
           aria-label="Minimize"
         >
           —
@@ -26,7 +32,9 @@ export function TitleBar() {
         <button
           type="button"
           className="title-bar__btn"
-          onClick={() => void win.toggleMaximize()}
+          onClick={() => {
+            win.toggleMaximize().catch((e) => console.warn('[TitleBar] toggleMaximize failed:', e));
+          }}
           aria-label="Maximize"
         >
           □
@@ -34,7 +42,9 @@ export function TitleBar() {
         <button
           type="button"
           className="title-bar__btn title-bar__btn--close"
-          onClick={() => void win.close()}
+          onClick={() => {
+            win.close().catch((e) => console.warn('[TitleBar] close failed:', e));
+          }}
           aria-label="Close"
         >
           ×

@@ -839,7 +839,7 @@ describe('parseOsc7Path', () => {
 
 // --- hexToRgba (Phase 4 P-B-2) ---
 
-import { hexToRgba } from './terminalRegistry';
+import { hexToRgba, computeBackground } from './terminalRegistry';
 
 describe('hexToRgba', () => {
   it('通常変換: #1a1b26 + 0.8 → rgba(26, 27, 38, 0.8)', () => {
@@ -873,5 +873,46 @@ describe('hexToRgba', () => {
   it('rgba(...) 形式の既存値 → 元の文字列をそのまま返す（不正 hex 扱い）', () => {
     const rgba = 'rgba(26, 27, 38, 0.8)';
     expect(hexToRgba(rgba, 0.5)).toBe(rgba);
+  });
+});
+
+// --- computeBackground (F-S1: applySettings transparency 連続変更テスト) ---
+
+describe('computeBackground', () => {
+  it('alpha < 1.0: rgba 文字列を返す', () => {
+    expect(computeBackground(0.8, '#1a1b26')).toBe('rgba(26, 27, 38, 0.8)');
+  });
+
+  it('alpha = 1.0: baseHex をそのまま返す（不透明 hex）', () => {
+    expect(computeBackground(1.0, '#1a1b26')).toBe('#1a1b26');
+  });
+
+  it('alpha > 1.0: baseHex をそのまま返す（>= 1.0 は不透明扱い）', () => {
+    expect(computeBackground(1.5, '#1a1b26')).toBe('#1a1b26');
+  });
+
+  it('1.0 → 0.8 → 0.7 と変えても最終 background が rgba(26, 27, 38, 0.7)', () => {
+    // computeBackground は純関数のため、各 alpha で独立して計算できる
+    const bg1 = computeBackground(1.0, '#1a1b26');
+    expect(bg1).toBe('#1a1b26');  // 1.0 は hex のまま
+
+    const bg2 = computeBackground(0.8, '#1a1b26');
+    expect(bg2).toBe('rgba(26, 27, 38, 0.8)');
+
+    const bg3 = computeBackground(0.7, '#1a1b26');
+    expect(bg3).toBe('rgba(26, 27, 38, 0.7)');
+  });
+
+  it('0.8 → 1.0 で hex に戻る', () => {
+    const bgSemi = computeBackground(0.8, '#1a1b26');
+    expect(bgSemi).toBe('rgba(26, 27, 38, 0.8)');
+
+    const bgOpaque = computeBackground(1.0, '#1a1b26');
+    expect(bgOpaque).toBe('#1a1b26');  // DEFAULT_BG に戻る
+  });
+
+  it('baseHex 省略時は DEFAULT_BG (#1a1b26) を使用する', () => {
+    expect(computeBackground(0.9)).toBe('rgba(26, 27, 38, 0.9)');
+    expect(computeBackground(1.0)).toBe('#1a1b26');
   });
 });

@@ -1,12 +1,10 @@
 :root {
   /* サイドバー */
   --sidebar-width: 240px;
-  --sidebar-bg: #16161e;
   --sidebar-fg: #c0caf5;
   --sidebar-border: #24283b;
 
   /* グループ・タブ */
-  --group-header-bg: #1a1b26;
   --tab-item-bg: transparent;
   --tab-item-bg-hover: #1f2335;
   --tab-item-bg-active: #292e42;
@@ -30,7 +28,13 @@
   /* JS 側から --bg-alpha を書き換えて透明度を動的制御する */
   --bg-alpha: 1.0;
 
-  /* タイトルバー */
-  --title-bar-bg: rgba(26, 27, 38, 0.95);
+  /* 半透明対応のため rgba() で --bg-alpha を参照する */
+  --sidebar-bg: rgba(22, 22, 30, var(--bg-alpha));
+  --sidebar-bg-elevated: rgba(35, 35, 51, var(--bg-alpha));
+  --group-header-bg: rgba(26, 27, 38, var(--bg-alpha));
+  --title-bar-bg: rgba(26, 27, 38, var(--bg-alpha));
+  --terminal-bg: rgba(26, 27, 38, var(--bg-alpha));
+
+  /* タイトルバー文字色 */
   --title-bar-fg: #c0caf5;
 }

@@ -1,12 +1,13 @@
-import { memo } from 'react';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { memo, useEffect } from 'react';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { InlineEdit } from './InlineEdit';
-import { GROUP_DROPPABLE_PREFIX } from '../lib/dndResolve';
+import { GROUP_DROPPABLE_PREFIX, DRAG_KIND } from '../lib/dndResolve';
 
 interface GroupSectionProps {
   groupId: string;
@@ -53,6 +54,36 @@ export const GroupSection = memo(function GroupSection({
   // F2: prop drilling 解消 — Sidebar から groupsCount を受け取らず直接 subscribe
   const canDelete = useAppStore((s) => s.groups.length > 1);
 
+  // B1: グループ自体を D&D 並び替え可能にする（kind=group でタブ用と区別）
+  // F-M4: 編集中 (isEditingGroup) は D&D を無効化する（stopEditing が未確定入力を確定してしまうため）
+  const {
+    attributes: groupAttributes,
+    listeners: groupListeners,
+    setNodeRef: setGroupNodeRef,
+    transform: groupTransform,
+    transition: groupTransition,
+    isDragging: isGroupDragging,
+  } = useSortable({ id: groupId, data: { kind: DRAG_KIND.GROUP }, disabled: isEditingGroup });
+
+  const groupStyle = {
+    transform: CSS.Transform.toString(groupTransform),
+    transition: groupTransition,
+  };
+
+  // B4a: 折りたたみグループヘッダへのドロップホバー検知（600ms で auto-expand）
+  const { setNodeRef: setHeaderDropRef, isOver: isHeaderOver } = useDroppable({
+    id: `group-header-${groupId}`,
+  });
+
+  useEffect(() => {
+    // 折りたたみ状態かつヘッダ上にホバー中の場合のみ展開タイマーを起動する
+    if (!isHeaderOver || !groupView?.collapsed) return;
+    const timer = setTimeout(() => {
+      toggleCollapse(groupId);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [isHeaderOver, groupView?.collapsed, groupId, toggleCollapse]);
+
   if (!groupView) return null;
 
   const { title, collapsed, tabIds } = groupView;
@@ -80,7 +111,14 @@ export const GroupSection = memo(function GroupSection({
   }
 
   return (
-    <div>
+    // setGroupNodeRef: グループ全体を sortable 要素として登録する
+    // F-M2: className="group-section-wrapper" を追加（[data-dragging].group-section-wrapper CSS selector が機能するように）
+    <div
+      ref={setGroupNodeRef}
+      className="group-section-wrapper"
+      style={groupStyle}
+      data-dragging={isGroupDragging || undefined}
+    >
       <ContextMenu.Root onOpenChange={(open) => setContextMenuOpen(open)}>
         {/* 編集中は右クリックメニューを無効化する */}
         <ContextMenu.Trigger
@@ -88,8 +126,10 @@ export const GroupSection = memo(function GroupSection({
           asChild
         >
           {/* F1: グループヘッダを role="button" + onKeyDown で a11y 化 */}
+          {/* setHeaderDropRef: 折りたたみ時の auto-expand drop 検知用 (B4a) */}
           <div
-            className="group-header"
+            ref={setHeaderDropRef}
+            className={`group-header${isHeaderOver && collapsed ? ' group-header--drop-hover' : ''}`}
             role="button"
             tabIndex={0}
             onClick={handleToggle}
@@ -103,6 +143,18 @@ export const GroupSection = memo(function GroupSection({
               }
             }}
           >
+            {/* B1: グループドラッグハンドル（左端の grip area）— listeners を限定してクリックと共存 */}
+            <span
+              className="group-header__drag-handle"
+              {...groupAttributes}
+              {...groupListeners}
+              title="ドラッグしてグループを並び替え"
+              aria-label="グループを並び替え"
+              // ドラッグハンドルのクリックがグループトグルに伝播しないよう停止
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⠿
+            </span>
             <span className="group-header__chevron">{collapsed ? '▶' : '▼'}</span>
 
             <InlineEdit

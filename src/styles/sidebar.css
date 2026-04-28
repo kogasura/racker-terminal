@@ -387,6 +387,14 @@
   margin: 0 0 16px;
 }
 
+/* F-M1b: env 機密値注意喚起 */
+.dialog-hint {
+  font-size: 10px;
+  color: #e0af68;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
 /* F-S3: env パースエラー表示 */
 .dialog-error {
   font-size: 11px;

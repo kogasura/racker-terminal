@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
@@ -417,13 +417,13 @@ export const useAppStore = create<Store>()(
     });
   },
 
-  updateTabOscTitle: (tabId, oscTitle) => {
+  updateTabOscTitle: (tabId, oscTitle) =>
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};  // 存在しない tabId は no-op
+      if (tab.oscTitle === oscTitle) return {};  // 同値 no-op (partialize オーバヘッド回避)
       return { tabs: { ...state.tabs, [tabId]: { ...tab, oscTitle } } };
-    });
-  },
+    }),
 
   updateTabCwd: (tabId, cwd) =>
     set((state) => {
@@ -446,7 +446,11 @@ export const useAppStore = create<Store>()(
       if (!src) return {};
 
       // getTabDisplayTitle 相当のロジックで表示タイトルを取得して "(copy)" を付加する
-      const displayTitle = src.userTitle ?? src.oscTitle ?? 'Terminal';
+      // 空文字列の userTitle は未設定と同様に扱い oscTitle にフォールバックする
+      const displayTitle =
+        src.userTitle && src.userTitle.length > 0
+          ? src.userTitle
+          : (src.oscTitle ?? 'Terminal');
       const newTab: Tab = {
         id: newTabId,
         groupId: src.groupId,
@@ -586,10 +590,47 @@ export const useAppStore = create<Store>()(
     {
       name: 'racker-terminal',
       version: 1,
-      migrate: (persistedState, _version) => {
-        // 将来のスキーマ変更時にここで変換する
-        // Phase 4 では version: 1 がベースラインなのでそのまま返す
-        return persistedState;
+      // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
+      storage: createJSONStorage(() => ({
+        getItem: (key) => {
+          try { return localStorage.getItem(key); }
+          catch (e) { console.error('[racker] persist getItem failed:', e); return null; }
+        },
+        setItem: (key, value) => {
+          try { localStorage.setItem(key, value); }
+          catch (e) {
+            if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+              console.error('[racker] localStorage quota exceeded — persistence disabled until restart');
+            } else {
+              console.error('[racker] persist setItem failed:', e);
+            }
+          }
+        },
+        removeItem: (key) => {
+          try { localStorage.removeItem(key); }
+          catch (e) { console.error('[racker] persist removeItem failed:', e); }
+        },
+      })),
+      // F-M3: スキーマ migration (v0 → v1: tab.title → tab.userTitle)
+      migrate: (persistedState: unknown, version: number) => {
+        const state = persistedState as Record<string, any>;
+
+        // v0 → v1: tab.title → tab.userTitle に変換
+        if (version < 1) {
+          if (state?.tabs) {
+            for (const id of Object.keys(state.tabs)) {
+              const tab = state.tabs[id];
+              if (tab.title !== undefined && tab.userTitle === undefined) {
+                tab.userTitle = tab.title;
+                delete tab.title;
+              }
+            }
+          }
+        }
+
+        // 将来: if (version < 2) { ... } をここに追加
+
+        return state;
       },
       partialize: (state) => ({
         groups: state.groups,
@@ -611,23 +652,45 @@ export const useAppStore = create<Store>()(
         settings: state.settings,
         // activeTabId / editingId / contextMenuOpen は OFF
       }),
+      // F-M2: 復元時の整合性ガード
       onRehydrateStorage: () => (state) => {
-        // 復元完了時: すべての tab を status='spawning', ptyId=undefined にリセットする。
-        // PTY セッションは前回終了時に解放済みのため、再 spawn が必要。
-        if (state) {
-          for (const tabId of Object.keys(state.tabs)) {
-            state.tabs[tabId] = {
-              ...state.tabs[tabId],
-              status: 'spawning',
-              ptyId: undefined,
-              // oscTitle は persist 対象外なので存在しないはずだが念のためクリア
-              oscTitle: undefined,
-            };
-          }
-          // ランタイム状態は復元しない
-          state.editingId = null;
-          state.contextMenuOpen = false;
+        if (!state) return;
+
+        // 1. group.tabIds から state.tabs に存在しない ID を除去
+        const validTabIds = new Set(Object.keys(state.tabs));
+        state.groups = state.groups.map((g) => ({
+          ...g,
+          tabIds: g.tabIds.filter((id) => validTabIds.has(id)),
+        }));
+
+        // 2. 重複 tabId を除去 (最初に現れた group に属させる)
+        const seen = new Set<string>();
+        state.groups = state.groups.map((g) => ({
+          ...g,
+          tabIds: g.tabIds.filter((id) => {
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+          }),
+        }));
+
+        // 3. 孤立 tab (どの group の tabIds にも参照されていない) を削除
+        const referenced = new Set(state.groups.flatMap((g) => g.tabIds));
+        for (const id of Object.keys(state.tabs)) {
+          if (!referenced.has(id)) delete state.tabs[id];
         }
+
+        // 4. status/ptyId をリセット (一括代入で性能改善)
+        // oscTitle は partialize 対象外なので保存されないが、念のためクリア不要 (型上も存在しないはず)
+        const newTabs: Record<string, Tab> = {};
+        for (const [id, t] of Object.entries(state.tabs)) {
+          newTabs[id] = { ...t, status: 'spawning', ptyId: undefined };
+        }
+        state.tabs = newTabs;
+
+        // ランタイム状態は復元しない
+        state.editingId = null;
+        state.contextMenuOpen = false;
       },
     },
   ),

@@ -13,6 +13,11 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 
 ### 永続化される情報
 
+- ✅ タブ・グループ・お気に入りの構成
+- ✅ shell / cwd / 環境変数 (env)
+- ✅ ユーザー編集したタブ名 (userTitle)
+- ✅ Settings (フォント等)
+
 | 情報 | 永続化 | 備考 |
 |---|---|---|
 | タブ・グループ・お気に入りの構成 | ✅ | localStorage に保存 |
@@ -22,6 +27,13 @@ Windows 専用の自作ターミナルアプリ。内部（端末描画・PTY）
 | scrollback (PTY 出力履歴) | ❌ | PTY と一蓮托生のため復元不可 |
 | 実行中状態 (active タブ・編集中) | ❌ | ランタイム情報 |
 | shell 側の OSC タイトル | ❌ | 起動後に shell が再送信 |
+
+### ⚠️ 機密値の取り扱い注意
+
+`env` (環境変数) は **localStorage に平文 JSON で保存** されます。
+WebView2 の DevTools や `%LOCALAPPDATA%\<app>\EBWebView\` の LevelDB から読み取れる可能性があります。
+**API キー・パスワード・個人トークン等の機密値は env に入れないでください**。
+将来 (Phase 5+) で OS keyring (Windows Credential Manager 等) への退避を検討中です。
 
 ### Phase 3 ハイライト
 

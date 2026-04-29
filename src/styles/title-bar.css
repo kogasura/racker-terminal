@@ -1,0 +1,75 @@
+/* =====================================================================
+   TitleBar — frameless window 用カスタムタイトルバー
+   Phase 4 P-B-2 で追加。
+   ===================================================================== */
+
+/* アプリルートレイアウト */
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: transparent;
+  overflow: hidden;
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ----- TitleBar ----- */
+.title-bar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  background: var(--title-bar-bg, rgba(26, 27, 38, 0.95));
+  border-bottom: 1px solid var(--sidebar-border);
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.title-bar__title {
+  flex: 1;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--title-bar-fg, #c0caf5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-bar__actions {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.title-bar__btn {
+  width: 46px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--title-bar-fg, #c0caf5);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.title-bar__btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.title-bar__btn--close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* ----- 透明背景対応 ----- */
+body,
+#root {
+  background: transparent;
+}

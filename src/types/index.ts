@@ -74,7 +74,7 @@ export interface Favorite {
 /**
  * アプリケーション設定。
  * Phase 2 ではハードコードした初期値を持つのみ。
- * Phase 3 で設定 UI と永続化（%APPDATA%/racker-terminal/state.json）を追加予定。
+ * Phase 4 P-B-2 で Settings UI と透明度設定を追加。
  */
 export interface Settings {
   shell?: string;
@@ -83,6 +83,11 @@ export interface Settings {
   fontFamily: string;
   fontSize: number;
   scrollback: number;
+  /**
+   * 背景透明度 (0.7 〜 1.0)。frameless window 時のみ有効。
+   * Phase 4 P-B-2 で追加。
+   */
+  transparency?: number;  // default: 1.0 (不透明)
 }
 
 /**

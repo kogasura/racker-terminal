@@ -44,8 +44,15 @@
   border-top: 1px solid var(--sidebar-border);
 }
 
+/* B3: フッタボタン行（+ New Group + Settings を横並び） */
+.sidebar__footer-buttons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .sidebar__new-group-btn {
-  width: 100%;
+  flex: 1;
   padding: 6px 0;
   background: none;
   border: 1px solid var(--sidebar-border);
@@ -61,6 +68,33 @@
 
 .sidebar__new-group-btn:hover {
   background: var(--tab-item-bg-hover);
+}
+
+/* B3: Settings ボタン */
+.sidebar__settings-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  color: var(--sidebar-fg);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar__settings-btn:hover {
+  background: var(--tab-item-bg-hover);
+}
+
+/* Settings Dialog range input */
+.settings-range {
+  width: 100%;
+  accent-color: var(--focus-ring);
+  cursor: pointer;
 }
 
 /* ----- FavoritesSection ----- */

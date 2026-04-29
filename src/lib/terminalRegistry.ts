@@ -108,6 +108,13 @@ export function parseOsc7Path(data: string): string | null {
 }
 
 /**
+ * Tokyo Night テーマのデフォルト背景色。
+ * applySettings の background 計算および createRuntime の初期 theme 定義で共用する。
+ * F-M4: ハードコード hex を 1 箇所に集約する。
+ */
+const DEFAULT_BG = '#1a1b26';
+
+/**
  * TerminalPane のライフサイクル全体を React 外で管理する runtime。
  * xterm / PTY / onData 購読 / pendingInputs バッファ / 状態フラグのすべての所有者。
  *
@@ -217,6 +224,8 @@ export function createRuntime(
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
   let isDisposed = false;
   let spawning = false;
+  // F-M3: applySettings で前回の transparency を保持し、不要な theme 再構築を回避する
+  let lastTransparency: number = settings.transparency ?? 1.0;
 
   const term = new XTerm({
     fontFamily: settings.fontFamily,
@@ -225,7 +234,7 @@ export function createRuntime(
     cursorBlink: true,
     allowProposedApi: true,
     theme: {
-      background: '#1a1b26',
+      background: DEFAULT_BG,
       foreground: '#c0caf5',
       cursor: '#c0caf5',
       black: '#15161e',
@@ -386,12 +395,30 @@ export function createRuntime(
 
     applySettings(settings) {
       // Settings 変更を xterm.options に即時反映する。
-      // Settings UI は Phase 3 送りのため、Phase 2 では機構のみ用意する。
       // dispose 済みの xterm に options を書き込むと例外になるため isDisposed ガードを入れる。
       if (isDisposed) return;
-      term.options.fontSize = settings.fontSize;
-      term.options.fontFamily = settings.fontFamily;
-      term.options.scrollback = settings.scrollback;
+
+      // F-M3: フィールド毎の同値比較で不要な再代入を回避する（描画コスト削減）
+      if (term.options.fontSize !== settings.fontSize) {
+        term.options.fontSize = settings.fontSize;
+      }
+      if (term.options.fontFamily !== settings.fontFamily) {
+        term.options.fontFamily = settings.fontFamily;
+      }
+      if (term.options.scrollback !== settings.scrollback) {
+        term.options.scrollback = settings.scrollback;
+      }
+
+      // F-M3: transparency が変わった時のみ theme.background を再構築する
+      // F-M4: DEFAULT_BG 定数を使用（ハードコード排除）
+      const targetAlpha = settings.transparency ?? 1.0;
+      if (lastTransparency !== targetAlpha) {
+        lastTransparency = targetAlpha;
+        term.options.theme = {
+          ...term.options.theme,
+          background: computeBackground(targetAlpha),
+        };
+      }
     },
 
     dispose() {
@@ -547,6 +574,36 @@ export function forceDisposeAll(): void {
     entry.runtime.dispose();
     runtimes.delete(tabId);
   }
+}
+
+/**
+ * 6 桁 hex カラーコードを rgba 文字列に変換する純関数。
+ * - 入力: '#1a1b26' または '1a1b26' (# なしも可)
+ * - 出力: 'rgba(26, 27, 38, 0.8)' のような文字列
+ * - 不正な hex → 元の文字列をそのまま返す
+ *
+ * テスト容易性のためモジュール外から import できる形で export する。
+ * Phase 4 P-B-2 で追加。
+ */
+export function hexToRgba(hex: string, alpha: number): string {
+  const m = hex.match(/^#?([a-fA-F0-9]{2})([a-fA-F0-9]{2})([a-fA-F0-9]{2})$/);
+  if (!m) return hex;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * 透明度と base hex から xterm theme.background 値を計算する純関数。
+ * - alpha < 1.0: hexToRgba で rgba 文字列を返す
+ * - alpha >= 1.0: baseHex をそのまま返す（不透明 hex）
+ *
+ * F-S1 テスト用に export する。F-M4: DEFAULT_BG をデフォルト値として使用。
+ * Phase 4 P-B-2 で追加。
+ */
+export function computeBackground(alpha: number, baseHex: string = DEFAULT_BG): string {
+  return alpha < 1.0 ? hexToRgba(baseHex, alpha) : baseHex;
 }
 
 /**

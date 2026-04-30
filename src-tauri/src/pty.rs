@@ -16,10 +16,12 @@ use uuid::Uuid;
 // release ビルドで eprintln! がログに漏れないよう #[cfg(debug_assertions)] で囲む。
 // Phase 3 で telemetry 収集が必要になったら tracing クレートへの移行を検討する。
 macro_rules! dbg_log {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         #[cfg(debug_assertions)]
-        eprintln!($($arg)*);
-    }
+        { eprintln!($($arg)*); }
+        #[cfg(not(debug_assertions))]
+        { let _ = format_args!($($arg)*); }
+    }}
 }
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────

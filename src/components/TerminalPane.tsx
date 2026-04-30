@@ -98,6 +98,7 @@ export const TerminalPane = memo(function TerminalPane({
         {
           shell: tab.shell,
           cwd: tab.cwd,
+          args: tab.args,
           env: tab.env,
           cols: Math.max(1, runtime.term.cols || 80),
           rows: Math.max(1, runtime.term.rows || 24),
@@ -283,6 +284,7 @@ export const TerminalPane = memo(function TerminalPane({
       {
         shell: tab.shell,
         cwd: tab.cwd,
+        args: tab.args,
         env: tab.env,
         cols: Math.max(1, runtime.term.cols || 80),
         rows: Math.max(1, runtime.term.rows || 24),

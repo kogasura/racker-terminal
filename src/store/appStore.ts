@@ -155,7 +155,7 @@ interface AppActions {
    */
   createTab: (
     groupId?: string,
-    opts?: Partial<Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env'>> & { title?: string },
+    opts?: Partial<Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args'>> & { title?: string },
   ) => string;
 
   /**
@@ -197,7 +197,7 @@ interface AppActions {
 
   /**
    * タブを同一グループ内に複製する。
-   * - 元タブの groupId / shell / cwd / env を引き継ぐ
+   * - 元タブの groupId / shell / cwd / args / env を引き継ぐ
    * - title は元 title + " (copy)"
    * - 元タブの直後に挿入
    * - status は 'spawning'
@@ -292,7 +292,12 @@ export const useAppStore = create<Store>()(
     set((state) => ({
       favorites: [
         ...state.favorites,
-        { ...fav, id, env: fav.env ? { ...fav.env } : undefined },
+        {
+          ...fav,
+          id,
+          args: fav.args ? [...fav.args] : undefined,
+          env: fav.env ? { ...fav.env } : undefined,
+        },
       ],
     }));
     return id;
@@ -316,9 +321,14 @@ export const useAppStore = create<Store>()(
       if (!state.favorites.some((f) => f.id === favId)) return {};  // 存在しない favId は no-op
       return {
         favorites: state.favorites.map((f) =>
-          // F-M4: patch.env を shallow clone して addFavorite と対称化する
+          // F-M4: patch.env / patch.args を shallow clone して addFavorite と対称化する
           f.id === favId
-            ? { ...patch, id: favId, env: patch.env ? { ...patch.env } : undefined }
+            ? {
+                ...patch,
+                id: favId,
+                args: patch.args ? [...patch.args] : undefined,
+                env: patch.env ? { ...patch.env } : undefined,
+              }
             : f,
         ),
       };
@@ -332,7 +342,8 @@ export const useAppStore = create<Store>()(
       userTitle,
       shell: fav.shell,
       cwd: fav.cwd,
-      // F-M2: fav.env を shallow clone して参照を独立させる
+      // F-M2: fav.args / fav.env を shallow clone して参照を独立させる
+      args: fav.args ? [...fav.args] : undefined,
       env: fav.env ? { ...fav.env } : undefined,
     });
   },
@@ -387,7 +398,8 @@ export const useAppStore = create<Store>()(
         userTitle: opts?.userTitle ?? opts?.title,
         shell: opts?.shell,
         cwd: opts?.cwd,
-        env: opts?.env,
+        args: opts?.args ? [...opts.args] : undefined,
+        env: opts?.env ? { ...opts.env } : undefined,
         status: 'spawning',
       };
 
@@ -501,7 +513,8 @@ export const useAppStore = create<Store>()(
         userTitle: `${displayTitle} (copy)`,
         shell: src.shell,
         cwd: src.cwd,
-        // F-M3: src.env を shallow clone して参照を独立させる
+        // F-M3: src.args / src.env を shallow clone して参照を独立させる
+        args: src.args ? [...src.args] : undefined,
         env: src.env ? { ...src.env } : undefined,
         status: 'spawning',
       };
@@ -682,7 +695,7 @@ export const useAppStore = create<Store>()(
     }),
     {
       name: 'racker-terminal',
-      version: 2,
+      version: 3,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -726,6 +739,11 @@ export const useAppStore = create<Store>()(
           // データ変換不要 (defaultFavoriteId は undefined のままで OK)
         }
 
+        // v2 → v3: Tab.args / Favorite.args を追加 (optional なので undefined のままで OK)
+        if (version < 3) {
+          // データ変換不要 (args は optional で既存データに含まれなくても正常動作する)
+        }
+
         return state;
       },
       partialize: (state) => ({
@@ -739,6 +757,7 @@ export const useAppStore = create<Store>()(
               userTitle: tab.userTitle,   // ユーザー編集タイトルのみ永続化 (oscTitle は保存しない)
               shell: tab.shell,
               cwd: tab.cwd,
+              args: tab.args,
               env: tab.env,
               // status / ptyId / oscTitle は OFF (ランタイム状態)
             },

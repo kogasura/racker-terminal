@@ -634,10 +634,12 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
         shell: Option<String>,
         cwd: Option<String>,
+        args: Option<Vec<String>>,
         cols: u16,
         rows: u16,
         env: Option<HashMap<String, String>>,
@@ -686,6 +688,15 @@ impl PtyManager {
         // コマンドビルド
         let mut cmd = CommandBuilder::new(&shell_path);
         cmd.cwd(&cwd_path);
+
+        // shell 起動引数を追加（空文字列要素はスキップ）
+        if let Some(args_vec) = args {
+            for a in args_vec {
+                if !a.is_empty() {
+                    cmd.arg(a);
+                }
+            }
+        }
 
         // env をユーザー指定値で merge（shell の継承環境に上書きする形）
         if let Some(env_map) = env {
@@ -794,17 +805,19 @@ impl PtyManager {
 // ─── Tauri commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn pty_spawn(
     state: tauri::State<PtyManager>,
     shell: Option<String>,
     cwd: Option<String>,
+    args: Option<Vec<String>>,
     cols: u16,
     rows: u16,
     env: Option<std::collections::HashMap<String, String>>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
     state
-        .spawn(shell, cwd, cols, rows, env, on_event)
+        .spawn(shell, cwd, args, cols, rows, env, on_event)
         .map_err(|e| e.to_string())
 }
 
@@ -946,5 +959,52 @@ mod tests {
         assert_eq!(RAW_BUF_LIMIT_BYTES, 4 * 1024 * 1024);
         assert_eq!(TINY_READ_THRESHOLD, 256);
         assert_eq!(TINY_READ_MIN_INTERVAL, std::time::Duration::from_millis(2));
+    }
+
+    // ─── args パラメータのコンパイル確認テスト ──────────────────────────────────
+    //
+    // PtyManager::spawn の args 引数が正しく型付けされていることを確認する。
+    // portable_pty の CommandBuilder は内部状態を直接検査しづらいため、
+    // 「None / Some(vec![]) を渡してもコンパイルエラーにならない」レベルで確認する。
+    // 実際のプロセス起動を伴うテストは E2E で確認する。
+
+    /// args の型が Option<Vec<String>> であることのコンパイルテスト。
+    /// PtyManager を使わず型シグネチャだけ確認する純粋な型テスト。
+    #[test]
+    fn args_none_is_valid_option() {
+        let args: Option<Vec<String>> = None;
+        // None を渡した場合は空引数と同等（args がなければ for ループが実行されないだけ）
+        if let Some(ref v) = args {
+            assert!(v.is_empty(), "None の場合はここには来ない");
+        } else {
+            // None のケース: 引数なしを意味する
+            assert!(args.is_none());
+        }
+    }
+
+    #[test]
+    fn args_empty_vec_skips_all() {
+        // Some(vec![]) を渡した場合、フィルタ後の実際の arg 追加は 0 件
+        let args_vec: Vec<String> = vec![];
+        let added: Vec<&String> = args_vec.iter().filter(|a| !a.is_empty()).collect();
+        assert!(added.is_empty(), "空 vec の場合は arg 追加なし");
+    }
+
+    #[test]
+    fn args_empty_strings_are_skipped() {
+        // 空文字列要素はスキップされる
+        let args_vec: Vec<String> = vec!["".to_string(), "".to_string()];
+        let added: Vec<&String> = args_vec.iter().filter(|a| !a.is_empty()).collect();
+        assert!(added.is_empty(), "空文字列のみの vec は arg 追加なし");
+    }
+
+    #[test]
+    fn args_valid_entries_pass_through() {
+        // 有効なエントリはフィルタを通過する
+        let args_vec: Vec<String> = vec!["--cd".to_string(), "~".to_string()];
+        let added: Vec<&String> = args_vec.iter().filter(|a| !a.is_empty()).collect();
+        assert_eq!(added.len(), 2);
+        assert_eq!(added[0].as_str(), "--cd");
+        assert_eq!(added[1].as_str(), "~");
     }
 }

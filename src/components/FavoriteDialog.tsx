@@ -12,6 +12,16 @@ interface FavoriteDialogProps {
 }
 
 /**
+ * args テキストをパースする純関数。
+ * 1 行 1 件の形式を受け取り、引数配列を返す。
+ * 空行・前後空白のみの行はスキップされる。
+ * テスト容易性のため export する。
+ */
+export function parseArgsText(text: string): string[] {
+  return text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+}
+
+/**
  * env テキストをパースする純関数。
  * 1 行 1 件の "KEY=VALUE" 形式を受け取り、env オブジェクトとエラーリストを返す。
  * KEY は POSIX 慣例 [A-Za-z_][A-Za-z0-9_]* に準拠していること。
@@ -44,6 +54,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   const [title, setTitle] = useState(initial?.title ?? '');
   const [shell, setShell] = useState(initial?.shell ?? '');
   const [cwd, setCwd] = useState(initial?.cwd ?? '');
+  const [argsText, setArgsText] = useState(initial?.args?.join('\n') ?? '');
   const [envText, setEnvText] = useState(
     initial?.env
       ? Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join('\n')
@@ -53,18 +64,23 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
-  /** テンプレート選択時に shell・title を自動入力する (Phase 4 P-I で追加) */
+  /** テンプレート選択時に shell・title・args を自動入力する (Phase 4 P-I で追加) */
   function applyTemplate(id: string) {
     const tpl = findTemplate(id);
     if (!tpl) return;
     setShell(tpl.shell);
     // title は空のときのみ上書き (edit モードでカスタムタイトルを保護)
     if (!title.trim()) setTitle(tpl.title);
+    // テンプレに args が定義されていれば常に上書き (ユーザー意図的選択)
+    if (tpl.args) setArgsText(tpl.args.join('\n'));
   }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;  // title 必須
+
+    // args のパース（1 行 1 件、空行スキップ）
+    const args = parseArgsText(argsText);
 
     // F-S3: env のパース（不正 KEY はエラーとして form を弾く）
     const { env, errors } = parseEnvText(envText);
@@ -79,6 +95,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
       title: title.trim(),
       shell: shell.trim() || undefined,
       cwd: cwd.trim() || undefined,
+      args: args.length > 0 ? args : undefined,
       env: Object.keys(env).length > 0 ? env : undefined,
       defaultTabTitle: defaultTabTitle.trim() || undefined,
     });
@@ -158,6 +175,22 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 onChange={(e) => setCwd(e.target.value)}
                 placeholder="(空 = ホーム)"
               />
+            </label>
+
+            <label className="dialog-field">
+              <span className="dialog-label">
+                引数 (1 行 1 件、shell 起動時に渡す)
+              </span>
+              <textarea
+                className="dialog-textarea"
+                value={argsText}
+                onChange={(e) => setArgsText(e.target.value)}
+                rows={3}
+                placeholder={"例:\n--cd\n~"}
+              />
+              <small className="dialog-hint">
+                例: WSL なら <code>--cd</code> + <code>~</code> で WSL ホームから起動。
+              </small>
             </label>
 
             <label className="dialog-field">

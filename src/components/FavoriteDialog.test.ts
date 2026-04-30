@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { parseEnvText } from './FavoriteDialog';
+import { parseEnvText, parseArgsText } from './FavoriteDialog';
+
+describe('parseArgsText', () => {
+  it('1 行 1 件: 単一行を配列にする', () => {
+    expect(parseArgsText('--cd')).toEqual(['--cd']);
+  });
+
+  it('複数行: 複数の引数を配列にする', () => {
+    expect(parseArgsText('--cd\n~')).toEqual(['--cd', '~']);
+  });
+
+  it('空行スキップ: 空行は無視される', () => {
+    expect(parseArgsText('--cd\n\n~\n')).toEqual(['--cd', '~']);
+  });
+
+  it('各行 trim: 前後のスペースを除去する', () => {
+    expect(parseArgsText('  --login  \n  -i  ')).toEqual(['--login', '-i']);
+  });
+
+  it('全部空: 空文字列は空配列を返す', () => {
+    expect(parseArgsText('')).toEqual([]);
+  });
+
+  it('改行のみ: 改行だけの入力は空配列を返す', () => {
+    expect(parseArgsText('\n\n\n')).toEqual([]);
+  });
+});
 
 describe('parseEnvText', () => {
   it('正常: KEY=VALUE を正しくパースする', () => {

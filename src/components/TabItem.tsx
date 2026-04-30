@@ -120,11 +120,12 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => {
-              // 元タブの shell / cwd / env / userTitle を引き継いでお気に入りに登録する
+              // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する
               addFavorite({
                 title: getTabDisplayTitle(tab),
                 shell: tab.shell,
                 cwd: tab.cwd,
+                args: tab.args,    // クローンは addFavorite 内部で行う
                 env: tab.env,
               });
             }}

@@ -8,8 +8,31 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
-  background: #1a1b26;
+  /* Phase 4 P-B-2: frameless + transparent window 対応のため transparent。
+     実際の背景色は app-root / app-body 配下の sidebar / terminal 各 wrapper が var(--bg-alpha) 経由で描く。 */
+  background: transparent;
   color: #c0caf5;
   font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
   overflow: hidden;
+}
+
+/* スクロールバー: 透明背景に馴染む控えめな見た目に統一する。
+   WebView2 (Chromium) の ::-webkit-scrollbar 系疑似要素で全スクロールバーに適用される
+   (sidebar / xterm viewport / settings dialog 等)。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(192, 202, 245, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(192, 202, 245, 0.3);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

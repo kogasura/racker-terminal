@@ -1,6 +1,20 @@
 .terminal-pane {
   position: absolute;
   inset: 0;
+  /* v0.5 改善: 左右に余白を入れて視認性を上げる。
+     padding 領域もターミナルの背景色 (transparency 連動) で塗り、
+     視覚的に terminal が wrapper まで広がっているように見せる。 */
+  padding: 4px 8px;
+  box-sizing: border-box;
+  background: var(--terminal-bg);
+}
+
+/* xterm.css の .xterm-viewport の opaque #000 を上書きして透明にする
+   (xterm canvas は theme.background で alpha 描画するため、viewport を不透明にすると
+    パネル背景と canvas 描画が二重になり色がずれる)
+   xterm.css が CSS の load order でこの後に読み込まれるため、!important で強制上書きする。 */
+.terminal-pane .xterm-viewport {
+  background-color: transparent !important;
 }
 
 .terminal-pane--hidden {

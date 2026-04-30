@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Favorite } from '../types';
+import { PROFILE_TEMPLATES, findTemplate } from '../lib/profileTemplates';
 
 interface FavoriteDialogProps {
   mode: 'add' | 'edit';
@@ -52,6 +53,15 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
+  /** テンプレート選択時に shell・title を自動入力する (Phase 4 P-I で追加) */
+  function applyTemplate(id: string) {
+    const tpl = findTemplate(id);
+    if (!tpl) return;
+    setShell(tpl.shell);
+    // title は空のときのみ上書き (edit モードでカスタムタイトルを保護)
+    if (!title.trim()) setTitle(tpl.title);
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;  // title 必須
@@ -90,6 +100,28 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
           </Dialog.Description>
 
           <form onSubmit={handleSubmit} className="dialog-form">
+            {/* Phase 4 P-I: テンプレート select — 選択すると title/shell を自動入力 */}
+            <label className="dialog-field">
+              <span className="dialog-label">テンプレート (任意)</span>
+              <select
+                className="dialog-input"
+                value=""
+                onChange={(e) => {
+                  applyTemplate(e.target.value);
+                  // 選択完了後 select 自体は (未選択) に戻す
+                  e.target.value = '';
+                }}
+              >
+                <option value="">(未選択 — 手動入力)</option>
+                {PROFILE_TEMPLATES.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>{tpl.label}</option>
+                ))}
+              </select>
+              <small className="dialog-hint">
+                選択すると title・shell が自動入力されます (上書き編集可)。
+              </small>
+            </label>
+
             <label className="dialog-field">
               <span className="dialog-label">
                 タイトル <span className="dialog-required">*</span>

@@ -112,7 +112,7 @@ export interface Settings {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle
+ * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings
  */
 export interface AppState {
@@ -133,4 +133,7 @@ export interface AppState {
    */
   contextMenuOpen: boolean;
   settings: Settings;
+  /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
+   *  Phase 4 P-K で追加。 */
+  wslDistros: string[];
 }

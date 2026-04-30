@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAppStore } from './store/appStore';
 import { getAllRuntimes } from './lib/terminalRegistry';
+import { listWslDistros } from './lib/wsl';
 import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
@@ -49,6 +50,19 @@ function App() {
       for (const r of getAllRuntimes()) r.applySettings(state.settings);
     });
     return unsub;
+  }, []);
+
+  // App 起動時に WSL distro 一覧を取得して store に保存する。
+  // Phase 4 P-K で追加。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const distros = await listWslDistros();
+      if (!cancelled) {
+        useAppStore.getState().setWslDistros(distros);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Settings の transparency を CSS 変数 --bg-alpha に反映する。

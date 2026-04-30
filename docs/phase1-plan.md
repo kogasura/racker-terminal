@@ -13,7 +13,7 @@
 本 Plan は **Phase 1** の実装計画に限定する。Phase 1 のゴールは「**1 タブで nushell が起動・入出力できる状態まで**」。UI 本命（縦サイドバー・グループ・D&D・お気に入り）は Phase 2、磨き込み（テーマ・永続化・インストーラー）は Phase 3 で別 Plan を起こす。
 
 プロジェクト名: **racker-terminal**
-配置先: `C:\Users\yuuki_okubo\dev\racker-terminal`
+配置先: `<dev-dir>/racker-terminal`
 
 ---
 
@@ -139,7 +139,7 @@ src/
 
 ### Unit 1: プロジェクト初期化（直列、最優先）
 
-1. `cd C:\Users\yuuki_okubo\dev` で `npm create tauri-app@latest racker-terminal -- --template react-ts`
+1. `cd <dev-dir>` で `npm create tauri-app@latest racker-terminal -- --template react-ts`
 2. Cargo 依存追加（`src-tauri/Cargo.toml`）:
    ```toml
    portable-pty = "0.9"
@@ -220,7 +220,7 @@ src/
 
 ### 新規作成
 ```
-C:\Users\yuuki_okubo\dev\racker-terminal\
+<dev-dir>\racker-terminal\
 ├── src-tauri\
 │   ├── src\
 │   │   ├── main.rs              # テンプレ → そのまま
@@ -299,7 +299,7 @@ C:\Users\yuuki_okubo\dev\racker-terminal\
 - [**@xterm/xterm**](https://www.npmjs.com/package/@xterm/xterm) — VSCode 内蔵ターミナルも採用
 - [**@tailwindcss/vite**](https://tailwindcss.com/docs/installation/using-vite) — v4 の Vite プラグイン方式
 - [**Tauri v2 Channel**](https://v2.tauri.app/develop/calling-frontend/#channels) — 効率的 IPC
-- 参考コード: `C:\Users\yuuki_okubo\dev\tauri-transparent-test`（Tauri 2 最小構成、依存は空）
+- 参考コード: `<dev-dir>\tauri-transparent-test`（Tauri 2 最小構成、依存は空）
 
 ---
 

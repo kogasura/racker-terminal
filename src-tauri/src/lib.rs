@@ -1,4 +1,5 @@
 mod pty;
+mod wsl;
 
 use pty::PtyManager;
 
@@ -12,6 +13,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            wsl::list_wsl_distros,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

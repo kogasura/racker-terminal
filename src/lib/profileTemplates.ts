@@ -1,10 +1,11 @@
 /**
  * お気に入り登録時のテンプレート定数・ユーティリティ。
- * Windows 標準シェル + 一般的に使われるシェルをハードコードで提供する。
+ * Windows 標準シェル + 一般的に使われるシェルを静的テンプレートとして提供し、
+ * WSL distro 一覧を受け取って動的にテンプレートを構築する。
  * 選択しても上書き編集可能。
  *
  * @module profileTemplates
- * @since Phase 4 P-I で追加
+ * @since Phase 4 P-I で追加、P-K で動的化
  */
 
 /** お気に入り登録時のテンプレート型定義 */
@@ -24,13 +25,10 @@ export interface ProfileTemplate {
 }
 
 /**
- * 組み込みプロファイルテンプレート一覧。
- * 各エントリは FavoriteDialog のテンプレート select から選択できる。
- *
- * @since Phase 4 P-I で追加
+ * 静的 (常に表示される) テンプレート一覧。
+ * WSL distro とは独立して常に表示される。
  */
-export const PROFILE_TEMPLATES: readonly ProfileTemplate[] = [
-  { id: 'wsl',     label: 'WSL',                       title: 'WSL',        shell: 'wsl.exe',                                     args: ['--cd', '~'] },
+const STATIC_TEMPLATES: readonly ProfileTemplate[] = [
   { id: 'pwsh5',   label: 'Windows PowerShell (5.1)',  title: 'PowerShell', shell: 'powershell.exe',                              args: ['-NoLogo'] },
   { id: 'pwsh7',   label: 'PowerShell 7+',             title: 'PowerShell', shell: 'pwsh.exe',                                    args: ['-NoLogo'] },
   { id: 'cmd',     label: 'Command Prompt',            title: 'cmd',        shell: 'cmd.exe' },
@@ -39,13 +37,37 @@ export const PROFILE_TEMPLATES: readonly ProfileTemplate[] = [
 ] as const;
 
 /**
+ * インストール済 WSL distro 一覧から動的にテンプレートを構築する純関数。
+ * - distro が空 → 静的テンプレートのみ返す
+ * - distro が 1 件以上 → 各 distro を `WSL: <name>` エントリとして先頭に追加
+ *
+ * @param wslDistros - インストール済 WSL distro 名の一覧 (docker-desktop 除外済)
+ * @returns WSL エントリ (先頭) + 静的テンプレートの配列
+ * @since Phase 4 P-K で追加
+ */
+export function buildProfileTemplates(wslDistros: readonly string[]): ProfileTemplate[] {
+  const wslEntries: ProfileTemplate[] = wslDistros.map((distro) => ({
+    id: `wsl-${distro}`,
+    label: `WSL: ${distro}`,
+    title: distro,                          // タブ名は distro 名
+    shell: 'wsl.exe',
+    args: ['-d', distro, '--cd', '~'],      // distro 指定 + WSL ホーム
+  }));
+  return [...wslEntries, ...STATIC_TEMPLATES];
+}
+
+/**
  * テンプレート ID から ProfileTemplate を取得する純関数。
  * 見つからない場合は null を返す。
  *
- * @param id - テンプレート ID (例: 'wsl', 'pwsh7')
+ * @param templates - buildProfileTemplates で構築したテンプレート配列
+ * @param id - テンプレート ID (例: 'wsl-Ubuntu-22.04', 'pwsh7')
  * @returns 対応する ProfileTemplate、見つからない場合は null
- * @since Phase 4 P-I で追加
+ * @since Phase 4 P-I で追加、P-K で signature 変更
  */
-export function findTemplate(id: string): ProfileTemplate | null {
-  return PROFILE_TEMPLATES.find((t) => t.id === id) ?? null;
+export function findTemplate(
+  templates: readonly ProfileTemplate[],
+  id: string,
+): ProfileTemplate | null {
+  return templates.find((t) => t.id === id) ?? null;
 }

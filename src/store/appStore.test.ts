@@ -1257,6 +1257,7 @@ function makeState(
     activeTabId,
     editingId: null,
     contextMenuOpen: false,
+    wslDistros: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
   };
 }
@@ -1991,5 +1992,52 @@ describe('args 対応 (P4-J)', () => {
     const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState());
     const serializedTab = (partializeResult as { tabs: Record<string, unknown> }).tabs[tabId];
     expect((serializedTab as Record<string, unknown>).args).toEqual(['--cd', '~']);
+  });
+});
+
+// --- setWslDistros (Phase 4 P-K) ---
+
+describe('setWslDistros', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      contextMenuOpen: false,
+      wslDistros: [],
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+        transparency: 1.0,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('初期 state で wslDistros が空配列', () => {
+    expect(useAppStore.getState().wslDistros).toEqual([]);
+  });
+
+  it('setWslDistros で wslDistros が更新される', () => {
+    useAppStore.getState().setWslDistros(['Ubuntu-22.04']);
+    expect(useAppStore.getState().wslDistros).toEqual(['Ubuntu-22.04']);
+  });
+
+  it('連続呼び出しで上書きされる', () => {
+    useAppStore.getState().setWslDistros(['Ubuntu-22.04']);
+    useAppStore.getState().setWslDistros(['Debian', 'Ubuntu']);
+    expect(useAppStore.getState().wslDistros).toEqual(['Debian', 'Ubuntu']);
+  });
+
+  it('partialize: wslDistros が保存対象外であること', () => {
+    useAppStore.getState().setWslDistros(['Ubuntu-22.04']);
+    const partializeResult = useAppStore.persist.getOptions().partialize!(
+      useAppStore.getState(),
+    ) as Record<string, unknown>;
+    expect(partializeResult.wslDistros).toBeUndefined();
   });
 });

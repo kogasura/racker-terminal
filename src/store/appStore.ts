@@ -272,6 +272,14 @@ interface AppActions {
    * Phase 4 P-H で追加。
    */
   spawnFavoriteByIndex: (index: number) => string | null;
+
+  /**
+   * インストール済 WSL distro 一覧を更新する。
+   * App 起動時に listWslDistros() から取得した値をセットする。
+   * persist 対象外（ランタイム状態）。
+   * Phase 4 P-K で追加。
+   */
+  setWslDistros: (distros: string[]) => void;
 }
 
 type Store = AppState & AppActions;
@@ -286,6 +294,7 @@ export const useAppStore = create<Store>()(
   editingId: null,
   contextMenuOpen: false,
   settings: defaultSettings,
+  wslDistros: [],
 
   addFavorite: (fav) => {
     const id = newId();
@@ -692,6 +701,8 @@ export const useAppStore = create<Store>()(
     if (index < 0 || index >= favorites.length) return null;
     return get().spawnFavorite(favorites[index].id);
   },
+
+  setWslDistros: (distros) => set({ wslDistros: distros }),
     }),
     {
       name: 'racker-terminal',
@@ -765,7 +776,7 @@ export const useAppStore = create<Store>()(
         ),
         favorites: state.favorites,
         settings: state.settings,
-        // activeTabId / editingId / contextMenuOpen は OFF
+        // activeTabId / editingId / contextMenuOpen / wslDistros は OFF
       }),
       // F-M2: 復元時の整合性ガード
       onRehydrateStorage: () => (state) => {

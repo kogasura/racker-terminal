@@ -1,7 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useMemo, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { useShallow } from 'zustand/shallow';
 import type { Favorite } from '../types';
-import { PROFILE_TEMPLATES, findTemplate } from '../lib/profileTemplates';
+import { buildProfileTemplates, findTemplate } from '../lib/profileTemplates';
+import { useAppStore } from '../store/appStore';
 
 interface FavoriteDialogProps {
   mode: 'add' | 'edit';
@@ -51,6 +53,9 @@ export function parseEnvText(text: string): { env: Record<string, string>; error
 }
 
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
+  const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
+  const templates = useMemo(() => buildProfileTemplates(wslDistros), [wslDistros]);
+
   const [title, setTitle] = useState(initial?.title ?? '');
   const [shell, setShell] = useState(initial?.shell ?? '');
   const [cwd, setCwd] = useState(initial?.cwd ?? '');
@@ -64,9 +69,9 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
-  /** テンプレート選択時に shell・title・args を自動入力する (Phase 4 P-I で追加) */
+  /** テンプレート選択時に shell・title・args を自動入力する (Phase 4 P-I で追加、P-K で動的化) */
   function applyTemplate(id: string) {
-    const tpl = findTemplate(id);
+    const tpl = findTemplate(templates, id);
     if (!tpl) return;
     setShell(tpl.shell);
     // title は空のときのみ上書き (edit モードでカスタムタイトルを保護)
@@ -130,7 +135,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 }}
               >
                 <option value="">(未選択 — 手動入力)</option>
-                {PROFILE_TEMPLATES.map((tpl) => (
+                {templates.map((tpl) => (
                   <option key={tpl.id} value={tpl.id}>{tpl.label}</option>
                 ))}
               </select>

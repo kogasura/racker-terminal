@@ -9,7 +9,7 @@ import {
   forceDisposeAll,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
-import { resizePty } from '../lib/pty';
+import { resizePty, writePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import '../styles/terminal.css';
 
@@ -218,6 +218,24 @@ export const TerminalPane = memo(function TerminalPane({
         const state = useAppStore.getState();
         const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);
         if (next) state.navigateToTab(next);
+        return false;
+      }
+
+      // Ctrl+V: クリップボードから貼り付け (v0.5 改善)
+      // Windows ターミナル慣習に合わせて Ctrl+V を有効化。Ctrl+Shift+V は予約 (Linux 慣習用)。
+      if (!e.shiftKey && e.code === 'KeyV') {
+        e.preventDefault();
+        const handle = runtime.ptyHandle;
+        if (handle) {
+          navigator.clipboard
+            .readText()
+            .then((text) => {
+              if (text) void writePty(handle.id, text).catch(() => {});
+            })
+            .catch((err) => {
+              console.warn('[TerminalPane] clipboard.readText failed:', err);
+            });
+        }
         return false;
       }
 

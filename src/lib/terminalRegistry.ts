@@ -233,8 +233,14 @@ export function createRuntime(
     scrollback: settings.scrollback,
     cursorBlink: true,
     allowProposedApi: true,
+    // v0.5 改善: 透明背景を有効化する (xterm.js の必須オプション)
+    // theme.background に rgba/transparent を設定するときに必要。
+    // false (default) だと alpha が無視されて opaque で描画される。
+    allowTransparency: true,
     theme: {
-      background: DEFAULT_BG,
+      // v0.5 改善: 初期 theme.background も transparency を反映する
+      // (旧実装は DEFAULT_BG 固定で、新規タブが常に不透明になっていた)
+      background: computeBackground(lastTransparency),
       foreground: '#c0caf5',
       cursor: '#c0caf5',
       black: '#15161e',
@@ -265,7 +271,14 @@ export function createRuntime(
   // setupWebglRenderer ヘルパーで WebGL を attach する。
   // onContextLoss で Canvas renderer に自動フォールバックする堅牢性を確保する。
   // dispose 順序: webglHandle.dispose() は fitAddon.dispose() の前に呼ぶ (§3.2 参照)。
-  const webglHandle = setupWebglRenderer(term, tabId);
+  //
+  // v0.5 改善: xterm の WebglAddon は theme.background の rgba alpha を尊重しない
+  // (canvas が opaque で生成される) ため、透明度 < 1.0 のときは WebGL を無効化して
+  // Canvas renderer にフォールバックする。
+  // 1.0 → < 1.0 への切替: applySettings で webglHandle.dispose() を実行
+  // < 1.0 → 1.0 への切替: 再ロードはせず Canvas のままとする (app 再起動で WebGL が戻る)
+  let webglHandle: { dispose: () => void } | null =
+    lastTransparency >= 1.0 ? setupWebglRenderer(term, tabId) : null;
 
   try {
     fitAddon.fit();
@@ -343,6 +356,16 @@ export function createRuntime(
     return false;
   });
 
+  // v0.5 改善: OSC 10/11 (default foreground/background color 設定) を無視する。
+  // nushell / PowerShell 等のシェルが起動時に背景色を OSC 11 で設定すると、
+  // 我々の theme.background (transparency 設定) が上書きされて不透明になってしまう。
+  // true を返すことで xterm のデフォルト処理を抑止し、ユーザーの transparency 設定を保護する。
+  const osc10Sub = term.parser.registerOscHandler(10, () => true);
+  const osc11Sub = term.parser.registerOscHandler(11, () => true);
+  // OSC 110/111 (reset default fg/bg) も同様に無視 (リセット後 shell preference に戻されるのを防ぐ)
+  const osc110Sub = term.parser.registerOscHandler(110, () => true);
+  const osc111Sub = term.parser.registerOscHandler(111, () => true);
+
   const runtime: TerminalRuntime = {
     get term() { return term; },
     get fitAddon() { return fitAddon; },
@@ -418,6 +441,13 @@ export function createRuntime(
           ...term.options.theme,
           background: computeBackground(targetAlpha),
         };
+
+        // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック
+        if (targetAlpha < 1.0 && webglHandle) {
+          webglHandle.dispose();
+          webglHandle = null;
+        }
+        // < 1.0 → 1.0 で WebGL 再ロードはしない (app 再起動が必要)
       }
     },
 
@@ -430,11 +460,17 @@ export function createRuntime(
       titleSub.dispose();
       // OSC 7 cwd 追跡購読を解放する (Phase 4 P-G で追加)
       oscSub.dispose();
+      // v0.5 改善: OSC 10/11/110/111 (default fg/bg 設定) suppress ハンドラを解放
+      osc10Sub.dispose();
+      osc11Sub.dispose();
+      osc110Sub.dispose();
+      osc111Sub.dispose();
       // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
       compositionAbort.abort();
       // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)
       // term.dispose() より先に WebGL context を解放することで WebView2 crash を防ぐ。
-      webglHandle.dispose();
+      // v0.5 改善: 透明度 < 1.0 のとき null になっている可能性
+      webglHandle?.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
       term.dispose();
@@ -596,14 +632,17 @@ export function hexToRgba(hex: string, alpha: number): string {
 
 /**
  * 透明度と base hex から xterm theme.background 値を計算する純関数。
- * - alpha < 1.0: hexToRgba で rgba 文字列を返す
+ * - alpha < 1.0: 完全透明 ('rgba(0,0,0,0)') を返す
+ *   理由: 親の .terminal-pane が var(--terminal-bg) で半透明背景を描画しているため、
+ *   xterm 自身も rgba(R,G,B,alpha) で塗ると 2 重描画になり実効不透明度が上がる
+ *   (例: 0.7 + 0.7 → 0.91 で sidebar の 0.7 より不透明に見える)。
  * - alpha >= 1.0: baseHex をそのまま返す（不透明 hex）
  *
  * F-S1 テスト用に export する。F-M4: DEFAULT_BG をデフォルト値として使用。
  * Phase 4 P-B-2 で追加。
  */
 export function computeBackground(alpha: number, baseHex: string = DEFAULT_BG): string {
-  return alpha < 1.0 ? hexToRgba(baseHex, alpha) : baseHex;
+  return alpha < 1.0 ? 'rgba(0, 0, 0, 0)' : baseHex;
 }
 
 /**

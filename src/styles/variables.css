@@ -3,6 +3,9 @@
   --sidebar-width: 240px;
   --sidebar-fg: #c0caf5;
   --sidebar-border: #24283b;
+  /* パネル間の主要な仕切り (titlebar↔body, sidebar↔terminal)。
+     透明背景でも視認しやすいよう sidebar-border より明るい色にする。 */
+  --panel-divider: #414868;
 
   /* グループ・タブ */
   --tab-item-bg: transparent;

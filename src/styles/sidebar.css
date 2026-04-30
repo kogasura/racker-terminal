@@ -8,7 +8,7 @@
   width: var(--sidebar-width);
   flex-shrink: 0;
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--sidebar-border);
+  border-right: 1px solid var(--panel-divider);
   display: flex;
   flex-direction: column;
   overflow: hidden;

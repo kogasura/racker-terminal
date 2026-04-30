@@ -571,6 +571,12 @@
   border-color: var(--focus-ring);
 }
 
+/* Phase 4 P-I: select 要素でもブラウザ固有スタイルを抑制し input と高さ・色を揃える */
+select.dialog-input {
+  appearance: none;
+  cursor: pointer;
+}
+
 .dialog-textarea {
   background: #0d0e14;
   border: 1px solid var(--sidebar-border);

@@ -1,0 +1,20 @@
+/* フォント埋め込み — アプリ配布バイナリにバンドルされる。
+   外部 PC でフォント未インストールでも MonaspiceNe NF で正しく描画される。
+   ライセンス: SIL OFL 1.1 (LICENSES/ 参照)
+   Phase 4 P-D で追加。 */
+
+@font-face {
+  font-family: "MonaspiceNe NF";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/MonaspiceNe-NF-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "MonaspiceNe NF";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../assets/fonts/MonaspiceNe-NF-Bold.woff2") format("woff2");
+}

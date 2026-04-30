@@ -1,3 +1,4 @@
+@import "./styles/fonts.css";
 @import "./styles/variables.css";
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";

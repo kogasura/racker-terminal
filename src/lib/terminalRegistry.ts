@@ -264,6 +264,15 @@ export function createRuntime(
 
   term.open(divEl);
 
+  // 配布バイナリでバンドル済の MonaspiceNe NF が初回起動時にロードされる前に WebGL atlas が
+  // 焼かれるとフォールバック (Cascadia 等) で描画される問題を防ぐため、フォントロード完了後に
+  // fontFamily を再代入して atlas を強制再生成する (Phase 4 P-D で追加)。
+  void document.fonts.load(`${settings.fontSize}px "MonaspiceNe NF"`).then(() => {
+    if (isDisposed) return;
+    // 同じ値を代入することで xterm-webgl の atlas 再生成をトリガーする
+    term.options.fontFamily = settings.fontFamily;
+  }).catch(() => {});
+
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
 

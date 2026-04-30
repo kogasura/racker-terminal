@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "racker-terminal",
-  "version": "0.1.0",
+  "productName": "Racker Terminal",
+  "version": "1.0.0",
   "identifier": "com.yokubo.racker",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,13 +26,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Windows 専用ターミナル",
+    "longDescription": "縦サイドバー + グループ + お気に入りのターミナル。WSL/PowerShell/cmd を快適に切り替え。",
+    "resources": ["../LICENSES/*.txt", "../LICENSE"],
+    "windows": {
+      "wix": {
+        "language": "ja-JP"
+      },
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

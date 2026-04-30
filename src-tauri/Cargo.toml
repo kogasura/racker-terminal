@@ -1,8 +1,9 @@
 [package]
 name = "racker-terminal"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.0"
+description = "縦サイドバー + グループ + お気に入りのターミナル。WSL/PowerShell/cmd を快適に切り替え。"
+authors = ["yokubo"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -877,10 +877,17 @@ describe('hexToRgba', () => {
 });
 
 // --- computeBackground (F-S1: applySettings transparency 連続変更テスト) ---
+//
+// v0.5 仕様変更 (PR #25):
+//   alpha < 1.0 のとき xterm theme.background は 'rgba(0, 0, 0, 0)' (完全透明) を返す。
+//   理由: 親要素 .terminal-pane が var(--terminal-bg) で半透明背景を描画しており、
+//   xterm が rgba(R,G,B,alpha) で再塗りすると二重描画になって実効不透明度が上がるため。
+//   (例: alpha=0.7 を xterm と親の両方で適用すると 0.91 相当の不透明度になる)
 
 describe('computeBackground', () => {
-  it('alpha < 1.0: rgba 文字列を返す', () => {
-    expect(computeBackground(0.8, '#1a1b26')).toBe('rgba(26, 27, 38, 0.8)');
+  it('alpha < 1.0: 二重描画回避のため完全透明 rgba(0,0,0,0) を返す', () => {
+    // 親の .terminal-pane が半透明背景を描画するため xterm 自身は透明にする
+    expect(computeBackground(0.8, '#1a1b26')).toBe('rgba(0, 0, 0, 0)');
   });
 
   it('alpha = 1.0: baseHex をそのまま返す（不透明 hex）', () => {
@@ -891,28 +898,32 @@ describe('computeBackground', () => {
     expect(computeBackground(1.5, '#1a1b26')).toBe('#1a1b26');
   });
 
-  it('1.0 → 0.8 → 0.7 と変えても最終 background が rgba(26, 27, 38, 0.7)', () => {
+  it('1.0 → 0.8 → 0.7 と変えても alpha < 1.0 は常に rgba(0,0,0,0)', () => {
     // computeBackground は純関数のため、各 alpha で独立して計算できる
     const bg1 = computeBackground(1.0, '#1a1b26');
     expect(bg1).toBe('#1a1b26');  // 1.0 は hex のまま
 
+    // alpha < 1.0 では二重描画回避のため完全透明を返す（baseHex は使わない）
     const bg2 = computeBackground(0.8, '#1a1b26');
-    expect(bg2).toBe('rgba(26, 27, 38, 0.8)');
+    expect(bg2).toBe('rgba(0, 0, 0, 0)');
 
     const bg3 = computeBackground(0.7, '#1a1b26');
-    expect(bg3).toBe('rgba(26, 27, 38, 0.7)');
+    expect(bg3).toBe('rgba(0, 0, 0, 0)');
   });
 
   it('0.8 → 1.0 で hex に戻る', () => {
+    // alpha < 1.0 は完全透明（二重描画回避）
     const bgSemi = computeBackground(0.8, '#1a1b26');
-    expect(bgSemi).toBe('rgba(26, 27, 38, 0.8)');
+    expect(bgSemi).toBe('rgba(0, 0, 0, 0)');
 
+    // alpha = 1.0 に戻ると baseHex が返る
     const bgOpaque = computeBackground(1.0, '#1a1b26');
     expect(bgOpaque).toBe('#1a1b26');  // DEFAULT_BG に戻る
   });
 
   it('baseHex 省略時は DEFAULT_BG (#1a1b26) を使用する', () => {
-    expect(computeBackground(0.9)).toBe('rgba(26, 27, 38, 0.9)');
+    // alpha < 1.0 は完全透明（baseHex は参照されない）
+    expect(computeBackground(0.9)).toBe('rgba(0, 0, 0, 0)');
     expect(computeBackground(1.0)).toBe('#1a1b26');
   });
 });

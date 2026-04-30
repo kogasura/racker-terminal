@@ -6,6 +6,7 @@ import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import './styles/variables.css';
 import './styles/title-bar.css';
+import './styles/dropdown-menu.css';
 
 function App() {
   useEffect(() => {

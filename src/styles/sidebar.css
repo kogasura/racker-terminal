@@ -182,6 +182,12 @@
   flex-shrink: 0;
 }
 
+/* Phase 4 P-H: 既定お気に入りのアイコン（Tokyo Night yellow） */
+.favorite-item__icon--default {
+  color: #e0af68;
+  opacity: 1;
+}
+
 .favorite-item__title {
   flex: 1;
   overflow: hidden;

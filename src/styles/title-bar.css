@@ -68,6 +68,53 @@
   color: #ffffff;
 }
 
+/* ----- 新規タブ split button (Phase 4 P-H) ----- */
+.title-bar__new-tab-group {
+  display: flex;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+/* + ボタン (32px 幅) */
+.title-bar__btn--new-tab {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 4px 0 0 4px;
+  background: transparent;
+  color: var(--title-bar-fg, #c0caf5);
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.title-bar__btn--new-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ▼ ボタン (20px 幅、やや狭い) */
+.title-bar__btn--new-tab-arrow {
+  width: 20px;
+  height: 32px;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  background: transparent;
+  color: var(--title-bar-fg, #c0caf5);
+  cursor: pointer;
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+
+.title-bar__btn--new-tab-arrow:hover {
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 1;
+}
+
 /* ----- 透明背景対応 ----- */
 body,
 #root {

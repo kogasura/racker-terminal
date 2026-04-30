@@ -9,6 +9,12 @@ export type PtyEvent =
 export interface SpawnOptions {
   shell?: string;
   cwd?: string;
+  /**
+   * shell 起動時の引数配列。空配列 / undefined は引数なし。
+   * Rust 側 CommandBuilder.arg() で argv に追加される（シェル injection なし、プロセス API レベル）。
+   * 例: WSL なら `['--cd', '~']` で WSL ホームから起動。
+   */
+  args?: string[];
   cols: number;
   rows: number;
   /**
@@ -41,6 +47,7 @@ export async function spawnPty(
   };
   if (opts.shell !== undefined) args.shell = opts.shell;
   if (opts.cwd !== undefined) args.cwd = opts.cwd;
+  if (opts.args !== undefined) args.args = opts.args;
   if (opts.env !== undefined) args.env = opts.env;
 
   const id = await invoke<string>("pty_spawn", args);

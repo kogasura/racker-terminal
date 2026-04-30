@@ -26,6 +26,11 @@ export interface Tab {
   shell?: string;
   /** 未指定の場合は Rust 側の home_dir を使用 */
   cwd?: string;
+  /**
+   * shell 起動時の引数配列。空配列 / undefined は引数なし。
+   * Rust 側 CommandBuilder.arg() で argv に追加される（シェル injection なし、プロセス API レベル）。
+   */
+  args?: string[];
   env?: Record<string, string>;
   status: TabStatus;
   /**
@@ -66,6 +71,11 @@ export interface Favorite {
   title: string;
   shell?: string;
   cwd?: string;
+  /**
+   * shell 起動時の引数配列。空配列 / undefined は引数なし。
+   * Rust 側 CommandBuilder.arg() で argv に追加される（シェル injection なし、プロセス API レベル）。
+   */
+  args?: string[];
   env?: Record<string, string>;
   /** spawn されるタブのデフォルト名テンプレート */
   defaultTabTitle?: string;
@@ -103,7 +113,7 @@ export interface Settings {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, env}, favorites, settings
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

@@ -11,6 +11,42 @@ describe('findTemplate', () => {
     expect(result!.shell).toBe('wsl.exe');
   });
 
+  it("WSL テンプレの args が ['--cd', '~'] であること", () => {
+    const result = findTemplate('wsl');
+    expect(result).not.toBeNull();
+    expect(result!.args).toEqual(['--cd', '~']);
+  });
+
+  it("Git Bash テンプレの args が ['--login', '-i'] であること", () => {
+    const result = findTemplate('gitbash');
+    expect(result).not.toBeNull();
+    expect(result!.args).toEqual(['--login', '-i']);
+  });
+
+  it("PowerShell 5.1 テンプレの args が ['-NoLogo'] であること", () => {
+    const result = findTemplate('pwsh5');
+    expect(result).not.toBeNull();
+    expect(result!.args).toEqual(['-NoLogo']);
+  });
+
+  it("PowerShell 7+ テンプレの args が ['-NoLogo'] であること", () => {
+    const result = findTemplate('pwsh7');
+    expect(result).not.toBeNull();
+    expect(result!.args).toEqual(['-NoLogo']);
+  });
+
+  it("cmd テンプレには args が undefined であること", () => {
+    const result = findTemplate('cmd');
+    expect(result).not.toBeNull();
+    expect(result!.args).toBeUndefined();
+  });
+
+  it("Nushell テンプレには args が undefined であること", () => {
+    const result = findTemplate('nushell');
+    expect(result).not.toBeNull();
+    expect(result!.args).toBeUndefined();
+  });
+
   it("findTemplate('unknown') で null が返る", () => {
     expect(findTemplate('unknown')).toBeNull();
   });

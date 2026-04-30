@@ -16,6 +16,11 @@ export interface ProfileTemplate {
   title: string;
   /** shell の実行ファイルパス */
   shell: string;
+  /**
+   * shell 起動時の引数配列。空配列 / undefined は引数なし。
+   * 選択時に FavoriteDialog の argsText に自動入力される。
+   */
+  args?: string[];
 }
 
 /**
@@ -25,11 +30,11 @@ export interface ProfileTemplate {
  * @since Phase 4 P-I で追加
  */
 export const PROFILE_TEMPLATES: readonly ProfileTemplate[] = [
-  { id: 'wsl',     label: 'WSL',                       title: 'WSL',        shell: 'wsl.exe' },
-  { id: 'pwsh5',   label: 'Windows PowerShell (5.1)',  title: 'PowerShell', shell: 'powershell.exe' },
-  { id: 'pwsh7',   label: 'PowerShell 7+',             title: 'PowerShell', shell: 'pwsh.exe' },
+  { id: 'wsl',     label: 'WSL',                       title: 'WSL',        shell: 'wsl.exe',                                     args: ['--cd', '~'] },
+  { id: 'pwsh5',   label: 'Windows PowerShell (5.1)',  title: 'PowerShell', shell: 'powershell.exe',                              args: ['-NoLogo'] },
+  { id: 'pwsh7',   label: 'PowerShell 7+',             title: 'PowerShell', shell: 'pwsh.exe',                                    args: ['-NoLogo'] },
   { id: 'cmd',     label: 'Command Prompt',            title: 'cmd',        shell: 'cmd.exe' },
-  { id: 'gitbash', label: 'Git Bash',                  title: 'Git Bash',   shell: 'C:\\Program Files\\Git\\bin\\bash.exe' },
+  { id: 'gitbash', label: 'Git Bash',                  title: 'Git Bash',   shell: 'C:\\Program Files\\Git\\bin\\bash.exe',        args: ['--login', '-i'] },
   { id: 'nushell', label: 'Nushell (デフォルト)',      title: 'Nushell',    shell: 'nu' },
 ] as const;
 

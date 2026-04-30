@@ -125,6 +125,28 @@ describe('appStore', () => {
       expect(state.groups[0].tabIds).toContain(tabId);
       expect(state.tabs[tabId].groupId).toBe(group0Id);
     });
+
+    it('渡した args 配列を mutate しても tab.args は変わらない（shallow clone）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const args = ['--login', '--norc'];
+      const tabId = useAppStore.getState().createTab(groupId, { args });
+
+      // 元の配列を mutate
+      args.push('--extra');
+
+      expect(useAppStore.getState().tabs[tabId].args).toEqual(['--login', '--norc']);
+    });
+
+    it('渡した env オブジェクトを mutate しても tab.env は変わらない（shallow clone）', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const env: Record<string, string> = { FOO: 'bar' };
+      const tabId = useAppStore.getState().createTab(groupId, { env });
+
+      // 元のオブジェクトを mutate
+      env['BAZ'] = 'qux';
+
+      expect(useAppStore.getState().tabs[tabId].env).toEqual({ FOO: 'bar' });
+    });
   });
 
   // --- startEditing / stopEditing ---
@@ -1809,5 +1831,165 @@ describe('persist migrate v0 → v1', () => {
     // version >= 1 では title→userTitle 変換を行わない
     expect(migrated.tabs.t1.title).toBe('ShouldNotChange');
     expect(migrated.tabs.t1.userTitle).toBeUndefined();
+  });
+
+  it('version 2 ならパススルー (args は undefined のまま)', () => {
+    const opts = useAppStore.persist.getOptions();
+    const state = {
+      tabs: { t1: { id: 't1', groupId: 'g1', userTitle: 'Tab1' } },
+    };
+    const migrated = opts.migrate!(state, 2) as Record<string, any>;
+    // v2→v3: data 変換不要 (args は optional で undefined のまま)
+    expect(migrated.tabs.t1.args).toBeUndefined();
+  });
+});
+
+// --- args 関連テスト ---
+
+describe('args 対応 (P4-J)', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      contextMenuOpen: false,
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+        transparency: 1.0,
+      },
+    });
+    vi.clearAllMocks();
+  });
+
+  // --- createTab で args がセットされる ---
+  it('createTab: opts.args が tab.args にセットされる', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, {
+      title: 'WSL',
+      shell: 'wsl.exe',
+      args: ['--cd', '~'],
+    });
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.args).toEqual(['--cd', '~']);
+  });
+
+  it('createTab: opts.args が未指定のとき tab.args は undefined', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+    expect(useAppStore.getState().tabs[tabId].args).toBeUndefined();
+  });
+
+  // --- addFavorite で args が永続化される ---
+  it('addFavorite: args が永続化される', () => {
+    const favId = useAppStore.getState().addFavorite({
+      title: 'WSL',
+      shell: 'wsl.exe',
+      args: ['--cd', '~'],
+    });
+    const fav = useAppStore.getState().favorites.find((f) => f.id === favId);
+    expect(fav?.args).toEqual(['--cd', '~']);
+  });
+
+  it('addFavorite: args はシャローコピーされる（元の参照と独立）', () => {
+    const args = ['--cd', '~'];
+    const favId = useAppStore.getState().addFavorite({ title: 'WSL', args });
+    // 元配列を変更
+    args.push('--extra');
+    const fav = useAppStore.getState().favorites.find((f) => f.id === favId);
+    // ストア内の args は変更前の値を保持する
+    expect(fav?.args).toEqual(['--cd', '~']);
+  });
+
+  it('addFavorite: args が undefined の場合は undefined のまま', () => {
+    const favId = useAppStore.getState().addFavorite({ title: 'Y' });
+    const fav = useAppStore.getState().favorites.find((f) => f.id === favId);
+    expect(fav?.args).toBeUndefined();
+  });
+
+  // --- spawnFavorite で args が tab に伝播 ---
+  it('spawnFavorite: args が tab に伝播する', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({
+      title: 'WSL',
+      shell: 'wsl.exe',
+      args: ['--cd', '~'],
+    });
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+    const tab = useAppStore.getState().tabs[tabId!];
+    expect(tab.args).toEqual(['--cd', '~']);
+  });
+
+  it('spawnFavorite: args は shallow clone で独立性がある', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({
+      title: 'WSL',
+      args: ['--cd', '~'],
+    });
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+
+    // fav.args を直接変更
+    useAppStore.setState((s) => ({
+      favorites: s.favorites.map((f) =>
+        f.id === favId ? { ...f, args: ['--changed'] } : f,
+      ),
+    }));
+
+    // 既に作成されたタブの args は変更前の値を保持する
+    const tab = useAppStore.getState().tabs[tabId!];
+    expect(tab.args).toEqual(['--cd', '~']);
+  });
+
+  it('spawnFavorite: args が undefined の場合は undefined のまま', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({ title: 'Z' });
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+    expect(useAppStore.getState().tabs[tabId!].args).toBeUndefined();
+  });
+
+  // --- duplicateTab で args が複製される ---
+  it('duplicateTab: args が複製される（shallow clone で独立性あり）', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, {
+      title: 'WSL',
+      args: ['--cd', '~'],
+    });
+    const newTabId = useAppStore.getState().duplicateTab(tabId);
+    const newTab = useAppStore.getState().tabs[newTabId!];
+    expect(newTab.args).toEqual(['--cd', '~']);
+
+    // 元タブの args を変更しても複製タブに影響しない
+    useAppStore.setState((s) => ({
+      tabs: {
+        ...s.tabs,
+        [tabId]: { ...s.tabs[tabId], args: ['--changed'] },
+      },
+    }));
+    // 複製タブの args は変更前の値を保持する
+    expect(useAppStore.getState().tabs[newTabId!].args).toEqual(['--cd', '~']);
+  });
+
+  it('duplicateTab: args が undefined の場合は undefined のまま', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, { title: 'T' });
+    const newTabId = useAppStore.getState().duplicateTab(tabId);
+    expect(useAppStore.getState().tabs[newTabId!].args).toBeUndefined();
+  });
+
+  // --- partialize: args が永続化対象であること ---
+  it('partialize: tab.args が保存される', () => {
+    const groupId = useAppStore.getState().createGroup();
+    const tabId = useAppStore.getState().createTab(groupId, {
+      title: 'WSL',
+      args: ['--cd', '~'],
+    });
+
+    const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState());
+    const serializedTab = (partializeResult as { tabs: Record<string, unknown> }).tabs[tabId];
+    expect((serializedTab as Record<string, unknown>).args).toEqual(['--cd', '~']);
   });
 });

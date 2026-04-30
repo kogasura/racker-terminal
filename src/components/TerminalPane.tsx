@@ -239,6 +239,27 @@ export const TerminalPane = memo(function TerminalPane({
         return false;
       }
 
+      // Ctrl+T: 既定タブを開く (Ctrl+Shift+T は予約)
+      // Phase 4 P-H で追加。
+      if (!e.shiftKey && e.code === 'KeyT') {
+        e.preventDefault();
+        useAppStore.getState().spawnDefaultOrNew();
+        return false;
+      }
+
+      // Ctrl+Shift+1..9: お気に入り index 0..8 を開く
+      // e.code は 'Digit1'..'Digit9' / 'Numpad1'..'Numpad9' を許容する。
+      // Phase 4 P-H で追加。
+      if (e.shiftKey) {
+        const m = e.code.match(/^(?:Digit|Numpad)([1-9])$/);
+        if (m) {
+          e.preventDefault();
+          const idx = parseInt(m[1], 10) - 1;  // 1-9 → 0-8
+          useAppStore.getState().spawnFavoriteByIndex(idx);
+          return false;
+        }
+      }
+
       return true;
     };
 

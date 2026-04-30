@@ -249,6 +249,29 @@ interface AppActions {
    * applySettings broadcast 機構経由で全 runtime に反映される。
    */
   updateSettings: (patch: Partial<Settings>) => void;
+
+  /**
+   * 既定お気に入りを設定する (null で解除)。
+   * 存在しない favId が渡された場合は no-op。
+   * Phase 4 P-H で追加。
+   */
+  setDefaultFavorite: (favId: string | null) => void;
+
+  /**
+   * 既定お気に入りで新規タブを spawn する。
+   * - settings.defaultFavoriteId が設定されていて、その favorite が存在する → spawnFavorite を呼ぶ
+   * - そうでなければ createTab(undefined, { userTitle: 'Terminal' }) で plain タブを作成
+   * - 返り値: 作成したタブの ID
+   * Phase 4 P-H で追加。
+   */
+  spawnDefaultOrNew: () => string;
+
+  /**
+   * index 番目 (0-indexed) のお気に入りで新規タブを spawn する。
+   * - 存在しない index は null を返す
+   * Phase 4 P-H で追加。
+   */
+  spawnFavoriteByIndex: (index: number) => string | null;
 }
 
 type Store = AppState & AppActions;
@@ -276,9 +299,16 @@ export const useAppStore = create<Store>()(
   },
 
   removeFavorite: (favId) => {
-    set((state) => ({
-      favorites: state.favorites.filter((f) => f.id !== favId),
-    }));
+    set((state) => {
+      const isDefault = state.settings.defaultFavoriteId === favId;
+      return {
+        favorites: state.favorites.filter((f) => f.id !== favId),
+        // 削除対象が defaultFavoriteId と一致する場合は併せてクリアする (R3)
+        settings: isDefault
+          ? { ...state.settings, defaultFavoriteId: undefined }
+          : state.settings,
+      };
+    });
   },
 
   updateFavorite: (favId, patch) =>
@@ -616,10 +646,43 @@ export const useAppStore = create<Store>()(
 
   updateSettings: (patch) =>
     set((state) => ({ settings: { ...state.settings, ...patch } })),
+
+  setDefaultFavorite: (favId) => {
+    set((state) => {
+      // null の場合は解除
+      if (favId === null) {
+        return { settings: { ...state.settings, defaultFavoriteId: undefined } };
+      }
+      // 存在しない favId は no-op
+      if (!state.favorites.some((f) => f.id === favId)) return {};
+      return { settings: { ...state.settings, defaultFavoriteId: favId } };
+    });
+  },
+
+  spawnDefaultOrNew: () => {
+    const state = get();
+    const { defaultFavoriteId } = state.settings;
+    if (defaultFavoriteId) {
+      const fav = state.favorites.find((f) => f.id === defaultFavoriteId);
+      if (fav) {
+        const tabId = state.spawnFavorite(defaultFavoriteId);
+        // spawnFavorite は favorite が存在する場合必ず string を返す
+        return tabId as string;
+      }
+    }
+    // defaultFavoriteId 未設定 or favorite が削除済 → plain Terminal タブ
+    return get().createTab(undefined, { userTitle: 'Terminal' });
+  },
+
+  spawnFavoriteByIndex: (index) => {
+    const { favorites } = get();
+    if (index < 0 || index >= favorites.length) return null;
+    return get().spawnFavorite(favorites[index].id);
+  },
     }),
     {
       name: 'racker-terminal',
-      version: 1,
+      version: 2,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -658,7 +721,10 @@ export const useAppStore = create<Store>()(
           }
         }
 
-        // 将来: if (version < 2) { ... } をここに追加
+        // v1 → v2: settings.defaultFavoriteId は optional で追加のみ。データ変換不要
+        if (version < 2) {
+          // データ変換不要 (defaultFavoriteId は undefined のままで OK)
+        }
 
         return state;
       },

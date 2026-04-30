@@ -1036,6 +1036,149 @@ describe('appStore', () => {
       expect(settings.transparency).toBe(0.9);
     });
   });
+
+  // --- setDefaultFavorite ---
+  describe('setDefaultFavorite', () => {
+    it('有効な favId を渡すと settings.defaultFavoriteId が更新される', () => {
+      const favId = useAppStore.getState().addFavorite({ title: 'WSL' });
+      useAppStore.getState().setDefaultFavorite(favId);
+      expect(useAppStore.getState().settings.defaultFavoriteId).toBe(favId);
+    });
+
+    it('null を渡すと settings.defaultFavoriteId が undefined になる', () => {
+      const favId = useAppStore.getState().addFavorite({ title: 'WSL' });
+      useAppStore.getState().setDefaultFavorite(favId);
+      useAppStore.getState().setDefaultFavorite(null);
+      expect(useAppStore.getState().settings.defaultFavoriteId).toBeUndefined();
+    });
+
+    it('存在しない favId は no-op（settings が変わらない）', () => {
+      const settingsBefore = useAppStore.getState().settings;
+      useAppStore.getState().setDefaultFavorite('non-existent-fav');
+      expect(useAppStore.getState().settings).toBe(settingsBefore);
+    });
+  });
+
+  // --- removeFavorite (defaultFavoriteId クリア) ---
+  describe('removeFavorite — defaultFavoriteId のクリア', () => {
+    it('削除対象が defaultFavoriteId と一致する場合、defaultFavoriteId が undefined になる', () => {
+      const favId = useAppStore.getState().addFavorite({ title: 'WSL' });
+      useAppStore.getState().setDefaultFavorite(favId);
+      expect(useAppStore.getState().settings.defaultFavoriteId).toBe(favId);
+
+      useAppStore.getState().removeFavorite(favId);
+
+      expect(useAppStore.getState().settings.defaultFavoriteId).toBeUndefined();
+      expect(useAppStore.getState().favorites).toHaveLength(0);
+    });
+
+    it('削除対象が defaultFavoriteId と異なる場合、defaultFavoriteId は変わらない', () => {
+      const fav1 = useAppStore.getState().addFavorite({ title: 'WSL' });
+      const fav2 = useAppStore.getState().addFavorite({ title: 'PowerShell' });
+      useAppStore.getState().setDefaultFavorite(fav1);
+
+      useAppStore.getState().removeFavorite(fav2);
+
+      expect(useAppStore.getState().settings.defaultFavoriteId).toBe(fav1);
+      expect(useAppStore.getState().favorites).toHaveLength(1);
+    });
+  });
+
+  // --- spawnDefaultOrNew ---
+  describe('spawnDefaultOrNew', () => {
+    it('defaultFavoriteId 未設定時は plain Terminal タブが作成される', () => {
+      useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().spawnDefaultOrNew();
+
+      expect(tabId).toBeTruthy();
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab).toBeDefined();
+      expect(tab.userTitle).toBe('Terminal');
+      expect(tab.shell).toBeUndefined();
+    });
+
+    it('defaultFavoriteId が設定されていて favorite が存在する場合、その favorite で spawn される', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({
+        title: 'WSL',
+        shell: 'wsl.exe',
+        cwd: '/home/user',
+        env: { WSL_DISTRO: 'Ubuntu' },
+      });
+      useAppStore.getState().setDefaultFavorite(favId);
+
+      const tabId = useAppStore.getState().spawnDefaultOrNew();
+
+      expect(tabId).toBeTruthy();
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab).toBeDefined();
+      expect(tab.shell).toBe('wsl.exe');
+      expect(tab.cwd).toBe('/home/user');
+      expect(tab.env).toEqual({ WSL_DISTRO: 'Ubuntu' });
+    });
+
+    it('defaultFavoriteId が設定されていても favorite が削除済の場合は plain Terminal タブ', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({ title: 'WSL', shell: 'wsl.exe' });
+      // settings に直接 defaultFavoriteId をセットして favorite が存在しない状態を作る
+      useAppStore.setState((s) => ({
+        settings: { ...s.settings, defaultFavoriteId: favId },
+        favorites: [],  // favorites を空にして「削除済」を模倣
+      }));
+
+      const tabId = useAppStore.getState().spawnDefaultOrNew();
+
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab.userTitle).toBe('Terminal');
+      expect(tab.shell).toBeUndefined();
+    });
+  });
+
+  // --- spawnFavoriteByIndex ---
+  describe('spawnFavoriteByIndex', () => {
+    it('index 0 で favorites[0] の favorite が spawn される', () => {
+      useAppStore.getState().createGroup();
+      const fav0 = useAppStore.getState().addFavorite({ title: 'WSL', shell: 'wsl.exe' });
+      useAppStore.getState().addFavorite({ title: 'PowerShell', shell: 'pwsh.exe' });
+
+      const tabId = useAppStore.getState().spawnFavoriteByIndex(0);
+
+      expect(tabId).toBeTruthy();
+      const tab = useAppStore.getState().tabs[tabId!];
+      expect(tab.shell).toBe('wsl.exe');
+      const fav = useAppStore.getState().favorites.find((f) => f.id === fav0);
+      expect(tab.userTitle).toBe(fav?.defaultTabTitle ?? fav?.title);
+    });
+
+    it('index 1 で favorites[1] の favorite が spawn される', () => {
+      useAppStore.getState().createGroup();
+      useAppStore.getState().addFavorite({ title: 'WSL', shell: 'wsl.exe' });
+      useAppStore.getState().addFavorite({ title: 'PowerShell', shell: 'pwsh.exe' });
+
+      const tabId = useAppStore.getState().spawnFavoriteByIndex(1);
+
+      expect(tabId).toBeTruthy();
+      const tab = useAppStore.getState().tabs[tabId!];
+      expect(tab.shell).toBe('pwsh.exe');
+    });
+
+    it('favorites が空の場合は null を返す', () => {
+      const result = useAppStore.getState().spawnFavoriteByIndex(0);
+      expect(result).toBeNull();
+    });
+
+    it('index が favorites.length 以上の場合は null を返す', () => {
+      useAppStore.getState().addFavorite({ title: 'WSL' });
+      const result = useAppStore.getState().spawnFavoriteByIndex(1);
+      expect(result).toBeNull();
+    });
+
+    it('index が負の場合は null を返す', () => {
+      useAppStore.getState().addFavorite({ title: 'WSL' });
+      const result = useAppStore.getState().spawnFavoriteByIndex(-1);
+      expect(result).toBeNull();
+    });
+  });
 });
 
 // --- selectFallbackTab ---

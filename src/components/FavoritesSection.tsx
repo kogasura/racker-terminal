@@ -16,15 +16,19 @@ type DialogState =
 /** B2: お気に入りアイテムを D&D 並び替え可能にする sortable ラッパー */
 function SortableFavoriteItem({
   fav,
+  isDefault,
   onSpawn,
   onEdit,
   onRemove,
+  onSetDefault,
   onContextMenuOpen,
 }: {
   fav: Favorite;
+  isDefault: boolean;
   onSpawn: () => void;
   onEdit: () => void;
   onRemove: () => void;
+  onSetDefault: () => void;
   onContextMenuOpen: (open: boolean) => void;
 }) {
   // F-M6: kind は DRAG_KIND 定数経由で指定（typo を型レベルで検出）
@@ -37,6 +41,12 @@ function SortableFavoriteItem({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+
+  const iconClass = isDefault
+    ? 'favorite-item__icon favorite-item__icon--default'
+    : 'favorite-item__icon';
+  const icon = isDefault ? '⭐' : '★';
+  const titleAttr = isDefault ? `${fav.title} (既定)` : fav.title;
 
   return (
     <ContextMenu.Root onOpenChange={onContextMenuOpen}>
@@ -55,8 +65,9 @@ function SortableFavoriteItem({
           // role と tabIndex は attributes に含まれるため、明示指定は attributes スプレッドの後に置く
           role="button"
           tabIndex={0}
+          title={titleAttr}
         >
-          <span className="favorite-item__icon">★</span>
+          <span className={iconClass}>{icon}</span>
           <span className="favorite-item__title">{fav.title}</span>
         </div>
       </ContextMenu.Trigger>
@@ -79,6 +90,16 @@ function SortableFavoriteItem({
 
           <ContextMenu.Separator className="context-menu__separator" />
 
+          {/* Phase 4 P-H: 既定として設定 / 既定を解除 */}
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={onSetDefault}
+          >
+            {isDefault ? '既定を解除' : '既定として設定'}
+          </ContextMenu.Item>
+
+          <ContextMenu.Separator className="context-menu__separator" />
+
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={onRemove}
@@ -97,11 +118,14 @@ export const FavoritesSection = memo(function FavoritesSection() {
 
   // favorites 配列のみ subscribe（id/title/shell 等の変化のみで再レンダー）
   const favorites = useAppStore(useShallow((s) => s.favorites));
+  // defaultFavoriteId を subscribe
+  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
   const spawnFavorite = useAppStore((s) => s.spawnFavorite);
   const removeFavorite = useAppStore((s) => s.removeFavorite);
   const addFavorite = useAppStore((s) => s.addFavorite);
   const updateFavorite = useAppStore((s) => s.updateFavorite);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
+  const setDefaultFavorite = useAppStore((s) => s.setDefaultFavorite);
 
   return (
     <div className="favorites-section">
@@ -131,16 +155,24 @@ export const FavoritesSection = memo(function FavoritesSection() {
               items={favorites.map((f) => f.id)}
               strategy={verticalListSortingStrategy}
             >
-              {favorites.map((fav) => (
-                <SortableFavoriteItem
-                  key={fav.id}
-                  fav={fav}
-                  onSpawn={() => spawnFavorite(fav.id)}
-                  onEdit={() => setDialogState({ mode: 'edit', favorite: fav })}
-                  onRemove={() => removeFavorite(fav.id)}
-                  onContextMenuOpen={(open) => setContextMenuOpen(open)}
-                />
-              ))}
+              {favorites.map((fav) => {
+                const isDefault = fav.id === defaultFavoriteId;
+                return (
+                  <SortableFavoriteItem
+                    key={fav.id}
+                    fav={fav}
+                    isDefault={isDefault}
+                    onSpawn={() => spawnFavorite(fav.id)}
+                    onEdit={() => setDialogState({ mode: 'edit', favorite: fav })}
+                    onRemove={() => removeFavorite(fav.id)}
+                    onSetDefault={() => {
+                      // 既定なら解除、そうでなければ設定
+                      setDefaultFavorite(isDefault ? null : fav.id);
+                    }}
+                    onContextMenuOpen={(open) => setContextMenuOpen(open)}
+                  />
+                );
+              })}
             </SortableContext>
           )}
 

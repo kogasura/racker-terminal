@@ -88,6 +88,12 @@ export interface Settings {
    * Phase 4 P-B-2 で追加。
    */
   transparency?: number;  // default: 1.0 (不透明)
+  /**
+   * 既定として使うお気に入り ID。+ ボタン / Ctrl+T で spawn される。
+   * 未設定 or 該当 favorite が存在しない場合は plain Terminal タブを spawn。
+   * Phase 4 P-H で追加。
+   */
+  defaultFavoriteId?: string;
 }
 
 /**

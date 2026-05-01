@@ -36,7 +36,11 @@ export async function checkForUpdate(): Promise<UpdateAvailable | null> {
   }
 }
 
-export async function downloadAndInstall(
+/**
+ * ダウンロードのみ実行する。完了したら resolve する。
+ * Update._handle.download() を使用し、インストールは行わない。
+ */
+export async function downloadUpdate(
   update: UpdateAvailable,
   onProgress: (p: DownloadProgress) => void,
 ): Promise<void> {
@@ -44,7 +48,7 @@ export async function downloadAndInstall(
   let contentLength: number | undefined;
 
   // event.event が discriminator (DownloadEvent 型定義確認済み)
-  await update._handle.downloadAndInstall((event) => {
+  await update._handle.download((event) => {
     switch (event.event) {
       case 'Started':
         contentLength = event.data.contentLength;
@@ -68,6 +72,17 @@ export async function downloadAndInstall(
         break;
     }
   });
+}
+
+/**
+ * インストールして再起動する。downloadUpdate() 完了後に呼ぶ。
+ * Update._handle.install() を呼んでから relaunch() する。
+ */
+export async function installAndRelaunch(
+  update: UpdateAvailable,
+): Promise<void> {
+  await update._handle.install();
+  await relaunch();
 }
 
 export async function relaunchApp(): Promise<void> {

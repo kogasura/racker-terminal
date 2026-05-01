@@ -107,19 +107,19 @@ export interface Settings {
 }
 
 /**
- * 自動更新機能の状態フェーズ。
+ * 自動更新機能の状態フェーズ (Chrome 風バックグラウンド DL フロー)。
  * idle: 未チェック / 更新なし / リセット後
  * checking: check() 実行中
- * available: 更新あり、ユーザー承認待ち
- * downloading: ダウンロード中
- * installing: インストール中 / relaunch 待ち
+ * downloading: バックグラウンド DL 中（UI には出ない）
+ * ready: DL 完了、再起動待ち（バッジ表示対象）
+ * installing: 再起動 + インストール中
  * error: エラー発生 (リトライ可能)
  */
 export type UpdatePhase =
   | 'idle'
   | 'checking'
-  | 'available'
   | 'downloading'
+  | 'ready'
   | 'installing'
   | 'error';
 

@@ -49,14 +49,14 @@ export function TitleBar() {
         Racker Terminal
       </div>
 
-      {/* 自動更新バッジ */}
-      {updatePhase !== 'idle' && updatePhase !== 'checking' && (
+      {/* 自動更新バッジ: ready または error のときのみ表示 (downloading 中は無音) */}
+      {(updatePhase === 'ready' || updatePhase === 'error') && (
         <button
           type="button"
           className="title-bar__update-badge"
           onClick={openUpdateDialog}
-          aria-label="アップデートが利用可能"
-          title={updatePhase === 'error' ? 'アップデートエラー' : 'アップデートあり'}
+          aria-label={updatePhase === 'error' ? 'アップデートエラー' : '再起動して更新を適用'}
+          title={updatePhase === 'error' ? 'アップデートエラー' : '再起動して更新を適用'}
         >
           {updatePhase === 'error' ? '!' : '↑'}
         </button>

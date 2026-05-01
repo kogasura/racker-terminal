@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-process', () => ({
 
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { checkForUpdate, downloadAndInstall, relaunchApp } from './updater';
+import { checkForUpdate, downloadUpdate, installAndRelaunch, relaunchApp } from './updater';
 
 describe('updater', () => {
   beforeEach(() => {
@@ -25,7 +25,8 @@ describe('updater', () => {
         currentVersion: '1.1.0',
         body: 'Bug fixes and improvements',
         date: '2026-05-01T00:00:00Z',
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
       };
       vi.mocked(check).mockResolvedValueOnce(mockHandle as any);
 
@@ -61,7 +62,8 @@ describe('updater', () => {
         currentVersion: '1.1.0',
         body: undefined,
         date: undefined,
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
       };
       vi.mocked(check).mockResolvedValueOnce(mockHandle as any);
 
@@ -72,16 +74,17 @@ describe('updater', () => {
     });
   });
 
-  describe('downloadAndInstall', () => {
+  describe('downloadUpdate', () => {
     it('Started → Progress (複数回) → Finished のイベントで onProgress が正しく呼ばれる', async () => {
       const onProgress = vi.fn();
       const mockHandle = {
-        downloadAndInstall: vi.fn().mockImplementation(async (onEvent: (e: any) => void) => {
+        download: vi.fn().mockImplementation(async (onEvent: (e: any) => void) => {
           onEvent({ event: 'Started', data: { contentLength: 1000 } });
           onEvent({ event: 'Progress', data: { chunkLength: 300 } });
           onEvent({ event: 'Progress', data: { chunkLength: 700 } });
           onEvent({ event: 'Finished' });
         }),
+        install: vi.fn(),
       };
       const update = {
         version: '1.2.0',
@@ -90,7 +93,7 @@ describe('updater', () => {
         _handle: mockHandle as any,
       };
 
-      await downloadAndInstall(update, onProgress);
+      await downloadUpdate(update, onProgress);
 
       expect(onProgress).toHaveBeenCalledTimes(4);
 
@@ -126,11 +129,12 @@ describe('updater', () => {
     it('contentLength=undefined の場合は ratio が undefined になる', async () => {
       const onProgress = vi.fn();
       const mockHandle = {
-        downloadAndInstall: vi.fn().mockImplementation(async (onEvent: (e: any) => void) => {
+        download: vi.fn().mockImplementation(async (onEvent: (e: any) => void) => {
           onEvent({ event: 'Started', data: { contentLength: undefined } });
           onEvent({ event: 'Progress', data: { chunkLength: 500 } });
           onEvent({ event: 'Finished' });
         }),
+        install: vi.fn(),
       };
       const update = {
         version: '1.2.0',
@@ -139,7 +143,7 @@ describe('updater', () => {
         _handle: mockHandle as any,
       };
 
-      await downloadAndInstall(update, onProgress);
+      await downloadUpdate(update, onProgress);
 
       // Started: contentLength が undefined なので ratio は undefined
       expect(onProgress).toHaveBeenNthCalledWith(1, {
@@ -161,6 +165,44 @@ describe('updater', () => {
         downloaded: 500,
         contentLength: undefined,
       });
+    });
+  });
+
+  describe('installAndRelaunch', () => {
+    it('update._handle.install() と relaunch() が呼ばれる', async () => {
+      const mockHandle = {
+        install: vi.fn().mockResolvedValueOnce(undefined),
+      };
+      vi.mocked(relaunch).mockResolvedValueOnce(undefined);
+
+      const update = {
+        version: '1.2.0',
+        currentVersion: '1.1.0',
+        notes: '',
+        _handle: mockHandle as any,
+      };
+
+      await installAndRelaunch(update);
+
+      expect(mockHandle.install).toHaveBeenCalledTimes(1);
+      expect(relaunch).toHaveBeenCalledTimes(1);
+    });
+
+    it('install() が reject した場合は relaunch() を呼ばない', async () => {
+      const mockHandle = {
+        install: vi.fn().mockRejectedValueOnce(new Error('install failed')),
+      };
+      vi.mocked(relaunch).mockResolvedValueOnce(undefined);
+
+      const update = {
+        version: '1.2.0',
+        currentVersion: '1.1.0',
+        notes: '',
+        _handle: mockHandle as any,
+      };
+
+      await expect(installAndRelaunch(update)).rejects.toThrow('install failed');
+      expect(relaunch).not.toHaveBeenCalled();
     });
   });
 

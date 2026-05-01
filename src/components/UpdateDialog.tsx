@@ -6,14 +6,18 @@ export function UpdateDialog() {
   const open = useAppStore((s) => s.updateDialogOpen);
   const info = useAppStore((s) => s.updateInfo);
   const phase = useAppStore((s) => s.updatePhase);
-  const progress = useAppStore((s) => s.updateProgress);
   const error = useAppStore((s) => s.updateError);
   const close = useAppStore((s) => s.closeUpdateDialog);
-  const start = useAppStore((s) => s.startUpdateInstall);
+  const apply = useAppStore((s) => s.applyUpdate);
+
+  // idle / checking / downloading のときは Dialog を非表示にする
+  if (phase === 'idle' || phase === 'checking' || phase === 'downloading') {
+    return null;
+  }
 
   if (!info) return null;
 
-  const isBusy = phase === 'downloading' || phase === 'installing';
+  const isBusy = phase === 'installing';
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && isBusy) return;
@@ -32,7 +36,7 @@ export function UpdateDialog() {
             <button
               type="button"
               className="dialog-btn dialog-btn--submit"
-              onClick={() => void start()}
+              onClick={() => void apply()}
             >
               リトライ
             </button>
@@ -44,41 +48,12 @@ export function UpdateDialog() {
     if (phase === 'installing') {
       return (
         <p className="update-dialog__installing">
-          インストール中...再起動を待っています
+          再起動して新バージョンを起動します...
         </p>
       );
     }
 
-    if (phase === 'downloading') {
-      const hasRatio = progress >= 0;
-      return (
-        <>
-          <div className="update-dialog__progress">
-            {hasRatio ? (
-              <div
-                className="update-dialog__progress-bar"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            ) : (
-              <div className="update-dialog__progress-bar update-dialog__progress-bar--indeterminate" />
-            )}
-          </div>
-          <p className="update-dialog__progress-label">
-            {hasRatio ? `${Math.round(progress * 100)}%` : 'ダウンロード中...'}
-          </p>
-          <div className="dialog-actions">
-            <button type="button" className="dialog-btn dialog-btn--cancel" disabled>
-              あとで
-            </button>
-            <button type="button" className="dialog-btn dialog-btn--submit" disabled>
-              今すぐ更新
-            </button>
-          </div>
-        </>
-      );
-    }
-
-    // phase === 'available' (default)
+    // phase === 'ready': メイン UI
     return (
       <>
         {currentInfo.notes && (
@@ -93,9 +68,9 @@ export function UpdateDialog() {
           <button
             type="button"
             className="dialog-btn dialog-btn--submit"
-            onClick={() => void start()}
+            onClick={() => void apply()}
           >
-            今すぐ更新
+            今すぐ再起動
           </button>
         </div>
       </>
@@ -108,11 +83,12 @@ export function UpdateDialog() {
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="dialog-content">
           <Dialog.Title className="dialog-title">
-            アップデート {info.version} が利用可能
+            アップデートが利用可能です ({info.currentVersion} → {info.version})
           </Dialog.Title>
           <Dialog.Description className="dialog-description">
-            現在のバージョン: {info.currentVersion}
-            {info.date ? ` — リリース: ${info.date}` : ''}
+            {phase === 'ready'
+              ? '新しいバージョンのダウンロードが完了しました。再起動して適用しますか?'
+              : `現在のバージョン: ${info.currentVersion}${info.date ? ` — リリース: ${info.date}` : ''}`}
           </Dialog.Description>
           {renderBody(info)}
         </Dialog.Content>

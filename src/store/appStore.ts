@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AppState, Favorite, Group, Settings, Tab, TabStatus, UpdatePhase } from '../types';
+import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
-import { checkForUpdate, downloadAndInstall, relaunchApp, type UpdateAvailable } from '../lib/updater';
+import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
 
 // Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
 let pendingUpdateHandle: UpdateAvailable | null = null;
@@ -288,7 +288,7 @@ interface AppActions {
   // --- updater アクション ---
   /**
    * 起動時に App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新があれば
-   * updatePhase を 'available' に遷移させる。
+   * バックグラウンドで自動 DL して updatePhase を 'ready' に遷移させる。
    * 再入防止: phase !== 'idle' のとき no-op。
    */
   runUpdateCheck: () => Promise<void>;
@@ -300,10 +300,11 @@ interface AppActions {
   closeUpdateDialog: () => void;
 
   /**
-   * ユーザーが更新を承認したときに呼ぶ。ダウンロード → インストール → relaunch を実行する。
-   * 再入防止: phase が 'available' でも 'error' でもないとき no-op。
+   * ユーザーが Dialog の「今すぐ再起動」をクリックして呼ぶ。
+   * インストール + relaunch を実行する。
+   * 再入防止: phase が 'ready' でも 'error' でもないとき no-op。
    */
-  startUpdateInstall: () => Promise<void>;
+  applyUpdate: () => Promise<void>;
 
   /**
    * エラー状態をリセットして idle に戻す。
@@ -740,77 +741,82 @@ export const useAppStore = create<Store>()(
   setWslDistros: (distros) => set({ wslDistros: distros }),
 
   runUpdateCheck: async () => {
-    const { updatePhase } = get();
-    // 再入防止ガード
-    if (updatePhase !== 'idle') return;
+    if (get().updatePhase !== 'idle') return;
 
-    set({ updatePhase: 'checking' });
-    const result = await checkForUpdate();
+    set({ updatePhase: 'checking', updateError: null });
+    const info = await checkForUpdate();
 
-    if (!result) {
-      set({ updatePhase: 'idle' });
+    if (!info) {
+      set({ updatePhase: 'idle', updateInfo: null });
       return;
     }
 
     // ハンドルをモジュールスコープに退避し、state には含めない
-    pendingUpdateHandle = result;
-    set({
-      updatePhase: 'available',
-      updateInfo: {
-        version: result.version,
-        currentVersion: result.currentVersion,
-        notes: result.notes,
-        date: result.date,
-      },
-    });
+    pendingUpdateHandle = info;
+    const { _handle, ...persistableInfo } = info;
+    set({ updateInfo: persistableInfo, updatePhase: 'downloading', updateProgress: 0 });
+
+    // 自動でバックグラウンド DL を開始する（ユーザー承認なし）
+    try {
+      await downloadUpdate(info, (p) => {
+        const next = p.ratio ?? -1;
+        const prev = get().updateProgress;
+        // クオンタイズ (1% 単位): 不明 ↔ 既知の遷移、または 1% 以上変化したときのみ更新
+        if ((next < 0 && prev >= 0) || (next >= 0 && prev < 0) || (next >= 0 && Math.abs(next - prev) >= 0.01)) {
+          set({ updateProgress: next });
+        }
+      });
+      set({ updatePhase: 'ready' });
+    } catch (e) {
+      // バックグラウンド失敗はユーザーに見せず idle に戻して次回起動でリトライ (Chrome 流)
+      console.warn('[updater] background download failed:', e);
+      // DL 中に外部から phase が変更されていた場合は上書きしない
+      if (get().updatePhase === 'downloading') {
+        pendingUpdateHandle = null;
+        set({ updatePhase: 'idle', updateInfo: null, updateProgress: 0 });
+      }
+    }
   },
 
   openUpdateDialog: () => set({ updateDialogOpen: true }),
 
-  closeUpdateDialog: () =>
-    set((state) =>
-      state.updatePhase === 'error'
-        ? { updateDialogOpen: false, updatePhase: 'idle' as UpdatePhase, updateError: null }
-        : { updateDialogOpen: false }
-    ),
+  closeUpdateDialog: () => set({ updateDialogOpen: false }),
 
-  startUpdateInstall: async () => {
-    const { updatePhase } = get();
-    // 再入防止ガード: available または error のときのみ実行
-    if (updatePhase !== 'available' && updatePhase !== 'error') return;
-
+  applyUpdate: async () => {
+    const phase = get().updatePhase;
+    // 再入防止ガード: ready または error のときのみ実行
+    if (phase !== 'ready' && phase !== 'error') return;
     if (!pendingUpdateHandle) {
-      set({ updatePhase: 'error', updateError: '更新ハンドルが失われました。アプリを再起動してください。' });
+      set({
+        updatePhase: 'error',
+        updateError: '更新ハンドルが失われました。アプリを再起動してください。',
+      });
       return;
     }
 
-    set({ updatePhase: 'downloading', updateProgress: 0, updateError: null });
+    set({ updatePhase: 'installing', updateError: null });
 
     try {
-      await downloadAndInstall(pendingUpdateHandle, (p) => {
-        const next = p.ratio ?? -1;
-        const prev = get().updateProgress;
-        // 1% 以上変化したか、不明 ↔ 既知の遷移時のみ更新 (再レンダ削減)
-        if (next < 0 && prev >= 0) {
-          set({ updateProgress: next });
-        } else if (next >= 0 && prev < 0) {
-          set({ updateProgress: next });
-        } else if (next >= 0 && Math.abs(next - prev) >= 0.01) {
-          set({ updateProgress: next });
-        }
-        // それ以外は更新スキップ
-      });
-
-      set({ updatePhase: 'installing', updateProgress: 1 });
-
-      await relaunchApp();
+      await installAndRelaunch(pendingUpdateHandle);
+      // relaunch 後は到達しない
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      set({ updatePhase: 'error', updateError: message });
+      set({
+        updatePhase: 'error',
+        updateError: (e as Error)?.message ?? String(e),
+      });
     }
   },
 
-  resetUpdateError: () => set({ updatePhase: 'idle', updateError: null }),
+  resetUpdateError: () => {
+    pendingUpdateHandle = null;
+    set({
+      updatePhase: 'idle',
+      updateError: null,
+      updateInfo: null,
+      updateProgress: 0,
+      updateDialogOpen: false,
+    });
+  },
     }),
     {
       name: 'racker-terminal',

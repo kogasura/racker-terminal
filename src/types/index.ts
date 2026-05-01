@@ -135,6 +135,19 @@ export interface UpdateInfo {
 }
 
 /**
+ * 閉じたタブの復元用情報。
+ * id / status / ptyId / oscTitle は復元時に新規生成・初期化されるため保存しない。
+ */
+export interface ClosedTab {
+  groupId: string;
+  userTitle?: string;
+  shell?: string;
+  cwd?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/**
  * アプリケーション全体の状態型（Zustand store の型）。
  * アクション（createTab / removeTab / setActiveTab 等）は Unit A1 / D+E で追加予定。
  * 本 Unit では型のみを定義する。
@@ -164,6 +177,13 @@ export interface AppState {
   /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
    *  Phase 4 P-K で追加。 */
   wslDistros: string[];
+
+  // --- closedTabs スタック (persist 対象外) ---
+  /**
+   * 閉じたタブの復元用スタック。最大 10 個。再起動でクリアされる。
+   * Ctrl+Shift+T で最新の閉じたタブを復元する。
+   */
+  closedTabs: ClosedTab[];
 
   // --- updater スライス (persist 対象外) ---
   /** 自動更新の新バージョン情報。利用可能な更新がない場合は null。 */

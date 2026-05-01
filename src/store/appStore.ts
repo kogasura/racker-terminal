@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import type { AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
 
 // Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
 let pendingUpdateHandle: UpdateAvailable | null = null;
+
+export const CLOSED_TABS_MAX = 10;
 
 const defaultSettings: Settings = {
   shell: undefined,
@@ -311,6 +313,14 @@ interface AppActions {
    * 更新ダイアログの「閉じる」ボタンから呼ぶ。
    */
   resetUpdateError: () => void;
+
+  /**
+   * 最後に閉じたタブを復元する。Ctrl+Shift+T から呼ぶ。
+   * - スタックが空 → null を返す (no-op)
+   * - 元グループが残っていればそこに、なければ groups[0] にフォールバック
+   * - 戻り値: 復元した tabId | null
+   */
+  restoreLastClosedTab: () => string | null;
 }
 
 type Store = AppState & AppActions;
@@ -326,6 +336,7 @@ export const useAppStore = create<Store>()(
   contextMenuOpen: false,
   settings: defaultSettings,
   wslDistros: [],
+  closedTabs: [],
   updateInfo: null,
   updatePhase: 'idle',
   updateProgress: 0,
@@ -469,6 +480,8 @@ export const useAppStore = create<Store>()(
 
     set((state) => {
       const removedTab = state.tabs[tabId];
+      if (!removedTab) return {};
+
       const newGroups = state.groups.map((g) => ({
         ...g,
         tabIds: g.tabIds.filter((id) => id !== tabId),
@@ -476,7 +489,7 @@ export const useAppStore = create<Store>()(
       const { [tabId]: _removed, ...newTabs } = state.tabs;
       const newActiveTabId =
         state.activeTabId === tabId
-          ? selectFallbackTab(removedTab?.groupId ?? '', newGroups)
+          ? selectFallbackTab(removedTab.groupId, newGroups)
           : state.activeTabId;
 
       // フォールバック先タブが折りたたみグループ内にあるとき自動展開する
@@ -487,7 +500,19 @@ export const useAppStore = create<Store>()(
 
       // M2: 削除対象タブが編集中だった場合は editingId をクリアする
       const newEditingId = state.editingId === tabId ? null : state.editingId;
-      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId, editingId: newEditingId };
+
+      // closedTabs に push（先頭追加、上限 CLOSED_TABS_MAX）
+      const closed: ClosedTab = {
+        groupId: removedTab.groupId,
+        userTitle: removedTab.userTitle,
+        shell: removedTab.shell,
+        cwd: removedTab.cwd,
+        args: removedTab.args ? [...removedTab.args] : undefined,
+        env: removedTab.env ? { ...removedTab.env } : undefined,
+      };
+      const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
+
+      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId, editingId: newEditingId, closedTabs: newClosedTabs };
     });
   },
 
@@ -817,6 +842,29 @@ export const useAppStore = create<Store>()(
       updateDialogOpen: false,
     });
   },
+
+  restoreLastClosedTab: () => {
+    const { closedTabs, groups } = get();
+    if (closedTabs.length === 0) return null;
+    const closed = closedTabs[0];
+
+    // 元グループの存在チェック → なければ groups[0]
+    const targetGroupId = groups.some((g) => g.id === closed.groupId)
+      ? closed.groupId
+      : groups[0]?.id;
+
+    // createTab を先に呼ぶ (失敗時はスタック保持してリトライ可能にする)
+    const newTabId = get().createTab(targetGroupId, {
+      userTitle: closed.userTitle,
+      shell: closed.shell,
+      cwd: closed.cwd,
+      args: closed.args ? [...closed.args] : undefined,
+      env: closed.env ? { ...closed.env } : undefined,
+    });
+    // 成功後にスタックから pop
+    set((s) => ({ closedTabs: s.closedTabs.slice(1) }));
+    return newTabId;
+  },
     }),
     {
       name: 'racker-terminal',
@@ -893,6 +941,7 @@ export const useAppStore = create<Store>()(
         // activeTabId / editingId / contextMenuOpen / wslDistros は OFF
         // updater 系 (updateInfo, updatePhase, updateProgress, updateError, updateDialogOpen)
         // は永続化対象外。再起動時はデフォルト値で初期化される。
+        // closedTabs は永続化対象外（再起動でクリア）。
       }),
       // F-M2: 復元時の整合性ガード
       onRehydrateStorage: () => (state) => {
@@ -940,6 +989,9 @@ export const useAppStore = create<Store>()(
         state.updateProgress = 0;
         state.updateError = null;
         state.updateDialogOpen = false;
+
+        // closedTabs は永続化対象外のため再起動時に明示初期化する
+        state.closedTabs = [];
       },
     },
   ),

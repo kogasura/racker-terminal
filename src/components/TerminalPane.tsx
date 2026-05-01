@@ -240,7 +240,14 @@ export const TerminalPane = memo(function TerminalPane({
         return false;
       }
 
-      // Ctrl+T: 既定タブを開く (Ctrl+Shift+T は予約)
+      // Ctrl+Shift+T: 閉じたタブを復元
+      if (e.shiftKey && e.code === 'KeyT') {
+        e.preventDefault();
+        useAppStore.getState().restoreLastClosedTab();
+        return false;
+      }
+
+      // Ctrl+T: 既定タブを開く (Ctrl+Shift+T は閉じたタブの復元)
       // Phase 4 P-H で追加。
       if (!e.shiftKey && e.code === 'KeyT') {
         e.preventDefault();

@@ -25,6 +25,10 @@ export function TitleBar() {
   const spawnDefaultOrNew = useAppStore((s) => s.spawnDefaultOrNew);
   const spawnFavorite = useAppStore((s) => s.spawnFavorite);
 
+  // 自動更新バッジ
+  const updatePhase = useAppStore((s) => s.updatePhase);
+  const openUpdateDialog = useAppStore((s) => s.openUpdateDialog);
+
   // data-tauri-drag-region フォールバック: 左クリックの mousedown でウィンドウドラッグを開始する。
   // ボタンクリック時は button.onClick が e.stopPropagation 相当の動作をしないので
   // target が button のときのみスキップする。
@@ -44,6 +48,19 @@ export function TitleBar() {
       <div className="title-bar__title" data-tauri-drag-region>
         Racker Terminal
       </div>
+
+      {/* 自動更新バッジ */}
+      {updatePhase !== 'idle' && updatePhase !== 'checking' && (
+        <button
+          type="button"
+          className="title-bar__update-badge"
+          onClick={openUpdateDialog}
+          aria-label="アップデートが利用可能"
+          title={updatePhase === 'error' ? 'アップデートエラー' : 'アップデートあり'}
+        >
+          {updatePhase === 'error' ? '!' : '↑'}
+        </button>
+      )}
 
       {/* 新規タブ split button */}
       <div className="title-bar__new-tab-group">

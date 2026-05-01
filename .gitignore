@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Tauri updater signing keys
+*.key
+*.key.pub
+*.pub
+
+# Local installer/manifest output
+dist-installer/
+latest.json

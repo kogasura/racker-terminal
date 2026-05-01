@@ -3,6 +3,10 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AppState, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
+import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
+
+// Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
+let pendingUpdateHandle: UpdateAvailable | null = null;
 
 const defaultSettings: Settings = {
   shell: undefined,
@@ -280,6 +284,33 @@ interface AppActions {
    * Phase 4 P-K で追加。
    */
   setWslDistros: (distros: string[]) => void;
+
+  // --- updater アクション ---
+  /**
+   * 起動時に App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新があれば
+   * バックグラウンドで自動 DL して updatePhase を 'ready' に遷移させる。
+   * 再入防止: phase !== 'idle' のとき no-op。
+   */
+  runUpdateCheck: () => Promise<void>;
+
+  /** 更新ダイアログを開く。 */
+  openUpdateDialog: () => void;
+
+  /** 更新ダイアログを閉じる。 */
+  closeUpdateDialog: () => void;
+
+  /**
+   * ユーザーが Dialog の「今すぐ再起動」をクリックして呼ぶ。
+   * インストール + relaunch を実行する。
+   * 再入防止: phase が 'ready' でも 'error' でもないとき no-op。
+   */
+  applyUpdate: () => Promise<void>;
+
+  /**
+   * エラー状態をリセットして idle に戻す。
+   * 更新ダイアログの「閉じる」ボタンから呼ぶ。
+   */
+  resetUpdateError: () => void;
 }
 
 type Store = AppState & AppActions;
@@ -295,6 +326,11 @@ export const useAppStore = create<Store>()(
   contextMenuOpen: false,
   settings: defaultSettings,
   wslDistros: [],
+  updateInfo: null,
+  updatePhase: 'idle',
+  updateProgress: 0,
+  updateError: null,
+  updateDialogOpen: false,
 
   addFavorite: (fav) => {
     const id = newId();
@@ -703,6 +739,84 @@ export const useAppStore = create<Store>()(
   },
 
   setWslDistros: (distros) => set({ wslDistros: distros }),
+
+  runUpdateCheck: async () => {
+    if (get().updatePhase !== 'idle') return;
+
+    set({ updatePhase: 'checking', updateError: null });
+    const info = await checkForUpdate();
+
+    if (!info) {
+      set({ updatePhase: 'idle', updateInfo: null });
+      return;
+    }
+
+    // ハンドルをモジュールスコープに退避し、state には含めない
+    pendingUpdateHandle = info;
+    const { _handle, ...persistableInfo } = info;
+    set({ updateInfo: persistableInfo, updatePhase: 'downloading', updateProgress: 0 });
+
+    // 自動でバックグラウンド DL を開始する（ユーザー承認なし）
+    try {
+      await downloadUpdate(info, (p) => {
+        const next = p.ratio ?? -1;
+        const prev = get().updateProgress;
+        // クオンタイズ (1% 単位): 不明 ↔ 既知の遷移、または 1% 以上変化したときのみ更新
+        if ((next < 0 && prev >= 0) || (next >= 0 && prev < 0) || (next >= 0 && Math.abs(next - prev) >= 0.01)) {
+          set({ updateProgress: next });
+        }
+      });
+      set({ updatePhase: 'ready' });
+    } catch (e) {
+      // バックグラウンド失敗はユーザーに見せず idle に戻して次回起動でリトライ (Chrome 流)
+      console.warn('[updater] background download failed:', e);
+      // DL 中に外部から phase が変更されていた場合は上書きしない
+      if (get().updatePhase === 'downloading') {
+        pendingUpdateHandle = null;
+        set({ updatePhase: 'idle', updateInfo: null, updateProgress: 0 });
+      }
+    }
+  },
+
+  openUpdateDialog: () => set({ updateDialogOpen: true }),
+
+  closeUpdateDialog: () => set({ updateDialogOpen: false }),
+
+  applyUpdate: async () => {
+    const phase = get().updatePhase;
+    // 再入防止ガード: ready または error のときのみ実行
+    if (phase !== 'ready' && phase !== 'error') return;
+    if (!pendingUpdateHandle) {
+      set({
+        updatePhase: 'error',
+        updateError: '更新ハンドルが失われました。アプリを再起動してください。',
+      });
+      return;
+    }
+
+    set({ updatePhase: 'installing', updateError: null });
+
+    try {
+      await installAndRelaunch(pendingUpdateHandle);
+      // relaunch 後は到達しない
+    } catch (e) {
+      set({
+        updatePhase: 'error',
+        updateError: (e as Error)?.message ?? String(e),
+      });
+    }
+  },
+
+  resetUpdateError: () => {
+    pendingUpdateHandle = null;
+    set({
+      updatePhase: 'idle',
+      updateError: null,
+      updateInfo: null,
+      updateProgress: 0,
+      updateDialogOpen: false,
+    });
+  },
     }),
     {
       name: 'racker-terminal',
@@ -777,6 +891,8 @@ export const useAppStore = create<Store>()(
         favorites: state.favorites,
         settings: state.settings,
         // activeTabId / editingId / contextMenuOpen / wslDistros は OFF
+        // updater 系 (updateInfo, updatePhase, updateProgress, updateError, updateDialogOpen)
+        // は永続化対象外。再起動時はデフォルト値で初期化される。
       }),
       // F-M2: 復元時の整合性ガード
       onRehydrateStorage: () => (state) => {
@@ -817,6 +933,13 @@ export const useAppStore = create<Store>()(
         // ランタイム状態は復元しない
         state.editingId = null;
         state.contextMenuOpen = false;
+
+        // updater 系は永続化対象外のため再起動時にデフォルト値で明示初期化する
+        state.updateInfo = null;
+        state.updatePhase = 'idle';
+        state.updateProgress = 0;
+        state.updateError = null;
+        state.updateDialogOpen = false;
       },
     },
   ),

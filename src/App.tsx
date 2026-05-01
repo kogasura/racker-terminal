@@ -5,9 +5,11 @@ import { listWslDistros } from './lib/wsl';
 import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
+import { UpdateDialog } from './components/UpdateDialog';
 import './styles/variables.css';
 import './styles/title-bar.css';
 import './styles/dropdown-menu.css';
+import './styles/update-dialog.css';
 
 function App() {
   useEffect(() => {
@@ -52,6 +54,25 @@ function App() {
     return unsub;
   }, []);
 
+  // 起動時に updater をチェック (1 回のみ)。
+  // persist hydration 完了を待ってから実行する。
+  useEffect(() => {
+    let cancelled = false;
+    const fire = () => {
+      if (cancelled) return;
+      void useAppStore.getState().runUpdateCheck();
+    };
+    if (useAppStore.persist.hasHydrated()) {
+      fire();
+      return () => { cancelled = true; };
+    }
+    const unsub = useAppStore.persist.onFinishHydration(fire);
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
   // App 起動時に WSL distro 一覧を取得して store に保存する。
   // Phase 4 P-K で追加。
   useEffect(() => {
@@ -83,6 +104,7 @@ function App() {
   return (
     <div className="app-root">
       <TitleBar />
+      <UpdateDialog />
       <div className="app-body">
         <Sidebar />
         <TerminalPaneContainer />

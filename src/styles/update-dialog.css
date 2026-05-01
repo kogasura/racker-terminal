@@ -1,0 +1,72 @@
+/* =====================================================================
+   UpdateDialog — 自動更新ダイアログ用スタイル
+   .dialog-* クラスは sidebar.css で定義済み。ここでは update-dialog 固有スタイルのみ定義する。
+   ===================================================================== */
+
+/* リリースノート表示エリア */
+.update-dialog__notes {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  border: 1px solid var(--sidebar-border, #24283b);
+  border-radius: 4px;
+  background: rgba(13, 14, 20, 0.6);
+  padding: 8px 10px;
+}
+
+.update-dialog__notes-pre {
+  margin: 0;
+  font-family: var(--font-family-mono, '"MonaspiceNe NF", "Cascadia Code", "Consolas", monospace');
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--sidebar-fg, #c0caf5);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* プログレスバー外枠 */
+.update-dialog__progress {
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+/* プログレスバー本体 */
+.update-dialog__progress-bar {
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, #7aa2f7, #bb9af7);
+  transition: width 0.15s ease;
+}
+
+/* indeterminate (進捗不明) の場合はアニメーションで往復 */
+.update-dialog__progress-bar--indeterminate {
+  width: 40% !important;
+  animation: update-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes update-progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(150%); }
+}
+
+/* 進捗ラベル */
+.update-dialog__progress-label {
+  font-size: 11px;
+  color: var(--sidebar-fg, #c0caf5);
+  opacity: 0.7;
+  margin: 0 0 12px;
+  text-align: center;
+}
+
+/* インストール中メッセージ */
+.update-dialog__installing {
+  font-size: 12px;
+  color: var(--sidebar-fg, #c0caf5);
+  text-align: center;
+  padding: 16px 0;
+  margin: 0;
+}

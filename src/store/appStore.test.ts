@@ -33,6 +33,11 @@ function resetStore() {
       scrollback: 10000,
       transparency: 1.0,
     },
+    updateInfo: null,
+    updatePhase: 'idle',
+    updateProgress: 0,
+    updateError: null,
+    updateDialogOpen: false,
   });
 }
 
@@ -1259,6 +1264,11 @@ function makeState(
     contextMenuOpen: false,
     wslDistros: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
+    updateInfo: null,
+    updatePhase: 'idle',
+    updateProgress: 0,
+    updateError: null,
+    updateDialogOpen: false,
   };
 }
 
@@ -2039,5 +2049,283 @@ describe('setWslDistros', () => {
       useAppStore.getState(),
     ) as Record<string, unknown>;
     expect(partializeResult.wslDistros).toBeUndefined();
+  });
+});
+
+// --- updater スライス (Chrome 風バックグラウンド DL フロー) ---
+
+vi.mock('../lib/updater', () => ({
+  checkForUpdate: vi.fn(),
+  downloadUpdate: vi.fn(),
+  installAndRelaunch: vi.fn(),
+}));
+
+import { checkForUpdate, downloadUpdate, installAndRelaunch } from '../lib/updater';
+
+describe('updater スライス', () => {
+  function resetUpdaterStore() {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      editingId: null,
+      contextMenuOpen: false,
+      wslDistros: [],
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: '"MonaspiceNe NF", monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+        transparency: 1.0,
+      },
+      updateInfo: null,
+      updatePhase: 'idle',
+      updateProgress: 0,
+      updateError: null,
+      updateDialogOpen: false,
+    });
+  }
+
+  beforeEach(() => {
+    resetUpdaterStore();
+    vi.mocked(checkForUpdate).mockReset();
+    vi.mocked(downloadUpdate).mockReset();
+    vi.mocked(installAndRelaunch).mockReset();
+  });
+
+  it('runUpdateCheck: idle → checking → downloading → ready (更新あり、DL 成功)', async () => {
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: 'Bug fixes',
+      date: '2026-05-01T00:00:00Z',
+      _handle: {} as any,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockImplementation(async (_update, onProgress) => {
+      onProgress({ ratio: 0.5, downloaded: 500, contentLength: 1000 });
+    });
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('ready');
+    expect(state.updateInfo).toEqual({
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: 'Bug fixes',
+      date: '2026-05-01T00:00:00Z',
+    });
+    expect(checkForUpdate).toHaveBeenCalledTimes(1);
+    expect(downloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('runUpdateCheck: idle → checking → idle (更新なし、null 返却)', async () => {
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('idle');
+    expect(state.updateInfo).toBeNull();
+    expect(downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('runUpdateCheck: phase != idle のとき再入は no-op', async () => {
+    useAppStore.setState({ updatePhase: 'checking' });
+
+    await useAppStore.getState().runUpdateCheck();
+
+    expect(checkForUpdate).not.toHaveBeenCalled();
+    expect(useAppStore.getState().updatePhase).toBe('checking');
+  });
+
+  it('runUpdateCheck: DL 失敗は idle に戻す (silently fail)', async () => {
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: '',
+      date: undefined,
+      _handle: {} as any,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network timeout'));
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    // バックグラウンド失敗はユーザーに見せず idle に戻す
+    expect(state.updatePhase).toBe('idle');
+    expect(state.updateInfo).toBeNull();
+    expect(state.updateProgress).toBe(0);
+  });
+
+  it('applyUpdate: ready → installing (installAndRelaunch が呼ばれる)', async () => {
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: 'Bug fixes',
+      _handle: {} as any,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
+    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
+
+    await useAppStore.getState().runUpdateCheck();
+    expect(useAppStore.getState().updatePhase).toBe('ready');
+
+    await useAppStore.getState().applyUpdate();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('installing');
+    expect(installAndRelaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('applyUpdate: phase !== ready && phase !== error のとき no-op', async () => {
+    useAppStore.setState({ updatePhase: 'idle' });
+
+    await useAppStore.getState().applyUpdate();
+
+    expect(installAndRelaunch).not.toHaveBeenCalled();
+    expect(useAppStore.getState().updatePhase).toBe('idle');
+  });
+
+  it('applyUpdate: downloading phase のとき no-op', async () => {
+    useAppStore.setState({ updatePhase: 'downloading' });
+
+    await useAppStore.getState().applyUpdate();
+
+    expect(installAndRelaunch).not.toHaveBeenCalled();
+    expect(useAppStore.getState().updatePhase).toBe('downloading');
+  });
+
+  it('applyUpdate: installAndRelaunch 失敗時は phase=error, updateError セット', async () => {
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: '',
+      _handle: {} as any,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
+    vi.mocked(installAndRelaunch).mockRejectedValueOnce(new Error('Install failed'));
+
+    await useAppStore.getState().runUpdateCheck();
+    await useAppStore.getState().applyUpdate();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('error');
+    expect(state.updateError).toBe('Install failed');
+  });
+
+  it('applyUpdate: error phase からリトライできる (error → installing)', async () => {
+    // pendingUpdateHandle が設定された状態を作るために一度 ready まで遷移させる
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: '',
+      _handle: {} as any,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
+    vi.mocked(installAndRelaunch)
+      .mockRejectedValueOnce(new Error('First attempt failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await useAppStore.getState().runUpdateCheck();
+    await useAppStore.getState().applyUpdate(); // 失敗 → error
+    expect(useAppStore.getState().updatePhase).toBe('error');
+
+    // リトライ
+    await useAppStore.getState().applyUpdate();
+    expect(useAppStore.getState().updatePhase).toBe('installing');
+    expect(installAndRelaunch).toHaveBeenCalledTimes(2);
+  });
+
+  it('resetUpdateError: handle, updateInfo を含めて完全リセットする', () => {
+    resetUpdaterStore();
+    useAppStore.setState({
+      updatePhase: 'error',
+      updateInfo: { version: '2.0', currentVersion: '1.0', notes: '' },
+      updateError: 'fail',
+      updateProgress: 0.5,
+      updateDialogOpen: true,
+    });
+    useAppStore.getState().resetUpdateError();
+    const s = useAppStore.getState();
+    expect(s.updatePhase).toBe('idle');
+    expect(s.updateInfo).toBe(null);
+    expect(s.updateError).toBe(null);
+    expect(s.updateProgress).toBe(0);
+    expect(s.updateDialogOpen).toBe(false);
+  });
+
+  it('closeUpdateDialog: error phase で閉じても phase は維持される (バッジ残存)', () => {
+    resetUpdaterStore();
+    useAppStore.setState({
+      updatePhase: 'error',
+      updateError: 'something failed',
+      updateDialogOpen: true,
+    });
+    useAppStore.getState().closeUpdateDialog();
+    const s = useAppStore.getState();
+    expect(s.updatePhase).toBe('error');
+    expect(s.updateError).toBe('something failed');
+    expect(s.updateDialogOpen).toBe(false);
+  });
+
+  it('closeUpdateDialog: error 以外の phase では phase を維持する', () => {
+    resetUpdaterStore();
+    useAppStore.setState({
+      updatePhase: 'ready',
+      updateInfo: { version: '2.0', currentVersion: '1.0', notes: '' },
+      updateDialogOpen: true,
+    });
+    useAppStore.getState().closeUpdateDialog();
+    const s = useAppStore.getState();
+    expect(s.updatePhase).toBe('ready');
+    expect(s.updateDialogOpen).toBe(false);
+  });
+
+  it('runUpdateCheck: DL 失敗後の applyUpdate は handle がないため error に遷移する (S1 ガード)', async () => {
+    resetUpdaterStore();
+    const mockUpdate = {
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: 'test',
+      _handle: { install: vi.fn() } as never,
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
+    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network'));
+    await useAppStore.getState().runUpdateCheck();
+    expect(useAppStore.getState().updatePhase).toBe('idle');
+
+    // 強制的に error にしても handle が null なので S1 ガードで error メッセージが立つ
+    useAppStore.setState({ updatePhase: 'error' });
+    await useAppStore.getState().applyUpdate();
+    expect(vi.mocked(installAndRelaunch)).not.toHaveBeenCalled();
+    expect(useAppStore.getState().updatePhase).toBe('error');
+    expect(useAppStore.getState().updateError).toContain('更新ハンドルが失われました');
+  });
+
+  it('partialize: updater 系フィールドは出力に含まれない', () => {
+    useAppStore.setState({
+      updateInfo: { version: '1.2.0', currentVersion: '1.1.0', notes: '' },
+      updatePhase: 'ready',
+      updateProgress: 0.5,
+      updateError: null,
+      updateDialogOpen: true,
+    });
+
+    const result = useAppStore.persist.getOptions().partialize!(
+      useAppStore.getState(),
+    ) as Record<string, unknown>;
+
+    expect(result.updateInfo).toBeUndefined();
+    expect(result.updatePhase).toBeUndefined();
+    expect(result.updateProgress).toBeUndefined();
+    expect(result.updateError).toBeUndefined();
+    expect(result.updateDialogOpen).toBeUndefined();
   });
 });

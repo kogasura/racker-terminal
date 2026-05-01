@@ -26,7 +26,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "copyright": "Copyright (c) 2026 yokubo. MIT License.",
     "icon": [
       "icons/32x32.png",
@@ -40,11 +41,19 @@
     "longDescription": "縦サイドバー + グループ + お気に入りのターミナル。WSL/PowerShell/cmd を快適に切り替え。",
     "resources": ["../LICENSES/*.txt", "../LICENSE"],
     "windows": {
-      "wix": {
-        "language": "ja-JP"
-      },
       "nsis": {
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/kogasura/racker-terminal/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_GENERATED_PUBKEY",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

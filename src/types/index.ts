@@ -107,6 +107,34 @@ export interface Settings {
 }
 
 /**
+ * 自動更新機能の状態フェーズ (Chrome 風バックグラウンド DL フロー)。
+ * idle: 未チェック / 更新なし / リセット後
+ * checking: check() 実行中
+ * downloading: バックグラウンド DL 中（UI には出ない）
+ * ready: DL 完了、再起動待ち（バッジ表示対象）
+ * installing: 再起動 + インストール中
+ * error: エラー発生 (リトライ可能)
+ */
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'error';
+
+/**
+ * 自動更新で取得した新バージョン情報。
+ * Update ハンドル (_handle) は state には含まず、モジュールスコープに保持する。
+ */
+export interface UpdateInfo {
+  version: string;        // 新バージョン
+  currentVersion: string; // 現在のバージョン
+  notes: string;          // リリースノート (空文字列の可能性あり)
+  date?: string;          // RFC3339 (manifest の pub_date)
+}
+
+/**
  * アプリケーション全体の状態型（Zustand store の型）。
  * アクション（createTab / removeTab / setActiveTab 等）は Unit A1 / D+E で追加予定。
  * 本 Unit では型のみを定義する。
@@ -136,4 +164,16 @@ export interface AppState {
   /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
    *  Phase 4 P-K で追加。 */
   wslDistros: string[];
+
+  // --- updater スライス (persist 対象外) ---
+  /** 自動更新の新バージョン情報。利用可能な更新がない場合は null。 */
+  updateInfo: UpdateInfo | null;
+  /** 自動更新フェーズ。 */
+  updatePhase: UpdatePhase;
+  /** ダウンロード進捗 (0..1)。不明時は -1。 */
+  updateProgress: number;
+  /** 更新処理中のエラーメッセージ。エラーがない場合は null。 */
+  updateError: string | null;
+  /** 更新ダイアログの表示状態。 */
+  updateDialogOpen: boolean;
 }

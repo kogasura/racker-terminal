@@ -5,6 +5,7 @@ import {
   selectNextTabId,
   selectPrevTabId,
   expandGroupContaining,
+  CLOSED_TABS_MAX,
 } from './appStore';
 import { SPAWN_TIMEOUT_MS } from '../components/TerminalPane';
 import type { AppState } from '../types';
@@ -33,6 +34,8 @@ function resetStore() {
       scrollback: 10000,
       transparency: 1.0,
     },
+    wslDistros: [],
+    closedTabs: [],
     updateInfo: null,
     updatePhase: 'idle',
     updateProgress: 0,
@@ -1263,6 +1266,7 @@ function makeState(
     editingId: null,
     contextMenuOpen: false,
     wslDistros: [],
+    closedTabs: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
     updateInfo: null,
     updatePhase: 'idle',
@@ -2327,5 +2331,163 @@ describe('updater スライス', () => {
     expect(result.updateProgress).toBeUndefined();
     expect(result.updateError).toBeUndefined();
     expect(result.updateDialogOpen).toBeUndefined();
+  });
+});
+
+// --- closedTabs / restoreLastClosedTab ---
+
+describe('closedTabs / restoreLastClosedTab', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it('removeTab: 閉じたタブが closedTabs に push される (先頭追加)', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const tabId = useAppStore.getState().createTab(groupId, {
+      userTitle: 'MyTab',
+      shell: 'nu',
+      cwd: 'C:\\work',
+    });
+
+    useAppStore.getState().removeTab(tabId);
+
+    const { closedTabs } = useAppStore.getState();
+    expect(closedTabs).toHaveLength(1);
+    expect(closedTabs[0].groupId).toBe(groupId);
+    expect(closedTabs[0].userTitle).toBe('MyTab');
+    expect(closedTabs[0].shell).toBe('nu');
+    expect(closedTabs[0].cwd).toBe('C:\\work');
+  });
+
+  it('removeTab: 連続で 11 タブ閉じると古いものが drop される (上限 10)', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const tabIds: string[] = [];
+    for (let i = 0; i < CLOSED_TABS_MAX + 1; i++) {
+      tabIds.push(
+        useAppStore.getState().createTab(groupId, { userTitle: `Tab${i}` }),
+      );
+    }
+
+    // CLOSED_TABS_MAX + 1 タブを順に閉じる (最初に作ったタブから)
+    for (const tabId of tabIds) {
+      useAppStore.getState().removeTab(tabId);
+    }
+
+    const { closedTabs } = useAppStore.getState();
+    expect(closedTabs).toHaveLength(CLOSED_TABS_MAX);
+    // 最初に閉じた Tab0 は drop されている (末尾に押し出される)
+    expect(closedTabs.some((c) => c.userTitle === 'Tab0')).toBe(false);
+    // 最後に閉じた Tab10 は先頭にある
+    expect(closedTabs[0].userTitle).toBe('Tab10');
+  });
+
+  it('removeTab: tab.args/env が shallow clone されてスタックに保存される', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const args = ['--login', '--norc'];
+    const env: Record<string, string> = { FOO: 'bar' };
+    const tabId = useAppStore.getState().createTab(groupId, { args, env });
+
+    useAppStore.getState().removeTab(tabId);
+
+    const { closedTabs } = useAppStore.getState();
+    expect(closedTabs[0].args).toEqual(['--login', '--norc']);
+    expect(closedTabs[0].env).toEqual({ FOO: 'bar' });
+
+    // 元の配列/オブジェクトを変更しても closedTabs に影響しない（参照独立性）
+    args.push('--extra');
+    env.BAZ = 'qux';
+    expect(closedTabs[0].args).toEqual(['--login', '--norc']);
+    expect(closedTabs[0].env).toEqual({ FOO: 'bar' });
+  });
+
+  it('restoreLastClosedTab: 空スタック時は null を返す', () => {
+    expect(useAppStore.getState().restoreLastClosedTab()).toBeNull();
+  });
+
+  it('restoreLastClosedTab: 最新の閉じたタブが復元され、新 tabId を返す', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const tabId = useAppStore.getState().createTab(groupId, {
+      userTitle: 'Restored',
+      shell: 'nu',
+      cwd: 'C:\\proj',
+      args: ['--login'],
+      env: { X: '1' },
+    });
+
+    useAppStore.getState().removeTab(tabId);
+
+    expect(useAppStore.getState().closedTabs).toHaveLength(1);
+
+    const newTabId = useAppStore.getState().restoreLastClosedTab();
+
+    expect(newTabId).not.toBeNull();
+    expect(newTabId).not.toBe(tabId); // 新しい ID が発行される
+
+    const { closedTabs, tabs, activeTabId } = useAppStore.getState();
+    expect(closedTabs).toHaveLength(0); // スタックから pop された
+
+    const restoredTab = tabs[newTabId!];
+    expect(restoredTab).toBeDefined();
+    expect(restoredTab.userTitle).toBe('Restored');
+    expect(restoredTab.shell).toBe('nu');
+    expect(restoredTab.cwd).toBe('C:\\proj');
+    expect(restoredTab.args).toEqual(['--login']);
+    expect(restoredTab.env).toEqual({ X: '1' });
+    expect(restoredTab.groupId).toBe(groupId);
+    expect(activeTabId).toBe(newTabId); // active になる
+  });
+
+  it('restoreLastClosedTab: 元グループが削除済みなら groups[0] に復元される', () => {
+    const gA = useAppStore.getState().createGroup('GroupA');
+    const gB = useAppStore.getState().createGroup('GroupB');
+    const tabId = useAppStore.getState().createTab(gA, { userTitle: 'InA' });
+
+    useAppStore.getState().removeTab(tabId);
+
+    // gA を groups から削除（直接 setState で書き換え）
+    useAppStore.setState((s) => ({
+      groups: s.groups.filter((g) => g.id !== gA),
+    }));
+
+    const newTabId = useAppStore.getState().restoreLastClosedTab();
+
+    expect(newTabId).not.toBeNull();
+    const restoredTab = useAppStore.getState().tabs[newTabId!];
+    // groups[0] は gB になっているはず
+    expect(restoredTab.groupId).toBe(gB);
+  });
+
+  it('restoreLastClosedTab: グループも tab もない状態で呼ぶと createTab が Default グループを作成する', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const tabId = useAppStore.getState().createTab(groupId, { userTitle: 'Alone' });
+
+    useAppStore.getState().removeTab(tabId);
+
+    // setState は shallow merge のため closedTabs は維持される
+    useAppStore.setState({ groups: [], tabs: {}, activeTabId: null });
+
+    const newTabId = useAppStore.getState().restoreLastClosedTab();
+
+    expect(newTabId).not.toBeNull();
+    const { groups, tabs } = useAppStore.getState();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe('Default');
+    expect(tabs[newTabId!]).toBeDefined();
+  });
+
+  it('partialize: closedTabs は永続化対象外', () => {
+    const groupId = useAppStore.getState().createGroup('G1');
+    const tabId = useAppStore.getState().createTab(groupId, { userTitle: 'T' });
+    useAppStore.getState().removeTab(tabId);
+
+    // closedTabs に何か入っている状態を確認
+    expect(useAppStore.getState().closedTabs).toHaveLength(1);
+
+    const result = useAppStore.persist.getOptions().partialize!(
+      useAppStore.getState(),
+    ) as Record<string, unknown>;
+
+    expect(result.closedTabs).toBeUndefined();
   });
 });

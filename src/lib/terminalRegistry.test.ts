@@ -11,6 +11,7 @@ import {
   sanitizeOscTitle,
   setupWebglRenderer,
   parseOsc7Path,
+  attachImeCompositionGuard,
   type TerminalRuntime,
 } from './terminalRegistry';
 
@@ -609,63 +610,181 @@ describe('IME compositionAbort (2.13)', () => {
     expect(ac.signal.aborted).toBe(true);
   });
 
-  it('compositionstart/end イベントで isComposing フラグが切り替わり onData が drop される', () => {
-    // EventTarget を使って compositionstart/end + onData ガードの連携動作を検証する。
-    // createRuntime の IME ガード実装と同等の動作を確認する。
-    let isComposing = false;
-    const compositionAbort = new AbortController();
-    const { signal } = compositionAbort;
+  // attachImeCompositionGuard を直接呼ぶ統合テスト群 (実コードパス検証)。
 
-    const textarea = new EventTarget();
-    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal });
-    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal });
+  it('合成開始前は通常入力が通過する (shouldDrop=false)', () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
 
-    const received: string[] = [];
-    const onData = (data: string) => {
-      if (isComposing) return;
-      received.push(data);
-    };
+    expect(guard.shouldDrop()).toBe(false);
+    expect(guard.state).toEqual({ isComposing: false, isFinalizingComposition: false });
 
-    // 合成開始前: 通常入力は通過する
-    onData('a');
-    expect(received).toEqual(['a']);
-
-    // compositionstart: 合成中は drop される
-    textarea.dispatchEvent(new Event('compositionstart'));
-    onData('あ'); // 中間文字列
-    onData('い'); // さらに中間文字列
-    expect(received).toEqual(['a']); // 追加されていない
-
-    // compositionend: 確定後は通過する
-    textarea.dispatchEvent(new Event('compositionend'));
-    onData('愛'); // 確定文字列（xterm が再発火する想定）
-    expect(received).toEqual(['a', '愛']);
-
-    compositionAbort.abort();
+    guard.dispose();
+    ac.abort();
   });
 
-  it('compositionend 後は通常入力が再開される（確定文字列が drop されない）', () => {
-    let isComposing = false;
-    const textarea = new EventTarget();
-    const compositionAbort = new AbortController();
-    const { signal } = compositionAbort;
-    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal });
-    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal });
+  it('compositionstart で合成中フラグが立ち、shouldDrop()=true になる', () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
 
-    const received: string[] = [];
-    const onData = (data: string) => {
-      if (isComposing) return;
-      received.push(data);
-    };
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(guard.shouldDrop()).toBe(true);
+    expect(guard.state.isComposing).toBe(true);
+    expect(guard.state.isFinalizingComposition).toBe(false);
 
-    textarea.dispatchEvent(new Event('compositionstart'));
-    onData('か');  // 中間 (drop)
-    textarea.dispatchEvent(new Event('compositionend'));
-    onData('漢字'); // 確定 (通過)
-    onData('b');    // 通常入力 (通過)
+    guard.dispose();
+    ac.abort();
+  });
 
-    expect(received).toEqual(['漢字', 'b']);
-    compositionAbort.abort();
+  it('compositionend 直後は isComposing=false かつ isFinalizingComposition=true (グレース期間)', () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+
+    // 同期点: 合成解除 + グレース期間中
+    expect(guard.state.isComposing).toBe(false);
+    expect(guard.state.isFinalizingComposition).toBe(true);
+    expect(guard.shouldDrop()).toBe(false); // 通常入力は通過
+
+    guard.dispose();
+    ac.abort();
+  });
+
+  it('compositionend → setTimeout(0) tick 後に isFinalizingComposition が false に戻る', async () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(guard.state.isFinalizingComposition).toBe(false);
+    expect(guard.shouldDrop()).toBe(false);
+
+    guard.dispose();
+    ac.abort();
+  });
+
+  // ★ 本バグの中核を回帰検証する統合テスト。
+  it('変換後 Enter なしで連続日本語入力したときの race condition で確定文字列が drop されない', async () => {
+    // 模擬する xterm.js の挙動:
+    //   - xterm は textarea に compositionend listener を先に登録している。
+    //   - compositionend listener 内で _finalizeComposition(true) → setTimeout(0) を予約し、
+    //     その timeout 内で確定文字列を triggerDataEvent (= term.onData 発火) する。
+    //   - 我々の attachImeCompositionGuard listener はその後で attach されるため、
+    //     listener 順序は xterm → 我々、setTimeout も同じ FIFO 順で fire する。
+    //
+    // シナリオ: 「こん」入力 → 変換 → Enter なしで次の日本語キー入力。
+    //   ブラウザは旧 composition の compositionend と新 composition の compositionstart を
+    //   同期で連続発火する。
+    const ac = new AbortController();
+    const target = new EventTarget();
+
+    // xterm の compositionend listener (先に登録) の挙動を模擬:
+    // setTimeout(0) で確定文字列 '今' を遅延 onData する。
+    let xtermEmittedFinalized = false;
+    target.addEventListener('compositionend', () => {
+      setTimeout(() => {
+        xtermEmittedFinalized = true;
+      }, 0);
+    }, { signal: ac.signal });
+
+    // 我々のガード (xterm より後に登録)
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    // 1) ユーザーが「こん」と入力 → IME 合成中
+    target.dispatchEvent(new Event('compositionstart'));
+    expect(guard.shouldDrop()).toBe(true); // 中間文字列は drop される
+
+    // 2) ユーザーが Enter を押さず次の日本語キー入力 → 旧 compositionend と
+    //    新 compositionstart が同期で連続発火
+    target.dispatchEvent(new Event('compositionend'));
+    target.dispatchEvent(new Event('compositionstart'));
+
+    // 同期点では isComposing=true (新 composition) かつ isFinalizingComposition=true (旧の grace)
+    expect(guard.state.isComposing).toBe(true);
+    expect(guard.state.isFinalizingComposition).toBe(true);
+    // この瞬間 onData が来てもグレース期間中なので drop されない (= 確定文字列を通過させる)
+    expect(guard.shouldDrop()).toBe(false);
+
+    // 3) xterm の遅延 setTimeout (確定文字列 onData) が先に発火する想定で待つ
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(xtermEmittedFinalized).toBe(true);
+
+    // 4) この時点でグレース期間も解除され、新 composition の中間文字列は drop されるべき
+    expect(guard.state.isComposing).toBe(true);
+    expect(guard.state.isFinalizingComposition).toBe(false);
+    expect(guard.shouldDrop()).toBe(true);
+
+    guard.dispose();
+    ac.abort();
+  });
+
+  it('連続 compositionend で pending setTimeout が積み重ならない (clearTimeout で再張り)', async () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+
+    // 最後の compositionend で grace period が始まっている
+    expect(guard.state.isFinalizingComposition).toBe(true);
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+    // 1 tick で grace 解除 (setTimeout は最後のもの 1 個のみ pending だった)
+    expect(guard.state.isFinalizingComposition).toBe(false);
+
+    guard.dispose();
+    ac.abort();
+  });
+
+  it('dispose() で pending な setTimeout がキャンセルされる (use-after-dispose 防止)', async () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    target.dispatchEvent(new Event('compositionstart'));
+    target.dispatchEvent(new Event('compositionend'));
+    expect(guard.state.isFinalizingComposition).toBe(true);
+
+    // dispose 即時呼び出し → pending setTimeout がキャンセル
+    guard.dispose();
+    ac.abort();
+
+    // setTimeout 発火 tick を待っても isFinalizingComposition は変化しない
+    // (dispose 時に強制的にクリアされるため、true のままではなく false に戻る前で止まる)
+    await new Promise<void>((r) => setTimeout(r, 0));
+    // dispose() は現在は finalizeTimerId しか触らないため state はそのまま。
+    // 重要なのは「pending setTimeout が dispose 後に発火しないこと」を保証することなので、
+    // そのテストとしては「キャンセル後に setTimeout が走らない」を別途チェック。
+    expect(guard.state.isFinalizingComposition).toBe(true);
+  });
+
+  it('AbortSignal.abort() 後はそれ以降の composition イベントが listener に届かない', () => {
+    const ac = new AbortController();
+    const target = new EventTarget();
+    const guard = attachImeCompositionGuard(target, ac.signal);
+
+    ac.abort();
+    target.dispatchEvent(new Event('compositionstart'));
+
+    // listener が解除されているため state は初期値のまま
+    expect(guard.state.isComposing).toBe(false);
+    expect(guard.state.isFinalizingComposition).toBe(false);
+    expect(guard.shouldDrop()).toBe(false);
+
+    guard.dispose();
   });
 });
 

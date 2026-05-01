@@ -87,6 +87,13 @@ Phase 3 はユーザー指示により **パフォーマンス (C) + 安定性 (
 - Windows ConPTY + nushell/PowerShell の IME 中間文字列流入問題
 - **対策**: `term.textarea` に `compositionstart`/`compositionend` リスナーを attach し、
   合成中の `onData` を drop。AbortController で一括解除。dispose 順序 §3.2 に `compositionAbort.abort()` を追加。
+- **race condition 修正 (post-1.0)**: 「変換後 Enter なしで連続日本語入力」したときに
+  確定文字列が消失するバグ修正。`isFinalizingComposition` グレース期間フラグを追加し、
+  `compositionend` から 1 tick 後 (`setTimeout(0)`) に解除することで、xterm.js の
+  `CompositionHelper._finalizeComposition(true)` が遅延発火する確定文字列 `onData` を
+  通過させる。`shouldDrop()` 判定は `isComposing && !isFinalizingComposition`。
+  実装は `attachImeCompositionGuard()` ヘルパーに切り出してテスト可能化。
+  pending な `setTimeout` は `imeGuard.dispose()` で clear (use-after-dispose 防止)。
 
 ### 2.14 国際化キーボード対応 **[実装完了 — Unit P-D3]**
 - `e.code === 'KeyW'` 切替 (CapsLock / 非 ASCII レイアウト対応)

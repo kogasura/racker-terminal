@@ -64,6 +64,122 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
 }
 
 /**
+ * IME 合成ガードの内部状態 (read-only スナップショット)。テスト用に公開する。
+ * - isComposing: 合成中フラグ。compositionstart で true、compositionend で false。
+ * - isFinalizingComposition: compositionend 直後のグレース期間フラグ。
+ *   xterm.js CompositionHelper._finalizeComposition(true) は setTimeout(0) で
+ *   triggerDataEvent を遅延発火する設計のため、その遅延 onData が届くまでの
+ *   1 tick を「合成中フラグが true でも data を通過させる」グレース期間として保護する。
+ */
+export interface ImeGuardState {
+  readonly isComposing: boolean;
+  readonly isFinalizingComposition: boolean;
+}
+
+interface MutableImeGuardState {
+  isComposing: boolean;
+  isFinalizingComposition: boolean;
+  /** グレース期間解除用タイマー ID。dispose / 次回 compositionend で clear される。 */
+  finalizeTimerId: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * IME 合成ガード ハンドル。createRuntime 以外から使うのはテストのみ。
+ */
+export interface ImeGuardHandle {
+  readonly state: ImeGuardState;
+  /** onData 内で「この入力を drop すべきか」を判定する。 */
+  shouldDrop(): boolean;
+  /** dispose 時に pending な setTimeout をキャンセルする。 */
+  dispose(): void;
+}
+
+/**
+ * xterm の textarea に IME 合成ガード listener を attach する。
+ *
+ * **動作:**
+ * - compositionstart: `isComposing=true`。`isFinalizingComposition` と pending タイマーは
+ *   敢えて触らない（後述の race condition 対策のため、グレース期間は最後まで開けっ放しにする）。
+ * - compositionend: `isComposing=false`、`isFinalizingComposition=true`、`setTimeout(0)` で
+ *   グレース期間を 1 tick 後に解除する。pending タイマーがあれば clear して張り直す。
+ * - shouldDrop(): `isComposing && !isFinalizingComposition` のとき true (drop)。
+ *
+ * **race condition 修正の詳細:**
+ *
+ * 旧実装は compositionend で同期的に `isComposing=false` にしていた。Windows IME で
+ * 「日本語を入力 → 変換 → Enter なしで次の日本語を入力」した場合、ブラウザは旧 composition の
+ * compositionend と新 composition の compositionstart を同期で連続発火する。一方 xterm.js は
+ * `CompositionHelper._finalizeComposition(true)` で `setTimeout(0)` を介して確定文字列を
+ * 遅延 triggerDataEvent (= term.onData) する設計。同期イベント連続後に setTimeout が発火する
+ * 頃には isComposing が新 composition の compositionstart で true に戻っており、確定文字列の
+ * onData が drop されて消失するというバグ。
+ *
+ * 修正は `isFinalizingComposition` グレース期間フラグを導入。compositionend 時に true にし、
+ * `setTimeout(0)` で false に戻す。我々の compositionend listener は xterm のものより**後**に
+ * 登録される (term.open() 後に term.textarea へアクセスして addEventListener するため)。
+ * 同一 EventTarget 同一 phase の listener は登録順 FIFO 発火、setTimeout も同一 task queue へ
+ * FIFO で enqueue されるため、xterm の setTimeout が必ず我々の setTimeout より先に発火する。
+ * その時点で isFinalizingComposition=true のため shouldDrop=false となり、確定文字列が通過する。
+ *
+ * 新 compositionstart で `isFinalizingComposition` を触らない理由: 同期で連続発火するケースで
+ * isFinalizingComposition を false にすると xterm の遅延 onData が drop される (元のバグの再現)。
+ * 触らないことで、xterm の遅延発火 → 我々のグレース期間解除という順序が保たれる。
+ *
+ * **未対応のエッジケース:**
+ * - グレース期間中 (1 tick) に新 composition が始まり、その中間文字列が xterm の何らかの
+ *   経路で onData に届いた場合は通過してしまう。実用上は xterm.js v6 の中間文字列は
+ *   `compositionupdate` 内でのみ DOM 表示されるため、onData 経由で届くことはほぼない想定。
+ *
+ * リスナーは AbortSignal で一括解除される。pending な setTimeout は dispose() で別途 clear する。
+ */
+export function attachImeCompositionGuard(
+  textarea: Pick<EventTarget, 'addEventListener'>,
+  signal: AbortSignal,
+): ImeGuardHandle {
+  const internal: MutableImeGuardState = {
+    isComposing: false,
+    isFinalizingComposition: false,
+    finalizeTimerId: null,
+  };
+
+  textarea.addEventListener('compositionstart', () => {
+    internal.isComposing = true;
+    // isFinalizingComposition と finalizeTimerId は意図的に触らない:
+    // 同期 compositionend → compositionstart シーケンスで grace period を維持して
+    // xterm の遅延 onData (確定文字列) を通過させるため。
+  }, { signal });
+
+  textarea.addEventListener('compositionend', () => {
+    internal.isComposing = false;
+    internal.isFinalizingComposition = true;
+    // 連続 compositionend で setTimeout が積み重ならないよう前回の pending を clear して張り直す。
+    if (internal.finalizeTimerId !== null) clearTimeout(internal.finalizeTimerId);
+    internal.finalizeTimerId = setTimeout(() => {
+      internal.isFinalizingComposition = false;
+      internal.finalizeTimerId = null;
+    }, 0);
+  }, { signal });
+
+  return {
+    get state() {
+      return {
+        isComposing: internal.isComposing,
+        isFinalizingComposition: internal.isFinalizingComposition,
+      };
+    },
+    shouldDrop() {
+      return internal.isComposing && !internal.isFinalizingComposition;
+    },
+    dispose() {
+      if (internal.finalizeTimerId !== null) {
+        clearTimeout(internal.finalizeTimerId);
+        internal.finalizeTimerId = null;
+      }
+    },
+  };
+}
+
+/**
  * OSC 7 データ文字列を Windows パスに変換する純関数。
  * - data 形式: "file://hostname/C:/Users/foo/path" (Windows) or "file://hostname/home/user" (Linux)
  * - Windows パス ("/C:/" 形式) のみ変換する。Linux パスは null を返す。
@@ -298,32 +414,31 @@ export function createRuntime(
   const pendingInputs: string[] = [];
   let ptyHandle: PtyHandle | null = null;
 
-  // IME 合成中フラグ: compositionstart で true、compositionend で false になる。
-  // Windows ConPTY + nushell/PowerShell で変換中の中間文字列が PTY に流れて
-  // 画面が崩れる問題を防ぐため、onData ハンドラで合成中の入力を drop する。
-  // xterm の onData は確定文字列を再発火する設計のため、合成中 drop しても確定後に再送される。
-  let isComposing = false;
+  // IME 合成ガード: 合成中 (中間文字列) は onData で drop する。
+  // 詳細な race condition 対策と設計理由は attachImeCompositionGuard の docstring を参照。
   const compositionAbort = new AbortController();
-  const { signal: compositionSignal } = compositionAbort;
-
-  // 注: xterm 内部 textarea は term.dispose() まで同じインスタンスを維持する前提
-  //     (recyclePty では textarea を差し替えない)。
-  // term.textarea は term.open() の後でセットされる (xterm 公式型: HTMLTextAreaElement | undefined)
+  // textarea が undefined の場合は no-op ハンドル (常に shouldDrop()=false) を使用する。
+  // 通常 term.open(divEl) 後に textarea は必ずセットされるため、ここに入るのは異常系。
+  // フォールバック時は IME 中間文字列もそのまま PTY に流れることに注意。
+  let imeGuard: ImeGuardHandle;
   const textarea = term.textarea;
   if (textarea) {
-    textarea.addEventListener('compositionstart', () => { isComposing = true; }, { signal: compositionSignal });
-    textarea.addEventListener('compositionend', () => { isComposing = false; }, { signal: compositionSignal });
+    imeGuard = attachImeCompositionGuard(textarea, compositionAbort.signal);
   } else {
     console.warn(
       `[terminalRegistry] term.textarea is undefined; IME composition guard disabled for tab ${tabId}`,
     );
+    imeGuard = {
+      state: { isComposing: false, isFinalizingComposition: false },
+      shouldDrop: () => false,
+      dispose: () => {},
+    };
   }
 
   // onData を spawn より先に登録して DSR-CPR 等を pendingInputs に貯める
   const onDataSub = term.onData((data) => {
     if (isDisposed) return;
-    // IME 合成中は中間文字列を drop する（確定後に xterm が再発火するため入力は失われない）
-    if (isComposing) return;
+    if (imeGuard.shouldDrop()) return;
     if (ptyHandle) {
       void writePty(ptyHandle.id, data).catch(() => {});
     } else {
@@ -476,6 +591,8 @@ export function createRuntime(
       osc111Sub.dispose();
       // IME 合成リスナーを一括解除する（AbortController.abort() で signal ベース一括削除）
       compositionAbort.abort();
+      // 遅延リセット用 setTimeout が pending な場合はキャンセルする (use-after-dispose 防止)
+      imeGuard.dispose();
       // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)
       // term.dispose() より先に WebGL context を解放することで WebView2 crash を防ぐ。
       // v0.5 改善: 透明度 < 1.0 のとき null になっている可能性

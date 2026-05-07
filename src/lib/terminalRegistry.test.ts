@@ -44,6 +44,10 @@ vi.mock('@xterm/addon-webgl', () => {
 /**
  * テスト用のモック TerminalRuntime を生成するヘルパー。
  * xterm / FitAddon は DOM を必要とするため、dispose だけ追跡できる最小モックを使う。
+ *
+ * dispose 実装は本物の createRuntime.dispose と同様に各 sub/handle の dispose を呼ぶ。
+ * これにより forceDisposeRuntime / forceDisposeAll 経由のリグレッションを検出できる
+ * (例: 新規追加した webLinksHandle / bellSub を dispose() に組み込み忘れた場合)。
  */
 function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: ReturnType<typeof vi.fn> } {
   let disposeCallCount = 0;
@@ -51,8 +55,17 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
+  const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
-  const disposeFn = vi.fn(() => { disposeCallCount++; });
+  const disposeFn = vi.fn(() => {
+    disposeCallCount++;
+    sub.dispose();
+    titleSub.dispose();
+    oscSub.dispose();
+    bellSub.dispose();
+    webLinksHandle.dispose();
+    compositionAbort.abort();
+  });
 
   const runtime: TerminalRuntime & { disposeCallCount: number; dispose: ReturnType<typeof vi.fn> } = {
     get term() { return {} as never; },
@@ -64,6 +77,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     titleSub,
     oscSub,
     bellSub,
+    webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
@@ -211,6 +225,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
+  const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
 
   const runtime: TerminalRuntime & { callOrder: string[] } = {
@@ -223,6 +238,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     titleSub,
     oscSub,
     bellSub,
+    webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
@@ -268,6 +284,7 @@ describe('applySettings', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -279,6 +296,7 @@ describe('applySettings', () => {
       titleSub,
       oscSub,
       bellSub,
+      webLinksHandle,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
         if (disposed) return;
@@ -342,6 +360,7 @@ describe('titleSub dispose', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -353,6 +372,7 @@ describe('titleSub dispose', () => {
       titleSub,
       oscSub,
       bellSub,
+      webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
@@ -363,6 +383,7 @@ describe('titleSub dispose', () => {
         titleSub.dispose();
         oscSub.dispose();
         bellSub.dispose();
+        webLinksHandle.dispose();
         compositionAbort.abort();
       },
     };
@@ -373,6 +394,7 @@ describe('titleSub dispose', () => {
     expect(titleSub.dispose).toHaveBeenCalledTimes(1);
     expect(oscSub.dispose).toHaveBeenCalledTimes(1);
     expect(bellSub.dispose).toHaveBeenCalledTimes(1);
+    expect(webLinksHandle.dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -451,6 +473,10 @@ describe('memory leak', () => {
     // 自分が登録した 10 個のすべての dispose が呼ばれた
     for (const r of runtimes) {
       expect(r.dispose).toHaveBeenCalledTimes(1);
+      // bellSub / webLinksHandle も dispose() 連鎖で確実に解放されるか
+      // (HMR の forceDisposeAll で WebGL/WebLinks/Bell リーク検出)
+      expect(r.bellSub.dispose).toHaveBeenCalledTimes(1);
+      expect(r.webLinksHandle.dispose).toHaveBeenCalledTimes(1);
     }
     // Map が完全に空になった (他テスト残骸も含めて全消し)
     expect(getRuntimeCount()).toBe(0);
@@ -466,6 +492,7 @@ describe('memory leak', () => {
       const titleSub = { dispose: vi.fn() };
       const oscSub = { dispose: vi.fn() };
       const bellSub = { dispose: vi.fn() };
+      const webLinksHandle = { dispose: vi.fn() };
       const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
         get term() { return {} as never; },
@@ -477,6 +504,7 @@ describe('memory leak', () => {
         titleSub,
         oscSub,
         bellSub,
+        webLinksHandle,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
@@ -577,6 +605,7 @@ describe('IME compositionAbort (2.13)', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const webLinksHandle = { dispose: vi.fn() };
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
       get fitAddon() { return {} as never; },
@@ -587,6 +616,7 @@ describe('IME compositionAbort (2.13)', () => {
       titleSub,
       oscSub,
       bellSub,
+      webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),

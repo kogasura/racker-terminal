@@ -1,9 +1,12 @@
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
 import type { Settings } from '../types';
 import { spawnPty, writePty, resizePty } from './pty';
+import { isAllowedUrl } from './urlValidator';
 
 interface WebglRendererHandle {
   /** dispose() で WebGL addon と onContextLoss listener を解放 */
@@ -61,6 +64,47 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
       webglAddon?.dispose();
     },
   };
+}
+
+/**
+ * xterm に WebLinksAddon を attach する。
+ *
+ * Ctrl+クリック (Mac では Cmd+クリック) のみをトリガとする理由:
+ * 端末上ではプロンプト編集でクリックしてカーソル移動することが多く、
+ * 単純クリックでは誤発火が起きやすい。Windows Terminal / VSCode ターミナルも同様の設計。
+ *
+ * スキーム allowlist を設ける理由:
+ * ターミナル出力は untrusted。javascript:/file:/data: 等の危険スキームを
+ * isAllowedUrl で弾くことで XSS / ローカルファイル開示を防ぐ。
+ */
+function setupWebLinks(term: XTerm): { dispose: () => void } {
+  // setupWebglRenderer と同様、addon 初期化失敗時にタブ全体を初期化不能にしないよう
+  // try/catch で握り、失敗時は no-op handle を返してリンク機能だけ無効化する。
+  // loadAddon 段階で throw しても構築済み addon を leak させないよう addon 変数を外に持つ。
+  let addon: WebLinksAddon | null = null;
+  try {
+    addon = new WebLinksAddon((event, uri) => {
+      // 左クリック (button=0) のみ受け付ける。click イベントは通常 button=0 のみ発火するが、
+      // addon が将来 auxclick を採用したケースに備えた防御
+      if (event.button !== 0) return;
+      // Ctrl+クリック (or Mac の Cmd+クリック) のときのみ開く
+      if (!event.ctrlKey && !event.metaKey) return;
+      // 危険スキーム (javascript:/file:/data: 等) を弾く
+      if (!isAllowedUrl(uri)) return;
+      // PII (社内 URL / トークン付き URL) ログ漏洩を避けるため、エラーオブジェクトのみ出して URL は出さない
+      void openUrl(uri).catch((e) => {
+        console.warn('[terminalRegistry] openUrl failed:', e);
+      });
+    });
+    term.loadAddon(addon);
+    const attached = addon;
+    return { dispose: () => attached.dispose() };
+  } catch (e) {
+    console.warn('[terminalRegistry] WebLinks addon failed to load, links disabled:', e);
+    // setupWebglRenderer と同じく、loadAddon 段階で throw した場合の構築済み addon リークを防ぐ
+    try { addon?.dispose(); } catch {}
+    return { dispose: () => {} };
+  }
 }
 
 /**
@@ -311,6 +355,13 @@ export interface TerminalRuntime {
   bellSub: IDisposable;
 
   /**
+   * WebLinksAddon のライフサイクルハンドル。
+   * createRuntime 内で setupWebLinks(term) を呼んで取得する。
+   * dispose() の中で bellSub.dispose() の直後 (= webglHandle?.dispose() の前) に呼ぶ。
+   */
+  webLinksHandle: { dispose: () => void };
+
+  /**
    * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
    * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
    * fontSize / fontFamily / scrollback を term.options に直接書き込む。
@@ -529,6 +580,9 @@ export function createRuntime(
   const osc110Sub = term.parser.registerOscHandler(110, () => true);
   const osc111Sub = term.parser.registerOscHandler(111, () => true);
 
+  // URL Ctrl+クリック機能を有効化する (設計書 Unit 3)
+  const webLinksHandle = setupWebLinks(term);
+
   const runtime: TerminalRuntime = {
     get term() { return term; },
     get fitAddon() { return fitAddon; },
@@ -539,6 +593,7 @@ export function createRuntime(
     titleSub,
     oscSub,
     bellSub,
+    webLinksHandle,
 
     setOnEvent(handler) {
       if (isDisposed) return;
@@ -637,6 +692,8 @@ export function createRuntime(
       // (onBell コールバック中の use-after-dispose を防ぐため、isDisposed=true を立てた
       // 後に他の dispose と一緒の塊で実行する)
       bellSub.dispose();
+      // WebLinksAddon を解放する。§3.2 規約: bellSub.dispose() の直後 (webglHandle より前)
+      webLinksHandle.dispose();
       // v0.5 改善: OSC 10/11/110/111 (default fg/bg 設定) suppress ハンドラを解放
       osc10Sub.dispose();
       osc11Sub.dispose();

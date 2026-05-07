@@ -66,6 +66,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
+    writeInput: vi.fn(),
     dispose: disposeFn,
     get disposeCallCount() { return disposeCallCount; },
   };
@@ -222,6 +223,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
     resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
+    writeInput: vi.fn(),
     dispose: vi.fn(() => { callOrder.push('dispose'); }),
     get callOrder() { return callOrder; },
   };
@@ -281,6 +283,7 @@ describe('applySettings', () => {
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
+      writeInput: vi.fn(),
       dispose() {
         disposed = true;
       },
@@ -346,6 +349,7 @@ describe('titleSub dispose', () => {
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
+      writeInput: vi.fn(),
       dispose: () => {
         sub.dispose();
         titleSub.dispose();
@@ -465,6 +469,7 @@ describe('memory leak', () => {
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
         resetForRecycle: vi.fn(),
+        writeInput: vi.fn(),
         dispose: disposeMock,
       };
       acquireRuntime(id, () => runtime);
@@ -572,6 +577,7 @@ describe('IME compositionAbort (2.13)', () => {
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
+      writeInput: vi.fn(),
       dispose() {
         sub.dispose();
         titleSub.dispose();

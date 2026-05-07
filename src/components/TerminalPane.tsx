@@ -9,7 +9,7 @@ import {
   forceDisposeAll,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
-import { resizePty, writePty } from '../lib/pty';
+import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import '../styles/terminal.css';
 
@@ -224,19 +224,56 @@ export const TerminalPane = memo(function TerminalPane({
 
       // Ctrl+V: クリップボードから貼り付け (v0.5 改善)
       // Windows ターミナル慣習に合わせて Ctrl+V を有効化。Ctrl+Shift+V は予約 (Linux 慣習用)。
+      // runtime.writeInput を使うことで spawn 中 (ptyHandle 未確定) でも pendingInputs に積まれる。
       if (!e.shiftKey && e.code === 'KeyV') {
         e.preventDefault();
-        const handle = runtime.ptyHandle;
-        if (handle) {
-          navigator.clipboard
-            .readText()
-            .then((text) => {
-              if (text) void writePty(handle.id, text).catch(() => {});
-            })
-            .catch((err) => {
-              console.warn('[TerminalPane] clipboard.readText failed:', err);
-            });
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) runtime.writeInput(text);
+          })
+          .catch((err) => {
+            console.warn('[TerminalPane] clipboard.readText failed:', err);
+          });
+        return false;
+      }
+
+      // Ctrl+C: 選択ありならコピー、なしなら SIGINT 通過 (Windows Terminal / VSCode 慣習)
+      // - 選択 (空文字列でない) があるときのみコピー・preventDefault する
+      // - hasSelection()=true でも getSelection()=='' のような異常系は SIGINT 経路へフォールバック
+      // - clearSelection は writeText 成功時のみ実行し、失敗時はリトライできるよう選択を残す
+      // - writeText 解決を待つ間にユーザーが新しい選択をした場合、その新選択を消さないよう
+      //   getSelection() === sel の同一性チェックを行う
+      if (!e.shiftKey && e.code === 'KeyC') {
+        if (runtime.term.hasSelection()) {
+          const sel = runtime.term.getSelection();
+          if (sel) {
+            e.preventDefault();
+            navigator.clipboard
+              .writeText(sel)
+              .then(() => {
+                if (runtime.term.getSelection() === sel) {
+                  runtime.term.clearSelection();
+                }
+              })
+              .catch((err) => {
+                console.warn('[TerminalPane] clipboard.writeText failed:', err);
+              });
+            return false;
+          }
         }
+        return true;
+      }
+
+      // Ctrl+Enter / Ctrl+NumpadEnter: 改行を挿入 (Claude Code 等 readline 系 CLI で newline 扱い)
+      // xterm のデフォルトでは Ctrl+Enter は \r (素の Enter と同じ) を送るため、
+      // Claude Code は確定として扱ってしまう。Alt+Enter / Option+Enter と同じ ESC+CR
+      // (\x1b\r) を送ることで、Mac Terminal の Option+Enter と同様に改行として認識される。
+      // Shift も押されているケース (Ctrl+Shift+Enter) は対象外。
+      // runtime.writeInput を使うことで spawn 中でも pendingInputs に積まれて消失しない。
+      if (!e.shiftKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+        e.preventDefault();
+        runtime.writeInput('\x1b\r');
         return false;
       }
 

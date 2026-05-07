@@ -232,16 +232,6 @@ export const GroupSection = memo(function GroupSection({
               />
             ))}
           </SortableContext>
-
-          {/* "+ Add Tab" インラインボタン（常に末尾に表示） */}
-          {/* F3: type="button" 追加 */}
-          <button
-            type="button"
-            className="group-add-tab-btn"
-            onClick={() => createTab(groupId)}
-          >
-            + Add Tab
-          </button>
         </GroupBody>
       )}
     </div>

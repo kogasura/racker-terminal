@@ -426,8 +426,12 @@ export const useAppStore = create<Store>()(
     const tabId = newId();
     set((state) => {
       // groupId の解決:
-      //   1. 未指定 or 存在しない groupId → groups[0] を使う
-      //   2. groups も空 → Default グループを自動作成
+      //   1. 指定されかつ存在 → そのグループを使う
+      //   2. groups が空 → Default グループを自動作成
+      //   3. 未指定 or 不正:
+      //      - アクティブタブが存在し、その所属グループが現存 → そのグループに追加
+      //        (favorite / Ctrl+T / 既定タブ起動など、現在の作業文脈を維持する目的)
+      //      - そうでなければ groups[0] にフォールバック
       const existsGroup =
         groupId !== undefined && state.groups.some((g) => g.id === groupId);
 
@@ -443,8 +447,14 @@ export const useAppStore = create<Store>()(
         newGroups = [{ id: newGroupId, title: 'Default', collapsed: false, tabIds: [] }];
         resolvedGroupId = newGroupId;
       } else {
-        // groupId 未指定 or 不正: groups[0] にフォールバック
-        resolvedGroupId = state.groups[0].id;
+        // 未指定 or 不正: アクティブタブのグループ → groups[0] の順でフォールバック
+        // activeTabId は string | null。Truthy 判定ではなく null 比較で意図を明示する
+        // (将来空文字列が入る可能性に対する防御は state.tabs[id] が undefined を返すことで担保される)
+        const activeTab =
+          state.activeTabId !== null ? state.tabs[state.activeTabId] : undefined;
+        const activeGroupExists =
+          activeTab !== undefined && state.groups.some((g) => g.id === activeTab.groupId);
+        resolvedGroupId = activeGroupExists ? activeTab!.groupId : state.groups[0].id;
       }
 
       const tab: Tab = {
@@ -465,8 +475,11 @@ export const useAppStore = create<Store>()(
           : g,
       );
 
+      // 折りたたまれたグループに新規タブを追加した場合、UI 上は隠れたまま
+      // activeTabId だけ更新されてしまうため、対象グループを展開する。
+      // navigateToTab / removeTab フォールバックと同じ整合性。
       return {
-        groups: updatedGroups,
+        groups: expandGroupContaining(updatedGroups, tabId),
         tabs: { ...state.tabs, [tabId]: tab },
         activeTabId: tabId,
       };

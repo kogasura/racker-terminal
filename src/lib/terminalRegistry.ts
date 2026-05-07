@@ -273,6 +273,22 @@ export interface TerminalRuntime {
   resetForRecycle(): void;
 
   /**
+   * 任意の入力文字列を PTY に送る (またはバッファに積む)。
+   * - dispose 済み: no-op
+   * - PTY 未起動 (spawn 中): pendingInputs に積み、startSpawn 完了時にリプレイされる
+   * - PTY 起動済み: 即座に writePty に送る
+   *
+   * onData 経由 (xterm のキー入力) と同じバッファを共有するため、
+   * spawn 中の Ctrl+Enter / Ctrl+V 等の特殊ショートカットでも入力が消失しない。
+   * 失敗時は fire-and-forget (内部で catch して握りつぶす)。
+   *
+   * NOTE: 意図的に IME 合成ガード (imeGuard.shouldDrop) を通さない。
+   * Ctrl+V / Ctrl+Enter 等は IME 合成中であってもアプリのショートカット文脈で
+   * 動作させたいケースがあり、onData 経路 (textarea 入力) と異なる責務を持つ。
+   */
+  writeInput(data: string): void;
+
+  /**
    * OSC タイトル変更購読の IDisposable。
    * createRuntime 内で term.onTitleChange を購読して取得する。
    * dispose() の中で titleSub.dispose() を呼ぶ。
@@ -538,6 +554,15 @@ export function createRuntime(
       // dispose() との違い: xterm / fitAddon / onDataSub / isDisposed には触れない。
       ptyHandle = null;
       spawning = false;
+    },
+
+    writeInput(data: string) {
+      if (isDisposed) return;
+      if (ptyHandle) {
+        void writePty(ptyHandle.id, data).catch(() => {});
+      } else {
+        pendingInputs.push(data);
+      }
     },
 
     applySettings(settings) {

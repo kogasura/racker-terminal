@@ -296,27 +296,6 @@
 }
 
 
-/* ----- Add Tab インラインボタン ----- */
-.group-add-tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 26px; /* dot 幅分インデント */
-  width: 100%;
-  background: none;
-  border: none;
-  color: var(--sidebar-fg);
-  cursor: pointer;
-  font-size: 12px;
-  opacity: 0.5;
-  text-align: left;
-}
-
-.group-add-tab-btn:hover {
-  opacity: 1;
-  background: var(--tab-item-bg-hover);
-}
-
 /* ----- TabItem ----- */
 .tab-item {
   display: flex;

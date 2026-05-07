@@ -83,13 +83,65 @@ describe('appStore', () => {
       expect(state.activeTabId).toBe(tabId);
     });
 
-    it('グループ未指定時は groups[0] を使う', () => {
+    it('グループ未指定時は groups[0] を使う (アクティブタブなし)', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab();
 
       const state = useAppStore.getState();
       expect(state.tabs[tabId].groupId).toBe(groupId);
       expect(state.groups[0].tabIds).toContain(tabId);
+    });
+
+    it('グループ未指定時はアクティブタブのグループを優先する', () => {
+      const g1 = useAppStore.getState().createGroup('First');
+      const g2 = useAppStore.getState().createGroup('Second');
+      // g2 にタブを作りそれをアクティブにする
+      const activeInG2 = useAppStore.getState().createTab(g2);
+      expect(useAppStore.getState().activeTabId).toBe(activeInG2);
+
+      // groupId 未指定で createTab → アクティブタブのグループ (g2) に追加されるはず
+      const tabId = useAppStore.getState().createTab();
+
+      const state = useAppStore.getState();
+      expect(state.tabs[tabId].groupId).toBe(g2);
+      expect(state.groups.find((g) => g.id === g2)?.tabIds).toContain(tabId);
+      expect(state.groups.find((g) => g.id === g1)?.tabIds).not.toContain(tabId);
+    });
+
+    it('アクティブタブの groupId が現存グループに無い (孤児) ときは groups[0] にフォールバックする', () => {
+      const g1 = useAppStore.getState().createGroup('First');
+      const g2 = useAppStore.getState().createGroup('Second');
+      useAppStore.getState().createTab(g2);
+
+      // 孤児状態を作る: tabs から削除せず、groups から g2 だけ消すことで activeTabId は
+      // 残るが tabs[activeTabId].groupId が現存グループに無い状態をシミュレート。
+      // 通常 API では作れないためテスト目的で setState を直接操作する。
+      useAppStore.setState((s) => ({
+        groups: s.groups.filter((g) => g.id !== g2),
+      }));
+
+      const tabId = useAppStore.getState().createTab();
+
+      const state = useAppStore.getState();
+      expect(state.tabs[tabId].groupId).toBe(g1);
+      expect(state.groups.find((g) => g.id === g1)?.tabIds).toContain(tabId);
+    });
+
+    it('折りたたみグループのタブをアクティブにした状態で createTab すると、そのグループが展開される', () => {
+      const g1 = useAppStore.getState().createGroup('Collapsed');
+      const activeInG1 = useAppStore.getState().createTab(g1);
+      // g1 を折りたたむ
+      useAppStore.getState().toggleCollapse(g1);
+      expect(useAppStore.getState().groups.find((g) => g.id === g1)?.collapsed).toBe(true);
+      expect(useAppStore.getState().activeTabId).toBe(activeInG1);
+
+      // groupId 未指定で createTab → アクティブタブの所属グループ (g1) に追加され、g1 が展開される
+      const tabId = useAppStore.getState().createTab();
+
+      const state = useAppStore.getState();
+      expect(state.tabs[tabId].groupId).toBe(g1);
+      expect(state.groups.find((g) => g.id === g1)?.collapsed).toBe(false);
+      expect(state.activeTabId).toBe(tabId);
     });
 
     it('グループ未指定でグループが存在しない場合は自動作成される', () => {

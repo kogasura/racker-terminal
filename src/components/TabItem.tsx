@@ -77,7 +77,12 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
           onContextMenu={isEditing ? (e) => e.preventDefault() : undefined}
         >
-          <span className={STATUS_DOT_CLASS[tab.status]} />
+          <span
+            className={
+              STATUS_DOT_CLASS[tab.status] +
+              (tab.needsAttention ? ' tab-item__status-dot--attention' : '')
+            }
+          />
 
           <InlineEdit
             id={tabId}

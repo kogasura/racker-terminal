@@ -329,6 +329,43 @@
 .tab-item__status-dot--spawning { background: var(--status-spawning); }
 .tab-item__status-dot--crashed  { background: var(--status-crashed); }
 
+/* アテンション通知リング: BEL 受信タブにオレンジの外周リングを付加する。
+   既存の status 色を上書きせず box-shadow で装飾を重ねるため live/spawning/crashed 全状態に対応。 */
+@keyframes attention-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+.tab-item__status-dot--attention {
+  box-shadow: 0 0 0 2px var(--status-attention);
+  animation: attention-pulse 2s ease-in-out infinite;
+}
+
+/* アニメーションが煩わしいユーザーに配慮してモーション無効化 */
+@media (prefers-reduced-motion: reduce) {
+  .tab-item__status-dot--attention {
+    animation: none;
+  }
+}
+
+/* グループヘッダのアテンションインジケータ: 折りたたみ中に内部タブが attention のとき表示 */
+.group-header__attention {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-attention);
+  box-shadow: 0 0 0 2px var(--status-attention);
+  animation: attention-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-header__attention {
+    animation: none;
+  }
+}
+
 .tab-item__title {
   flex: 1;
   overflow: hidden;

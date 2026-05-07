@@ -50,6 +50,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
+  const bellSub = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
   const disposeFn = vi.fn(() => { disposeCallCount++; });
 
@@ -62,6 +63,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     compositionAbort,
     titleSub,
     oscSub,
+    bellSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
@@ -208,6 +210,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const sub = { dispose: vi.fn() };
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
+  const bellSub = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
 
   const runtime: TerminalRuntime & { callOrder: string[] } = {
@@ -219,6 +222,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     compositionAbort,
     titleSub,
     oscSub,
+    bellSub,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
@@ -263,6 +267,7 @@ describe('applySettings', () => {
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
+    const bellSub = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -273,6 +278,7 @@ describe('applySettings', () => {
       compositionAbort,
       titleSub,
       oscSub,
+      bellSub,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
         if (disposed) return;
@@ -335,6 +341,7 @@ describe('titleSub dispose', () => {
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
+    const bellSub = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -345,6 +352,7 @@ describe('titleSub dispose', () => {
       compositionAbort,
       titleSub,
       oscSub,
+      bellSub,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
@@ -354,6 +362,7 @@ describe('titleSub dispose', () => {
         sub.dispose();
         titleSub.dispose();
         oscSub.dispose();
+        bellSub.dispose();
         compositionAbort.abort();
       },
     };
@@ -363,6 +372,7 @@ describe('titleSub dispose', () => {
 
     expect(titleSub.dispose).toHaveBeenCalledTimes(1);
     expect(oscSub.dispose).toHaveBeenCalledTimes(1);
+    expect(bellSub.dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -455,6 +465,7 @@ describe('memory leak', () => {
       const sub = { dispose: vi.fn() };
       const titleSub = { dispose: vi.fn() };
       const oscSub = { dispose: vi.fn() };
+      const bellSub = { dispose: vi.fn() };
       const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
         get term() { return {} as never; },
@@ -465,6 +476,7 @@ describe('memory leak', () => {
         compositionAbort,
         titleSub,
         oscSub,
+        bellSub,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
@@ -564,6 +576,7 @@ describe('IME compositionAbort (2.13)', () => {
     const sub = { dispose: vi.fn() };
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
+    const bellSub = { dispose: vi.fn() };
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
       get fitAddon() { return {} as never; },
@@ -573,6 +586,7 @@ describe('IME compositionAbort (2.13)', () => {
       compositionAbort,
       titleSub,
       oscSub,
+      bellSub,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),

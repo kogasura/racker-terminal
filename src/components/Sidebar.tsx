@@ -40,12 +40,18 @@ interface TabPreviewData {
   id: string;
   displayTitle: string;
   status: TabStatus;
+  needsAttention?: boolean;
 }
 
 function TabItemPreview({ tab }: { tab: TabPreviewData }) {
   return (
     <div className="tab-item tab-item--drag-overlay">
-      <span className={STATUS_DOT_CLASS[tab.status]} />
+      <span
+        className={
+          STATUS_DOT_CLASS[tab.status] +
+          (tab.needsAttention ? ' tab-item__status-dot--attention' : '')
+        }
+      />
       <span className="tab-item__title">{tab.displayTitle}</span>
     </div>
   );
@@ -100,14 +106,21 @@ export const Sidebar = memo(function Sidebar() {
   // B3: Settings Dialog の開閉状態
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // F2: useShallow で id/displayTitle/status の 3 フィールドのみ抽出する。
+  // F2: useShallow で id/displayTitle/status/needsAttention の 4 フィールドのみ抽出する。
   // Tab オブジェクト全体を返すと OSC タイトル更新等で Sidebar 全体が再レンダーされ、
   // DndContext の collision 計算が走り直す問題を防ぐ。
   const activeDragTab = useAppStore(
     useShallow((s) => {
       if (!activeDragId || activeDragKind !== DRAG_KIND.TAB) return null;
       const t = s.tabs[activeDragId];
-      return t ? { id: t.id, displayTitle: getTabDisplayTitle(t), status: t.status } : null;
+      return t
+        ? {
+            id: t.id,
+            displayTitle: getTabDisplayTitle(t),
+            status: t.status,
+            needsAttention: t.needsAttention,
+          }
+        : null;
     }),
   );
 

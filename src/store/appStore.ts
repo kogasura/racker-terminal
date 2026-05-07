@@ -17,6 +17,7 @@ const defaultSettings: Settings = {
   fontSize: 12.5,
   scrollback: 10000,
   transparency: 1.0,
+  bellEnabled: true,
 };
 
 /**
@@ -287,6 +288,14 @@ interface AppActions {
    */
   setWslDistros: (distros: string[]) => void;
 
+  /**
+   * タブのアテンション状態を設定する。BEL 受信時に terminalRegistry → TerminalPane 経由で呼ぶ。
+   * - 存在しない tabId は no-op
+   * - value === true かつ tabId === activeTabId は no-op（アクティブタブには通知しない）
+   * - 既に同じ値なら no-op（不要な再レンダ抑止）
+   */
+  setTabAttention: (tabId: string, value: boolean) => void;
+
   // --- updater アクション ---
   /**
    * 起動時に App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新があれば
@@ -404,12 +413,31 @@ export const useAppStore = create<Store>()(
     });
   },
 
-  setActiveTab: (tabId) => set({ activeTabId: tabId }),
+  setActiveTab: (tabId) =>
+    set((state) => {
+      const tab = tabId !== null ? state.tabs[tabId] : undefined;
+      // アクティブ化したタブの attention をクリアする
+      if (tab?.needsAttention) {
+        return {
+          activeTabId: tabId,
+          tabs: { ...state.tabs, [tabId!]: { ...tab, needsAttention: false } },
+        };
+      }
+      return { activeTabId: tabId };
+    }),
   navigateToTab: (tabId) =>
-    set((state) => ({
-      activeTabId: tabId,
-      groups: expandGroupContaining(state.groups, tabId),
-    })),
+    set((state) => {
+      const tab = state.tabs[tabId];
+      const base = {
+        activeTabId: tabId,
+        groups: expandGroupContaining(state.groups, tabId),
+      };
+      // アクティブ化したタブの attention をクリアする
+      if (tab?.needsAttention) {
+        return { ...base, tabs: { ...state.tabs, [tabId]: { ...tab, needsAttention: false } } };
+      }
+      return base;
+    }),
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
   setContextMenuOpen: (open) => set({ contextMenuOpen: open }),
@@ -777,6 +805,17 @@ export const useAppStore = create<Store>()(
   },
 
   setWslDistros: (distros) => set({ wslDistros: distros }),
+
+  setTabAttention: (tabId, value) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};  // 存在しない tabId は no-op
+      // value === true でアクティブタブと一致するときは無視（アクティブには通知しない）。
+      // value === false は activeTabId 一致でも常に通過し、クリア経路として動作する。
+      if (value === true && tabId === state.activeTabId) return {};
+      if (tab.needsAttention === value) return {};  // 同値は no-op（不要な再レンダ抑止）
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, needsAttention: value } } };
+    }),
 
   runUpdateCheck: async () => {
     if (get().updatePhase !== 'idle') return;

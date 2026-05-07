@@ -109,11 +109,6 @@ export interface Settings {
    * Phase 4 P-H で追加。
    */
   defaultFavoriteId?: string;
-  /**
-   * BEL (\x07) 受信でサイドバータブに注意リングを表示するかどうか。
-   * default: true (undefined も true と同義で扱う)
-   */
-  bellEnabled?: boolean;  // default: true
 }
 
 /**
@@ -164,7 +159,7 @@ export interface ClosedTab {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].needsAttention, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings (settings.bellEnabled 含む)
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

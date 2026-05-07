@@ -360,7 +360,7 @@ export function createRuntime(
     onCwdChange: (cwd: string) => void;
     /**
      * BEL (\x07) 受信時のコールバック。
-     * TerminalPane の useEffect 内で bellEnabled / activeTabId チェック後に setTabAttention を呼ぶ。
+     * TerminalPane の useEffect 内で activeTabId チェック後に setTabAttention を呼ぶ。
      */
     onBell: () => void;
   },

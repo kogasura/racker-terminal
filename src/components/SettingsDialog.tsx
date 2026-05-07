@@ -63,12 +63,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       patch.transparency = sanitizedTransparency;
     }
 
-    // bellEnabled は boolean で clamp 不要。設定値と draft が異なる場合のみ更新する
-    const draftBellEnabled = draft.bellEnabled ?? true;
-    if (draftBellEnabled !== (settings.bellEnabled ?? true)) {
-      patch.bellEnabled = draftBellEnabled;
-    }
-
     if (Object.keys(patch).length > 0) {
       updateSettings({ ...settings, ...patch });
     }
@@ -145,15 +139,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 透明度は frameless window モードでのみ有効です。
               </small>
             </div>
-
-            <label className="dialog-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="checkbox"
-                checked={draft.bellEnabled ?? true}
-                onChange={(e) => setDraft({ ...draft, bellEnabled: e.target.checked })}
-              />
-              <span className="dialog-label" style={{ opacity: 1 }}>ベル通知 (タブで注意を引く)</span>
-            </label>
 
             <div className="dialog-actions">
               <button type="button" className="dialog-btn dialog-btn--cancel" onClick={onClose}>

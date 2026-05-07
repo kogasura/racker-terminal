@@ -51,7 +51,7 @@
       "endpoints": [
         "https://github.com/kogasura/racker-terminal/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBMjYyQkJGMUJFRjE2QkEKUldTNkZ1OGJ2eXNtT3NwNnhFWFlidHNaSTFvSzl0L3hBMENpRHluVnBSa3NRMVF1QWlGdXM5Z0MK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcwODE1RTY3NDM0RThCNTgKUldSWWkwNURaMTZCY0xONUswVWdta09xNWlGVHhQZmN0ZmtTamxpSytXRzhNNHdheHkrUTI4dDUK",
       "windows": {
         "installMode": "passive"
       }

@@ -85,6 +85,14 @@ export const TerminalPane = memo(function TerminalPane({
         onOscTitle: (title) => updateTabOscTitle(tabId, title),
         // OSC 7 cwd 変更通知を受け取って updateTabCwd に渡す（Phase 4 P-G で追加）
         onCwdChange: (cwd) => useAppStore.getState().updateTabCwd(tabId, cwd),
+        // BEL (\x07) 受信: getState() で都度参照し stale closure を回避する（onCwdChange と同パターン）
+        // activeTabId は store 側 setTabAttention でも再判定するが、無駄な action 呼び出し
+        // 削減と setActiveTab → 直後の BEL という microtask race の早期遮断のため事前チェック。
+        onBell: () => {
+          const state = useAppStore.getState();
+          if (state.activeTabId === tabId) return;
+          state.setTabAttention(tabId, true);
+        },
       }),
     );
     runtimeRef.current = runtime;

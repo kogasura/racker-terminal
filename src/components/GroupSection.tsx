@@ -37,9 +37,11 @@ export const GroupSection = memo(function GroupSection({
   const groupView = useAppStore(
     useShallow((s) => {
       const g = s.groups.find((x) => x.id === groupId);
-      return g
-        ? { title: g.title, collapsed: g.collapsed, tabIds: g.tabIds }
-        : null;
+      if (!g) return null;
+      // 折りたたみ中かつ内部タブに attention があるかを算出する
+      // 展開中は子タブ自身に表示するためヘッダには出さない（collapsed 条件で干渉なし）
+      const hasAttentionTab = g.collapsed && g.tabIds.some((id) => s.tabs[id]?.needsAttention);
+      return { title: g.title, collapsed: g.collapsed, tabIds: g.tabIds, hasAttentionTab };
     }),
   );
   const activeTabId = useAppStore((s) => s.activeTabId);
@@ -86,7 +88,7 @@ export const GroupSection = memo(function GroupSection({
 
   if (!groupView) return null;
 
-  const { title, collapsed, tabIds } = groupView;
+  const { title, collapsed, tabIds, hasAttentionTab } = groupView;
   const isEmpty = tabIds.length === 0;
 
   // グループ削除可能条件: タブが空 + グループが 2 個以上
@@ -156,6 +158,9 @@ export const GroupSection = memo(function GroupSection({
               ⠿
             </span>
             <span className="group-header__chevron">{collapsed ? '▶' : '▼'}</span>
+
+            {/* 折りたたみ中に内部タブが attention 状態のとき、ヘッダにインジケータを表示する */}
+            {hasAttentionTab && <span className="group-header__attention" aria-label="注意が必要なタブがあります" />}
 
             <InlineEdit
               id={groupId}

@@ -16,6 +16,8 @@
   --status-spawning: #e0af68;
   --status-live: #9ece6a;
   --status-crashed: #f7768e;
+  /* アテンション通知リング (Tokyo Night yellow — BEL 受信タブに外周リングで表示) */
+  --status-attention: #e0af68;
 
   /* crashed 状態の薄赤背景（MainPane 用） */
   --crashed-overlay-bg: rgba(247, 118, 142, 0.08);

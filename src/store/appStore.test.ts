@@ -1084,6 +1084,62 @@ describe('appStore', () => {
     });
   });
 
+  // --- setTabAttention ---
+  describe('setTabAttention', () => {
+    it('setTabAttention(id, true) で needsAttention が true になる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      // 別タブをアクティブにしてから対象タブの attention をセットする
+      const otherTabId = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().setActiveTab(otherTabId);
+
+      useAppStore.getState().setTabAttention(tabId, true);
+
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+    });
+
+    it('アクティブタブに setTabAttention(active, true) を呼んでも無視される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      expect(useAppStore.getState().activeTabId).toBe(tabId);
+
+      useAppStore.getState().setTabAttention(tabId, true);
+
+      // アクティブタブなので attention はセットされない
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+    });
+
+    it('setActiveTab で attention タブが選ばれたら自動でクリアされる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      const otherTabId = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().setActiveTab(otherTabId);
+      // attention を付与
+      useAppStore.getState().setTabAttention(tabId, true);
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+
+      // attention タブをアクティブにするとクリアされる
+      useAppStore.getState().setActiveTab(tabId);
+
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+    });
+
+    it('navigateToTab で attention タブが選ばれたら自動でクリアされる', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      const otherTabId = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().setActiveTab(otherTabId);
+      // attention を付与
+      useAppStore.getState().setTabAttention(tabId, true);
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+
+      // navigateToTab でもクリアされる
+      useAppStore.getState().navigateToTab(tabId);
+
+      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+    });
+  });
+
   // --- updateSettings ---
   describe('updateSettings', () => {
     it('patch を適用して settings が更新される', () => {

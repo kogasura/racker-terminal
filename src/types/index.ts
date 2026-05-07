@@ -40,6 +40,11 @@ export interface Tab {
    * Phase 3 の sleep/wake でタブ ID を保ちつつ PTY だけ付け替えるための設計。
    */
   ptyId?: string;
+  /**
+   * BEL (\x07) 受信により注意が必要な状態。ランタイム状態のため persist 対象外。
+   * アクティブタブには設定しない（即見えているため）。アクティブ化で自動クリアされる。
+   */
+  needsAttention?: boolean;
 }
 
 /**
@@ -153,7 +158,7 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, wslDistros
+ * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].needsAttention, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings
  */
 export interface AppState {

@@ -304,6 +304,13 @@ export interface TerminalRuntime {
   oscSub: { dispose: () => void };
 
   /**
+   * BEL (\x07) 受信購読の IDisposable。
+   * createRuntime 内で term.onBell を購読して取得する。
+   * dispose() の中で oscSub.dispose() の隣に配置して解放する。
+   */
+  bellSub: IDisposable;
+
+  /**
    * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
    * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
    * fontSize / fontFamily / scrollback を term.options に直接書き込む。
@@ -351,6 +358,11 @@ export function createRuntime(
      * Phase 4 P-G で追加。
      */
     onCwdChange: (cwd: string) => void;
+    /**
+     * BEL (\x07) 受信時のコールバック。
+     * TerminalPane の useEffect 内で activeTabId チェック後に setTabAttention を呼ぶ。
+     */
+    onBell: () => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -496,6 +508,17 @@ export function createRuntime(
     return false;
   });
 
+  // BEL (\x07) を購読してアテンション通知を発火する。
+  // isDisposed ガード後に callbacks.onBell を呼ぶ（titleSub / oscSub と同じパターン）。
+  const bellSub = term.onBell(() => {
+    if (isDisposed) return;
+    try {
+      callbacks.onBell();
+    } catch (e) {
+      console.warn('[terminalRegistry] onBell threw:', e);
+    }
+  });
+
   // v0.5 改善: OSC 10/11 (default foreground/background color 設定) を無視する。
   // nushell / PowerShell 等のシェルが起動時に背景色を OSC 11 で設定すると、
   // 我々の theme.background (transparency 設定) が上書きされて不透明になってしまう。
@@ -515,6 +538,7 @@ export function createRuntime(
     compositionAbort,
     titleSub,
     oscSub,
+    bellSub,
 
     setOnEvent(handler) {
       if (isDisposed) return;
@@ -609,6 +633,10 @@ export function createRuntime(
       titleSub.dispose();
       // OSC 7 cwd 追跡購読を解放する (Phase 4 P-G で追加)
       oscSub.dispose();
+      // BEL 購読を解放する。§3.2 の順序規約に従い oscSub の直後に呼ぶ
+      // (onBell コールバック中の use-after-dispose を防ぐため、isDisposed=true を立てた
+      // 後に他の dispose と一緒の塊で実行する)
+      bellSub.dispose();
       // v0.5 改善: OSC 10/11/110/111 (default fg/bg 設定) suppress ハンドラを解放
       osc10Sub.dispose();
       osc11Sub.dispose();

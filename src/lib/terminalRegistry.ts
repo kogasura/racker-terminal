@@ -819,6 +819,14 @@ export function getAllRuntimes(): TerminalRuntime[] {
   return Array.from(runtimes.values()).map((e) => e.runtime);
 }
 
+/**
+ * tabId に紐づく runtime を返す。未登録なら null。
+ * useFileDropToTerminal 等、外部から特定タブへ writeInput を行う際に使用する。
+ */
+export function getRuntime(tabId: string): TerminalRuntime | null {
+  return runtimes.get(tabId)?.runtime ?? null;
+}
+
 /** テスト用: 登録済みの runtime 数を返す */
 export function getRuntimeCount(): number {
   return runtimes.size;

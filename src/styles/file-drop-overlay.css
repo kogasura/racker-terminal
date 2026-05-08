@@ -1,0 +1,47 @@
+/* FileDropOverlay: ファイルドラッグ中にターミナル領域全体を覆うオーバーレイ */
+
+@keyframes file-drop-overlay-fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.file-drop-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* .terminal-crashed-overlay の z-index: 10 より上に配置する */
+  z-index: 11;
+  /* drop イベントは Tauri 経由で受信するため HTML5 D&D イベント遮断は不要。
+     視覚オーバーレイがクリック等を奪わないよう pointer-events: none にする。 */
+  pointer-events: none;
+  animation: file-drop-overlay-fadein 200ms ease-out;
+}
+
+.file-drop-overlay__panel {
+  background: #1a1b26;
+  color: #c0caf5;
+  border: 1px solid #414868;
+  border-radius: 8px;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-drop-overlay__icon {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.file-drop-overlay__message {
+  font-size: 16px;
+  font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
+  white-space: nowrap;
+}

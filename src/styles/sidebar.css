@@ -98,18 +98,25 @@
 }
 
 /* ----- FavoritesSection ----- */
+/* Tabs と視覚的に区別するため、Favorites はカード調にする。
+   背景・枠線・角丸を持たせ、内部に list を抱える。 */
 .favorites-section {
-  border-bottom: 1px solid var(--sidebar-border);
-  padding-bottom: 4px;
-  margin-bottom: 4px;
+  margin: 0 8px 8px;
+  padding: 4px;
+  background: var(--sidebar-bg-elevated);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 6px;
+  /* 子要素の角丸とカード枠を綺麗に揃える */
+  overflow: hidden;
 }
 
 .favorites-header {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  background: var(--group-header-bg);
+  padding: 4px 6px;
+  /* カード化に伴いヘッダ背景は透明にする (カード自体の背景に乗る) */
+  background: transparent;
   color: var(--sidebar-fg);
   cursor: pointer;
   user-select: none;
@@ -117,10 +124,14 @@
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  border-radius: 4px;
+  /* tabs の濃い行と区別するため、ラベルはやや控えめに */
+  opacity: 0.75;
 }
 
 .favorites-header:hover {
-  filter: brightness(1.15);
+  opacity: 1;
+  background: var(--tab-item-bg-hover);
 }
 
 .favorites-header__title {
@@ -131,11 +142,11 @@
 }
 
 .favorites-list {
-  padding: 2px 0;
+  padding: 2px 0 0;
 }
 
 .favorites-empty {
-  padding: 6px 12px;
+  padding: 6px 8px;
   font-size: 11px;
   color: var(--sidebar-fg);
   opacity: 0.5;
@@ -146,12 +157,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  padding: 4px 8px;
   cursor: pointer;
   background: var(--tab-item-bg);
   color: var(--sidebar-fg);
   user-select: none;
   font-size: 12px;
+  /* カード内で行ごとに丸みをつけ、tab-item の角張った行と区別 */
+  border-radius: 4px;
 }
 
 .favorite-item:hover {
@@ -177,9 +190,11 @@
 }
 
 .favorite-item__icon {
-  font-size: 10px;
-  opacity: 0.7;
+  font-size: 12px;
+  opacity: 0.65;
   flex-shrink: 0;
+  /* tab-item の status-dot (丸) と視覚的に差別化するため、わずかに太らせる */
+  line-height: 1;
 }
 
 /* Phase 4 P-H: 既定お気に入りのアイコン（Tokyo Night yellow） */
@@ -464,21 +479,26 @@
 .favorites-add-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 4px 10px;
+  padding: 4px 8px;
+  margin-top: 2px;
   width: 100%;
   background: none;
-  border: none;
+  /* カード内の追加ボタンらしく dashed border で視認性 UP */
+  border: 1px dashed transparent;
+  border-radius: 4px;
   color: var(--sidebar-fg);
   cursor: pointer;
   font-size: 11px;
-  opacity: 0.5;
-  text-align: left;
+  opacity: 0.55;
+  text-align: center;
 }
 
 .favorites-add-btn:hover {
   opacity: 1;
   background: var(--tab-item-bg-hover);
+  border-color: var(--sidebar-border);
 }
 
 /* ----- FavoriteDialog (Radix Dialog) ----- */

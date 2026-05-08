@@ -6,12 +6,16 @@ import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import { UpdateDialog } from './components/UpdateDialog';
+import { useFileDropToTerminal } from './hooks/useFileDropToTerminal';
+import { FileDropOverlay } from './components/FileDropOverlay';
 import './styles/variables.css';
 import './styles/title-bar.css';
 import './styles/dropdown-menu.css';
 import './styles/update-dialog.css';
 
 function App() {
+  const { isDragging } = useFileDropToTerminal();
+
   useEffect(() => {
     // persist の rehydrate 完了を待ってから自動初期化する。
     // 復元データがある場合は createGroup/createTab を呼ばない。
@@ -108,6 +112,7 @@ function App() {
       <div className="app-body">
         <Sidebar />
         <TerminalPaneContainer />
+        <FileDropOverlay isDragging={isDragging} />
       </div>
     </div>
   );

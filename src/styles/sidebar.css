@@ -312,17 +312,24 @@
 
 
 /* ----- TabItem ----- */
+/* VSCode のエクスプローラ風に階層を表現する。
+   - 左 padding を増やしてグループより一段インデント
+   - アクティブタブは左に 2px のアクセントバー (border-left)
+   - 非アクティブ時も同サイズの transparent border で行幅をそろえる */
 .tab-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  /* group-header の chevron (左端から 22px) より少し右に揃える */
+  padding: 5px 10px 5px 22px;
   cursor: pointer;
   background: var(--tab-item-bg);
   color: var(--sidebar-fg);
   user-select: none;
   font-size: 13px;
   position: relative;
+  /* active 時の左アクセントバー用スペース。常時確保して幅を揃える */
+  border-left: 2px solid transparent;
 }
 
 .tab-item:hover {
@@ -331,6 +338,8 @@
 
 .tab-item.active {
   background: var(--tab-item-bg-active);
+  /* VSCode のエディタタブと同じく左端にアクセントカラーのバーを表示 */
+  border-left-color: var(--focus-ring);
 }
 
 .tab-item__status-dot {
@@ -449,11 +458,34 @@
 .group-body {
   min-height: 4px;
   transition: background 120ms ease;
+  /* VSCode のエクスプローラ風にインデントガイド (薄い縦線) を出す。
+     ::before の絶対配置で線を引き、tab-item のインデントとは独立させる。 */
+  position: relative;
+}
+
+/* インデントガイド: group-header の chevron 中央に揃える縦線 */
+.group-body::before {
+  content: '';
+  position: absolute;
+  /* group-header__drag-handle (14px) + gap (4px) + chevron (14px) の中央 ≒ 25px。
+     見た目を chevron の右側に流して階層を強調する位置に微調整。 */
+  left: 22px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--sidebar-border);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* F9: 空グループは drop 領域を拡大してターゲットにしやすくする */
 .group-body:not(:has(.tab-item)) {
   min-height: 24px;
+}
+
+/* 空グループのときはガイド線を出さない (空のラインだけ伸びるのを防ぐ) */
+.group-body:not(:has(.tab-item))::before {
+  display: none;
 }
 
 /* ドラッグ中にグループ本体がターゲットになった時のハイライト */

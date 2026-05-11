@@ -58,22 +58,38 @@ function App() {
     return unsub;
   }, []);
 
-  // 起動時に updater をチェック (1 回のみ)。
-  // persist hydration 完了を待ってから実行する。
+  // updater のチェック:
+  // - 起動時に 1 回 (persist hydration 完了を待つ)
+  // - 以降は 1 時間ごとに定期チェックして、起動しっぱなし運用でも更新に気付けるようにする
+  // 同時実行は runUpdateCheck 側のガード (phase !== 'idle' のとき no-op) で防がれる。
   useEffect(() => {
+    const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 時間
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const fire = () => {
       if (cancelled) return;
       void useAppStore.getState().runUpdateCheck();
     };
-    if (useAppStore.persist.hasHydrated()) {
+
+    const start = () => {
+      if (cancelled) return;
       fire();
-      return () => { cancelled = true; };
+      intervalId = setInterval(fire, UPDATE_CHECK_INTERVAL_MS);
+    };
+
+    if (useAppStore.persist.hasHydrated()) {
+      start();
+      return () => {
+        cancelled = true;
+        if (intervalId !== null) clearInterval(intervalId);
+      };
     }
-    const unsub = useAppStore.persist.onFinishHydration(fire);
+    const unsub = useAppStore.persist.onFinishHydration(start);
     return () => {
       cancelled = true;
       unsub();
+      if (intervalId !== null) clearInterval(intervalId);
     };
   }, []);
 

@@ -97,6 +97,18 @@
   cursor: pointer;
 }
 
+/* Settings Dialog version info row: 現在バージョン表示 + アップデート確認ボタン */
+.settings-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-version-text {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ----- FavoritesSection ----- */
 /* Tabs と視覚的に区別するため、Favorites はカード調にする。
    背景・枠線・角丸を持たせ、内部に list を抱える。 */

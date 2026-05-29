@@ -183,18 +183,23 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
             </label>
 
             <label className="dialog-field">
-              <span className="dialog-label">
-                引数 (1 行 1 件、shell 起動時に渡す)
-              </span>
+              <span className="dialog-label">引数 (任意)</span>
+              <small className="dialog-hint">
+                shell の起動時に渡すコマンドライン引数を、<strong>1 行に 1 つずつ</strong>書きます。
+                ふだんターミナルでスペース区切りに打つ引数も、ここでは改行で 1 つずつ分けてください。
+              </small>
               <textarea
                 className="dialog-textarea"
                 value={argsText}
                 onChange={(e) => setArgsText(e.target.value)}
                 rows={3}
-                placeholder={"例:\n--cd\n~"}
+                placeholder={"--cd\n~"}
               />
               <small className="dialog-hint">
-                例: WSL なら <code>--cd</code> + <code>~</code> で WSL ホームから起動。
+                例) WSL をホームディレクトリで起動したい場合、ターミナルでの{' '}
+                <code>wsl.exe --cd ~</code> は、ここでは <code>--cd</code> と <code>~</code> の
+                2 行に分けて書きます。<br />
+                ❌ <code>--cd ~</code> と 1 行にまとめると、全体が 1 つの引数とみなされ正しく動きません。
               </small>
             </label>
 

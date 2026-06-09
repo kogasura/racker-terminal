@@ -52,8 +52,12 @@ try {
 const notes = readFileSync(notesFile, 'utf-8');
 const signature = readFileSync(signaturePath, 'utf-8').trim();
 
-// Build download URL
-const installerFileName = path.basename(installerPath);
+// Build download URL.
+// GitHub Releases はアップロード時にアセット名のスペースをドットへ置換して保存する
+// (例: "Racker Terminal_1.5.0_x64-setup.exe" → "Racker.Terminal_1.5.0_x64-setup.exe")。
+// URL 側をスペースのままにすると 404 になり、updater のダウンロードが全ユーザーで失敗する。
+// そのためファイル名のスペースをドットに変換して URL を組み立てる。
+const installerFileName = path.basename(installerPath).replace(/ /g, '.');
 const url = `${downloadUrlPrefix}/${installerFileName}`;
 
 // Build manifest

@@ -14,6 +14,38 @@ interface WebglRendererHandle {
 }
 
 /**
+ * fit を「提案寸法が現在の cols/rows と一致する」まで収束ループする。
+ *
+ * 背景: xterm の文字セル実測値 (cell metric) は早期に測り損ねることがあり
+ * (例: ウィンドウ拡大直後は古い小さいセル幅のまま)、その状態で fitAddon.fit() を
+ * 1 回呼ぶと「古いセルで計算した cols/rows」に resize → その resize が xterm の
+ * セル再測定を誘発して値が変わり、結果として端末がペインからはみ出す/空く。
+ * fit() 自身が自分の入力 (セル幅) を無効化するため、単発では収束しない。
+ *
+ * resize() がセル再測定を同期的に起こすため、ここで proposeDimensions() が
+ * 安定する (= もう変化しない) まで最大 maxIter 回 fit() を繰り返せば収束する。
+ * 実測では 2 反復で安定する。maxIter は万一の振動に対する安全弁。
+ */
+export function fitToConvergence(term: XTerm, fitAddon: FitAddon, maxIter = 5): void {
+  for (let i = 0; i < maxIter; i++) {
+    let proposed: { cols: number; rows: number } | undefined;
+    try {
+      proposed = fitAddon.proposeDimensions();
+    } catch {
+      return;
+    }
+    if (!proposed) return;
+    if (proposed.cols === term.cols && proposed.rows === term.rows) return; // 収束
+    try {
+      fitAddon.fit();
+    } catch (e) {
+      console.warn('[terminalRegistry] fitToConvergence: fit failed', e);
+      return;
+    }
+  }
+}
+
+/**
  * xterm に WebGL renderer を attach する。
  * - new WebglAddon() / term.loadAddon() で失敗した場合は Canvas fallback (warn ログ)
  * - GPU context loss 時は WebglAddon を dispose して Canvas fallback (warn ログ + xterm 内通知)
@@ -307,7 +339,12 @@ export interface TerminalRuntime {
    * PTY spawn を開始する。内部で spawning フラグを管理し、
    * 二重呼び出し（ptyHandle セット済み or spawn 中）は no-op。
    */
-  startSpawn(opts: SpawnOptions, onError: (e: Error) => void): void;
+  /**
+   * @param bootstrap - PTY 起動直後にシェルへ自動入力するコマンド（末尾改行は内部で付与）。
+   *   Claude タブの `claude --session-id <id>` / `claude --resume <id>` 自動起動に使う。
+   *   pendingInputs を flush した後に 1 回だけ書き込まれる。
+   */
+  startSpawn(opts: SpawnOptions, onError: (e: Error) => void, bootstrap?: string): void;
 
   /**
    * recyclePty 専用: 旧 PTY ハンドルを null にして spawning フラグをリセットする。
@@ -485,7 +522,7 @@ export function createRuntime(
     lastTransparency >= 1.0 ? setupWebglRenderer(term, tabId) : null;
 
   try {
-    fitAddon.fit();
+    fitToConvergence(term, fitAddon);
   } catch (e) {
     console.warn('[terminalRegistry] initial fit failed', e);
   }
@@ -600,7 +637,7 @@ export function createRuntime(
       onEventHandler = handler;
     },
 
-    startSpawn(opts, onError) {
+    startSpawn(opts, onError, bootstrap) {
       if (spawning || ptyHandle !== null) return;
       spawning = true;
 
@@ -617,6 +654,11 @@ export function createRuntime(
             void writePty(handle.id, data).catch(() => {});
           }
           pendingInputs.length = 0;
+          // Claude タブ等の自動起動コマンドをシェルへ流し込む（pendingInputs の後）。
+          // シェルがプロンプト準備前でも PTY 入力はバッファされ、REPL 起動後に実行される。
+          if (bootstrap) {
+            void writePty(handle.id, bootstrap + '\r').catch(() => {});
+          }
           void resizePty(handle.id, term.cols, term.rows).catch(() => {});
           callbacks.onLive(handle.id);
         })
@@ -793,6 +835,7 @@ export function recyclePty(
   tabId: string,
   opts: SpawnOptions,
   onError: (msg: string) => void,
+  bootstrap?: string,
 ): void {
   const entry = runtimes.get(tabId);
   if (!entry) return;
@@ -808,7 +851,7 @@ export function recyclePty(
 
   runtime.startSpawn(opts, (err) => {
     onError(err.message);
-  });
+  }, bootstrap);
 }
 
 /**

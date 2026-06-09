@@ -161,7 +161,9 @@ interface AppActions {
    */
   createTab: (
     groupId?: string,
-    opts?: Partial<Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args'>> & { title?: string },
+    opts?: Partial<
+      Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args' | 'launchClaude' | 'claudeSessionId'>
+    > & { title?: string },
   ) => string;
 
   /**
@@ -200,6 +202,14 @@ interface AppActions {
    * Phase 4 P-G で追加。
    */
   updateTabCwd: (tabId: string, cwd: string) => void;
+
+  /**
+   * Claude タブの管理セッション ID を設定する。
+   * 初回 spawn 時に TerminalPane が crypto.randomUUID() を発番して呼ぶ。
+   * 永続化されるため、再起動後は `claude --resume <id>` で同一セッションを再開できる。
+   * 存在しない tabId は no-op。
+   */
+  setClaudeSessionId: (tabId: string, sessionId: string) => void;
 
   /**
    * タブを同一グループ内に複製する。
@@ -409,6 +419,7 @@ export const useAppStore = create<Store>()(
       // F-M2: fav.args / fav.env を shallow clone して参照を独立させる
       args: fav.args ? [...fav.args] : undefined,
       env: fav.env ? { ...fav.env } : undefined,
+      launchClaude: fav.launchClaude,
     });
   },
 
@@ -493,6 +504,8 @@ export const useAppStore = create<Store>()(
         cwd: opts?.cwd,
         args: opts?.args ? [...opts.args] : undefined,
         env: opts?.env ? { ...opts.env } : undefined,
+        launchClaude: opts?.launchClaude,
+        claudeSessionId: opts?.claudeSessionId,
         status: 'spawning',
       };
 
@@ -549,6 +562,9 @@ export const useAppStore = create<Store>()(
         cwd: removedTab.cwd,
         args: removedTab.args ? [...removedTab.args] : undefined,
         env: removedTab.env ? { ...removedTab.env } : undefined,
+        // Claude タブ属性とセッション ID を保持し、再オープンで同一セッションを resume する
+        launchClaude: removedTab.launchClaude,
+        claudeSessionId: removedTab.claudeSessionId,
       };
       const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
 
@@ -601,6 +617,16 @@ export const useAppStore = create<Store>()(
       };
     }),
 
+  setClaudeSessionId: (tabId, sessionId) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};                        // 存在しない tabId は no-op
+      if (tab.claudeSessionId === sessionId) return {};  // 同値 no-op
+      return {
+        tabs: { ...state.tabs, [tabId]: { ...tab, claudeSessionId: sessionId } },
+      };
+    }),
+
   duplicateTab: (tabId) => {
     // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
     if (!get().tabs[tabId]) return null;
@@ -626,6 +652,9 @@ export const useAppStore = create<Store>()(
         // F-M3: src.args / src.env を shallow clone して参照を独立させる
         args: src.args ? [...src.args] : undefined,
         env: src.env ? { ...src.env } : undefined,
+        // 複製は Claude タブ属性を引き継ぐが、claudeSessionId は引き継がない
+        // (複製先は新しい claude セッションとして --session-id で起動させる)
+        launchClaude: src.launchClaude,
         status: 'spawning',
       };
 
@@ -911,6 +940,8 @@ export const useAppStore = create<Store>()(
       cwd: closed.cwd,
       args: closed.args ? [...closed.args] : undefined,
       env: closed.env ? { ...closed.env } : undefined,
+      launchClaude: closed.launchClaude,
+      claudeSessionId: closed.claudeSessionId,
     });
     // 成功後にスタックから pop
     set((s) => ({ closedTabs: s.closedTabs.slice(1) }));
@@ -919,7 +950,7 @@ export const useAppStore = create<Store>()(
     }),
     {
       name: 'racker-terminal',
-      version: 3,
+      version: 4,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -968,6 +999,11 @@ export const useAppStore = create<Store>()(
           // データ変換不要 (args は optional で既存データに含まれなくても正常動作する)
         }
 
+        // v3 → v4: Tab.launchClaude / Tab.claudeSessionId / Favorite.launchClaude を追加
+        if (version < 4) {
+          // データ変換不要 (いずれも optional で既存データに含まれなくても正常動作する)
+        }
+
         return state;
       },
       partialize: (state) => ({
@@ -983,6 +1019,8 @@ export const useAppStore = create<Store>()(
               cwd: tab.cwd,
               args: tab.args,
               env: tab.env,
+              launchClaude: tab.launchClaude,       // Claude タブ属性 (復元対象)
+              claudeSessionId: tab.claudeSessionId, // claude セッション ID (resume に使用)
               // status / ptyId / oscTitle は OFF (ランタイム状態)
             },
           ]),

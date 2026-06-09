@@ -66,6 +66,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
       : '',
   );
   const [defaultTabTitle, setDefaultTabTitle] = useState(initial?.defaultTabTitle ?? '');
+  const [launchClaude, setLaunchClaude] = useState(initial?.launchClaude ?? false);
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
@@ -103,6 +104,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
       args: args.length > 0 ? args : undefined,
       env: Object.keys(env).length > 0 ? env : undefined,
       defaultTabTitle: defaultTabTitle.trim() || undefined,
+      launchClaude: launchClaude || undefined,
     });
   }
 
@@ -239,6 +241,20 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 onChange={(e) => setDefaultTabTitle(e.target.value)}
                 placeholder="(空 = タイトルを使用)"
               />
+            </label>
+
+            <label className="dialog-field dialog-field--checkbox">
+              <input
+                type="checkbox"
+                checked={launchClaude}
+                onChange={(e) => setLaunchClaude(e.target.checked)}
+              />
+              <span className="dialog-label">Claude Code を自動起動する</span>
+              <small className="dialog-hint">
+                ON にすると、このお気に入りから開いたタブで <code>claude</code> を自動起動します。
+                アプリ再起動でタブが復元される際は、前回の claude セッションを自動 resume します
+                （<code>claude</code> が PATH にある環境が前提）。
+              </small>
             </label>
 
             <div className="dialog-actions">

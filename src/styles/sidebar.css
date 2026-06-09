@@ -619,6 +619,17 @@
   gap: 4px;
 }
 
+/* チェックボックス行: input とラベルを横並びにし、hint は下段に折り返す */
+.dialog-field--checkbox {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.dialog-field--checkbox .dialog-hint {
+  flex-basis: 100%;
+}
+
 .dialog-label {
   font-size: 11px;
   color: var(--sidebar-fg);

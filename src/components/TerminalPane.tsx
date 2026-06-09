@@ -7,6 +7,7 @@ import {
   createRuntime,
   recyclePty,
   forceDisposeAll,
+  fitToConvergence,
   type TerminalRuntime,
 } from '../lib/terminalRegistry';
 import { resizePty } from '../lib/pty';
@@ -57,6 +58,59 @@ function handlePtyEvent(
       setTabStatus(tabId, 'crashed');
       break;
   }
+}
+
+/** cwd の末尾フォルダ名を返す（Windows `\` / POSIX `/` 両対応）。取れなければ null。 */
+export function cwdBasename(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  const parts = cwd.split(/[\\/]+/).filter((p) => p.length > 0 && p !== '~');
+  return parts.length > 0 ? parts[parts.length - 1] : null;
+}
+
+/**
+ * claude セッション名をシェルへ安全に渡せる単一トークンに整える。
+ * 空白は '-' に置換し、制御文字とシェルメタ文字は除去（unicode 文字＝日本語等は許可）。
+ * 60 文字に切り詰め、結果が空なら null を返す。
+ * → メタ文字を除去するため引用符なしで `-n <token>` に渡しても injection しない。
+ */
+export function sanitizeSessionName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}._-]/gu, '') // 許可リスト: unicode文字/数字/._- のみ残す。引用符/$/バッククォート等は除去し injection 防止
+    .replace(/-{2,}/g, '-')          // 連続ハイフンを 1 つに圧縮
+    .replace(/^[-.]+|[-.]+$/g, '')   // 先頭・末尾のハイフン/ドットを除去
+    .slice(0, 60);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Claude タブの自動起動コマンドを算出する。
+ *
+ * StrictMode の effect 二重実行でも claudeSessionId が割れないよう、引数の closure ではなく
+ * store の最新値 (getState) を読む。1 回目の発番＋保存を 2 回目が観測して再発番しないため、
+ * 「起動した id」と「永続化した id」が必ず一致する。
+ *
+ * - launchClaude でない → undefined（自動起動なし）
+ * - claudeSessionId 済み（復元・recycle・再オープン）→ `claude --resume <id>`
+ * - 未設定（新規 Claude タブ）→ uuid 発番＋保存し、`claude --session-id <id> -n <名前>` で起動。
+ *   セッション名は タブ名 → cwd フォルダ名 → 'claude' の順（A 方式: 初回固定。以後のタブ
+ *   rename はアプリ表示のみで claude 側名称とは独立。resume は UUID で行うため影響なし）。
+ */
+function computeClaudeBootstrap(tabId: string): string | undefined {
+  const tab = useAppStore.getState().tabs[tabId];
+  if (!tab?.launchClaude) return undefined;
+  if (tab.claudeSessionId) {
+    return `claude --resume ${tab.claudeSessionId}`;
+  }
+  const sessionId = crypto.randomUUID();
+  useAppStore.getState().setClaudeSessionId(tabId, sessionId);
+  const name =
+    sanitizeSessionName(tab.userTitle) ??
+    sanitizeSessionName(cwdBasename(tab.cwd)) ??
+    'claude';
+  return `claude --session-id ${sessionId} -n ${name}`;
 }
 
 export const TerminalPane = memo(function TerminalPane({
@@ -115,6 +169,7 @@ export const TerminalPane = memo(function TerminalPane({
           spawnErrorRef.current = err.message;
           setTabStatus(tabId, 'crashed');
         },
+        computeClaudeBootstrap(tabId),
       );
     }
 
@@ -134,7 +189,7 @@ export const TerminalPane = memo(function TerminalPane({
     if (!runtime) return;
 
     const rafId = requestAnimationFrame(() => {
-      try { runtime.fitAddon.fit(); } catch (e) { console.warn(e); }
+      try { fitToConvergence(runtime.term, runtime.fitAddon); } catch (e) { console.warn(e); }
       if (runtime.ptyHandle) {
         void resizePty(runtime.ptyHandle.id, runtime.term.cols, runtime.term.rows).catch(() => {});
       }
@@ -182,7 +237,7 @@ export const TerminalPane = memo(function TerminalPane({
     const observer = new ResizeObserver(() => {
       if (initialFire) { initialFire = false; return; }  // observe() 直後の自動発火は無視
       if (!isActive) return;  // 非アクティブ時はスキップ（isActive 復帰時の rAF fit で同期）
-      try { runtime.fitAddon.fit(); } catch (e) { console.warn(e); }
+      try { fitToConvergence(runtime.term, runtime.fitAddon); } catch (e) { console.warn(e); }
       if (runtime.ptyHandle) {
         void resizePty(runtime.ptyHandle.id, runtime.term.cols, runtime.term.rows).catch(() => {});
       }
@@ -345,6 +400,7 @@ export const TerminalPane = memo(function TerminalPane({
         spawnErrorRef.current = errMsg;
         setTabStatus(tabId, 'crashed');
       },
+      computeClaudeBootstrap(tabId),
     );
   }
 

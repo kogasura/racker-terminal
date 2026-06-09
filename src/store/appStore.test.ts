@@ -2598,4 +2598,91 @@ describe('closedTabs / restoreLastClosedTab', () => {
 
     expect(result.closedTabs).toBeUndefined();
   });
+
+  // --- Claude タブ / セッション resume ---
+  describe('Claude セッション', () => {
+    it('createTab: launchClaude / claudeSessionId を opts から設定する', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        userTitle: 'C',
+        launchClaude: true,
+        claudeSessionId: 'sess-1',
+      });
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab.launchClaude).toBe(true);
+      expect(tab.claudeSessionId).toBe('sess-1');
+    });
+
+    it('createTab: opts 未指定なら launchClaude / claudeSessionId は undefined', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, { userTitle: 'plain' });
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab.launchClaude).toBeUndefined();
+      expect(tab.claudeSessionId).toBeUndefined();
+    });
+
+    it('spawnFavorite: お気に入りの launchClaude をタブに引き継ぐ', () => {
+      const favId = useAppStore.getState().addFavorite({ title: 'Claude', launchClaude: true });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      expect(tabId).not.toBeNull();
+      expect(useAppStore.getState().tabs[tabId!].launchClaude).toBe(true);
+      // セッション ID はまだ未発番（spawn 時に TerminalPane が発番する）
+      expect(useAppStore.getState().tabs[tabId!].claudeSessionId).toBeUndefined();
+    });
+
+    it('setClaudeSessionId: セッション ID を設定する', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, { launchClaude: true });
+      useAppStore.getState().setClaudeSessionId(tabId, 'uuid-xyz');
+      expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('uuid-xyz');
+    });
+
+    it('setClaudeSessionId: 存在しない tabId は no-op（例外なし）', () => {
+      expect(() =>
+        useAppStore.getState().setClaudeSessionId('nope', 'uuid'),
+      ).not.toThrow();
+    });
+
+    it('duplicateTab: launchClaude は引き継ぐが claudeSessionId は引き継がない', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        userTitle: 'Src',
+        launchClaude: true,
+        claudeSessionId: 'src-sess',
+      });
+      const dupId = useAppStore.getState().duplicateTab(tabId);
+      expect(dupId).not.toBeNull();
+      const dup = useAppStore.getState().tabs[dupId!];
+      expect(dup.launchClaude).toBe(true);
+      expect(dup.claudeSessionId).toBeUndefined(); // 複製先は新セッション
+    });
+
+    it('restoreLastClosedTab: launchClaude / claudeSessionId を保持して復元する', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        userTitle: 'C',
+        launchClaude: true,
+        claudeSessionId: 'keep-sess',
+      });
+      useAppStore.getState().removeTab(tabId);
+      const newTabId = useAppStore.getState().restoreLastClosedTab();
+      expect(newTabId).not.toBeNull();
+      const restored = useAppStore.getState().tabs[newTabId!];
+      expect(restored.launchClaude).toBe(true);
+      expect(restored.claudeSessionId).toBe('keep-sess'); // 同一セッションを resume できる
+    });
+
+    it('partialize: launchClaude / claudeSessionId が永続化対象に含まれる', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        launchClaude: true,
+        claudeSessionId: 'persist-sess',
+      });
+      const result = useAppStore.persist.getOptions().partialize!(
+        useAppStore.getState(),
+      ) as { tabs: Record<string, { launchClaude?: boolean; claudeSessionId?: string }> };
+      expect(result.tabs[tabId].launchClaude).toBe(true);
+      expect(result.tabs[tabId].claudeSessionId).toBe('persist-sess');
+    });
+  });
 });

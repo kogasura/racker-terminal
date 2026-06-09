@@ -45,6 +45,18 @@ export interface Tab {
    * アクティブタブには設定しない（即見えているため）。アクティブ化で自動クリアされる。
    */
   needsAttention?: boolean;
+  /**
+   * true のとき、このタブは spawn 時に Claude Code を自動起動する「Claude タブ」。
+   * お気に入りの launchClaude フラグから createTab/spawnFavorite 経由で引き継ぐ。永続化対象。
+   */
+  launchClaude?: boolean;
+  /**
+   * Claude タブが管理する claude セッションの UUID。
+   * 初回 spawn 時に crypto.randomUUID() で発番して `claude --session-id <id>` で起動し、
+   * 以降（再起動復元・PTY recycle）は `claude --resume <id>` で同一セッションを再開する。
+   * launchClaude=true のタブにのみ設定される。永続化対象。
+   */
+  claudeSessionId?: string;
 }
 
 /**
@@ -84,6 +96,11 @@ export interface Favorite {
   env?: Record<string, string>;
   /** spawn されるタブのデフォルト名テンプレート */
   defaultTabTitle?: string;
+  /**
+   * true のとき、このお気に入りから開いたタブを「Claude タブ」にする。
+   * タブ spawn 時に Claude Code を自動起動し、再起動復元時は前回セッションを resume する。
+   */
+  launchClaude?: boolean;
 }
 
 /**
@@ -150,6 +167,10 @@ export interface ClosedTab {
   cwd?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Claude タブ属性を復元するため保存する。 */
+  launchClaude?: boolean;
+  /** 閉じる前の claude セッション ID。再オープン時に同一セッションを resume するため保存する。 */
+  claudeSessionId?: string;
 }
 
 /**
@@ -159,7 +180,7 @@ export interface ClosedTab {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].needsAttention, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env}, favorites, settings
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId}, favorites, settings
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

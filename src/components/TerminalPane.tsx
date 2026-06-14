@@ -265,10 +265,19 @@ export const TerminalPane = memo(function TerminalPane({
       // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
       if (useAppStore.getState().contextMenuOpen) return true;
 
+      // 合成キー対応（Aqua Voice 等の音声入力・支援ツール）:
+      // これらは SendInput / 合成 KeyboardEvent でキーを送出するため e.code が
+      // 空文字列になることがある（物理スキャンコードを伴わない）。その場合は e.key に
+      // フォールバックして物理キー位置の判定を補完する。通常の物理キーボードでは
+      // 従来どおり e.code を優先する（CapsLock/AZERTY 等のレイアウト非依存のため）。
+      // → これにより Aqua Voice の "Paste Last Transcript"（クリップボード→Ctrl+V）が機能する。
+      const codeIs = (code: string, key: string): boolean =>
+        e.code === code || (e.code === '' && e.key.toLowerCase() === key);
+
       // Ctrl+Shift+W: アクティブタブを閉じる
       // e.code ('KeyW') を使うことで CapsLock/AZERTY 等の非 ASCII レイアウトでも
       // 物理 W キーの位置を正確に判定できる（e.key は 'w'/'W'/'z' 等レイアウト依存）
-      if (e.shiftKey && e.code === 'KeyW') {
+      if (e.shiftKey && codeIs('KeyW', 'w')) {
         e.preventDefault();
         const aid = useAppStore.getState().activeTabId;
         if (aid) useAppStore.getState().removeTab(aid);
@@ -277,7 +286,7 @@ export const TerminalPane = memo(function TerminalPane({
 
       // Ctrl+Tab / Ctrl+Shift+Tab: 次/前のタブへ移動
       // e.code ('Tab') で物理 Tab キーを判定する（IME 中は e.key === 'Process' になる場合がある）
-      if (e.code === 'Tab') {
+      if (codeIs('Tab', 'tab')) {
         e.preventDefault();
         const state = useAppStore.getState();
         const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);
@@ -288,7 +297,8 @@ export const TerminalPane = memo(function TerminalPane({
       // Ctrl+V: クリップボードから貼り付け (v0.5 改善)
       // Windows ターミナル慣習に合わせて Ctrl+V を有効化。Ctrl+Shift+V は予約 (Linux 慣習用)。
       // runtime.writeInput を使うことで spawn 中 (ptyHandle 未確定) でも pendingInputs に積まれる。
-      if (!e.shiftKey && e.code === 'KeyV') {
+      // codeIs により Aqua Voice 等の合成 Ctrl+V（e.code 空）でも貼り付けが発動する。
+      if (!e.shiftKey && codeIs('KeyV', 'v')) {
         e.preventDefault();
         navigator.clipboard
           .readText()
@@ -307,7 +317,7 @@ export const TerminalPane = memo(function TerminalPane({
       // - clearSelection は writeText 成功時のみ実行し、失敗時はリトライできるよう選択を残す
       // - writeText 解決を待つ間にユーザーが新しい選択をした場合、その新選択を消さないよう
       //   getSelection() === sel の同一性チェックを行う
-      if (!e.shiftKey && e.code === 'KeyC') {
+      if (!e.shiftKey && codeIs('KeyC', 'c')) {
         if (runtime.term.hasSelection()) {
           const sel = runtime.term.getSelection();
           if (sel) {
@@ -334,14 +344,14 @@ export const TerminalPane = memo(function TerminalPane({
       // (\x1b\r) を送ることで、Mac Terminal の Option+Enter と同様に改行として認識される。
       // Shift も押されているケース (Ctrl+Shift+Enter) は対象外。
       // runtime.writeInput を使うことで spawn 中でも pendingInputs に積まれて消失しない。
-      if (!e.shiftKey && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+      if (!e.shiftKey && (codeIs('Enter', 'enter') || codeIs('NumpadEnter', 'enter'))) {
         e.preventDefault();
         runtime.writeInput('\x1b\r');
         return false;
       }
 
       // Ctrl+Shift+T: 閉じたタブを復元
-      if (e.shiftKey && e.code === 'KeyT') {
+      if (e.shiftKey && codeIs('KeyT', 't')) {
         e.preventDefault();
         useAppStore.getState().restoreLastClosedTab();
         return false;
@@ -349,7 +359,7 @@ export const TerminalPane = memo(function TerminalPane({
 
       // Ctrl+T: 既定タブを開く (Ctrl+Shift+T は閉じたタブの復元)
       // Phase 4 P-H で追加。
-      if (!e.shiftKey && e.code === 'KeyT') {
+      if (!e.shiftKey && codeIs('KeyT', 't')) {
         e.preventDefault();
         useAppStore.getState().spawnDefaultOrNew();
         return false;
@@ -359,7 +369,9 @@ export const TerminalPane = memo(function TerminalPane({
       // e.code は 'Digit1'..'Digit9' / 'Numpad1'..'Numpad9' を許容する。
       // Phase 4 P-H で追加。
       if (e.shiftKey) {
-        const m = e.code.match(/^(?:Digit|Numpad)([1-9])$/);
+        // 合成キー（e.code 空）では e.key の数字にフォールバックする
+        const m = e.code.match(/^(?:Digit|Numpad)([1-9])$/) ||
+          (e.code === '' ? e.key.match(/^([1-9])$/) : null);
         if (m) {
           e.preventDefault();
           const idx = parseInt(m[1], 10) - 1;  // 1-9 → 0-8

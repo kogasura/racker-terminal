@@ -91,6 +91,23 @@ export function sanitizeSessionName(raw: string | null | undefined): string | nu
 }
 
 /**
+ * claude 起動コマンド文字列を組み立てる純関数。
+ * - resume 指定 → `claude --resume <id>`
+ * - 新規指定   → `claude --session-id <id> -n <name>`
+ * - bypass=true → 末尾に `--dangerously-skip-permissions` を付与（権限バイパス）。
+ * 引数 (uuid / sanitizeSessionName 済み name) は injection 安全な前提。テスト用に export する。
+ */
+export function buildClaudeCommand(
+  mode: { resume: string } | { sessionId: string; name: string },
+  opts?: { bypass?: boolean },
+): string {
+  const skip = opts?.bypass ? ' --dangerously-skip-permissions' : '';
+  return 'resume' in mode
+    ? `claude --resume ${mode.resume}${skip}`
+    : `claude --session-id ${mode.sessionId} -n ${mode.name}${skip}`;
+}
+
+/**
  * WSL タブの Claude 自動起動を「直接 exec 方式」で行うための spawn 引数を構築する純関数。
  *
  * 背景: spawn 直後にシェルへ `claude ...\r` をタイプ送信する方式は、wsl.exe → distro → ログイン
@@ -133,6 +150,7 @@ export function buildWslClaudeArgs(
  * - 未設定（新規 Claude タブ）→ uuid 発番＋保存し、`claude --session-id <id> -n <名前>` で起動。
  *   セッション名は タブ名 → cwd フォルダ名 → 'claude' の順（A 方式: 初回固定。以後のタブ
  *   rename はアプリ表示のみで claude 側名称とは独立。resume は UUID で行うため影響なし）。
+ * - bypassPermissions=true → 上記コマンドに `--dangerously-skip-permissions` を付与（権限バイパス）。
  */
 function computeClaudeLaunch(
   tabId: string,
@@ -141,9 +159,11 @@ function computeClaudeLaunch(
   const tab = useAppStore.getState().tabs[tabId];
   if (!tab?.launchClaude) return { args: baseArgs, bootstrap: undefined };
 
+  // bypassPermissions=true なら権限プロンプトをスキップする (お気に入りの明示 opt-in)。
+  const bypass = tab.bypassPermissions;
   let claudeCmd: string;
   if (tab.claudeSessionId) {
-    claudeCmd = `claude --resume ${tab.claudeSessionId}`;
+    claudeCmd = buildClaudeCommand({ resume: tab.claudeSessionId }, { bypass });
   } else {
     const sessionId = crypto.randomUUID();
     useAppStore.getState().setClaudeSessionId(tabId, sessionId);
@@ -151,7 +171,7 @@ function computeClaudeLaunch(
       sanitizeSessionName(tab.userTitle) ??
       sanitizeSessionName(cwdBasename(tab.cwd)) ??
       'claude';
-    claudeCmd = `claude --session-id ${sessionId} -n ${name}`;
+    claudeCmd = buildClaudeCommand({ sessionId, name }, { bypass });
   }
 
   // WSL は「直接 exec 方式」(タイプ送信しない)。それ以外 (Windows ネイティブ nu/pwsh 等) は

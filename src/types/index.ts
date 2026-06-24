@@ -57,6 +57,12 @@ export interface Tab {
    * launchClaude=true のタブにのみ設定される。永続化対象。
    */
   claudeSessionId?: string;
+  /**
+   * true のとき、Claude 自動起動コマンドに `--dangerously-skip-permissions` を付与し、
+   * 権限プロンプトをバイパスして起動する。launchClaude=true のタブにのみ意味を持つ。永続化対象。
+   * セキュリティ上の影響が大きいため、お気に入りごとの明示 opt-in (既定 false)。
+   */
+  bypassPermissions?: boolean;
 }
 
 /**
@@ -101,6 +107,11 @@ export interface Favorite {
    * タブ spawn 時に Claude Code を自動起動し、再起動復元時は前回セッションを resume する。
    */
   launchClaude?: boolean;
+  /**
+   * true のとき、Claude 自動起動に `--dangerously-skip-permissions` を付ける（権限バイパス）。
+   * launchClaude=true のときのみ有効。既定 false。
+   */
+  bypassPermissions?: boolean;
 }
 
 /**
@@ -171,6 +182,8 @@ export interface ClosedTab {
   launchClaude?: boolean;
   /** 閉じる前の claude セッション ID。再オープン時に同一セッションを resume するため保存する。 */
   claudeSessionId?: string;
+  /** 権限バイパス (--dangerously-skip-permissions) フラグを復元するため保存する。 */
+  bypassPermissions?: boolean;
 }
 
 /**
@@ -180,7 +193,7 @@ export interface ClosedTab {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].needsAttention, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId}, favorites, settings
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

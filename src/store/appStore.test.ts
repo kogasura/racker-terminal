@@ -2684,5 +2684,52 @@ describe('closedTabs / restoreLastClosedTab', () => {
       expect(result.tabs[tabId].launchClaude).toBe(true);
       expect(result.tabs[tabId].claudeSessionId).toBe('persist-sess');
     });
+
+    it('createTab: bypassPermissions を opts から設定する', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        launchClaude: true,
+        bypassPermissions: true,
+      });
+      expect(useAppStore.getState().tabs[tabId].bypassPermissions).toBe(true);
+    });
+
+    it('spawnFavorite: お気に入りの bypassPermissions をタブに引き継ぐ', () => {
+      const favId = useAppStore.getState().addFavorite({
+        title: 'Claude',
+        launchClaude: true,
+        bypassPermissions: true,
+      });
+      const tabId = useAppStore.getState().spawnFavorite(favId);
+      expect(tabId).not.toBeNull();
+      expect(useAppStore.getState().tabs[tabId!].bypassPermissions).toBe(true);
+    });
+
+    it('duplicateTab / restoreLastClosedTab: bypassPermissions を引き継ぐ', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        userTitle: 'Src',
+        launchClaude: true,
+        bypassPermissions: true,
+      });
+      const dupId = useAppStore.getState().duplicateTab(tabId);
+      expect(useAppStore.getState().tabs[dupId!].bypassPermissions).toBe(true);
+
+      useAppStore.getState().removeTab(tabId);
+      const restoredId = useAppStore.getState().restoreLastClosedTab();
+      expect(useAppStore.getState().tabs[restoredId!].bypassPermissions).toBe(true);
+    });
+
+    it('partialize: bypassPermissions が永続化対象に含まれる', () => {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, {
+        launchClaude: true,
+        bypassPermissions: true,
+      });
+      const result = useAppStore.persist.getOptions().partialize!(
+        useAppStore.getState(),
+      ) as { tabs: Record<string, { bypassPermissions?: boolean }> };
+      expect(result.tabs[tabId].bypassPermissions).toBe(true);
+    });
   });
 });

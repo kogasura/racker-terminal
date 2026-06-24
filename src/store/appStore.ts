@@ -162,7 +162,7 @@ interface AppActions {
   createTab: (
     groupId?: string,
     opts?: Partial<
-      Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args' | 'launchClaude' | 'claudeSessionId'>
+      Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args' | 'launchClaude' | 'claudeSessionId' | 'bypassPermissions'>
     > & { title?: string },
   ) => string;
 
@@ -420,6 +420,7 @@ export const useAppStore = create<Store>()(
       args: fav.args ? [...fav.args] : undefined,
       env: fav.env ? { ...fav.env } : undefined,
       launchClaude: fav.launchClaude,
+      bypassPermissions: fav.bypassPermissions,
     });
   },
 
@@ -506,6 +507,7 @@ export const useAppStore = create<Store>()(
         env: opts?.env ? { ...opts.env } : undefined,
         launchClaude: opts?.launchClaude,
         claudeSessionId: opts?.claudeSessionId,
+        bypassPermissions: opts?.bypassPermissions,
         status: 'spawning',
       };
 
@@ -565,6 +567,7 @@ export const useAppStore = create<Store>()(
         // Claude タブ属性とセッション ID を保持し、再オープンで同一セッションを resume する
         launchClaude: removedTab.launchClaude,
         claudeSessionId: removedTab.claudeSessionId,
+        bypassPermissions: removedTab.bypassPermissions,
       };
       const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
 
@@ -655,6 +658,7 @@ export const useAppStore = create<Store>()(
         // 複製は Claude タブ属性を引き継ぐが、claudeSessionId は引き継がない
         // (複製先は新しい claude セッションとして --session-id で起動させる)
         launchClaude: src.launchClaude,
+        bypassPermissions: src.bypassPermissions,
         status: 'spawning',
       };
 
@@ -942,6 +946,7 @@ export const useAppStore = create<Store>()(
       env: closed.env ? { ...closed.env } : undefined,
       launchClaude: closed.launchClaude,
       claudeSessionId: closed.claudeSessionId,
+      bypassPermissions: closed.bypassPermissions,
     });
     // 成功後にスタックから pop
     set((s) => ({ closedTabs: s.closedTabs.slice(1) }));
@@ -1021,6 +1026,7 @@ export const useAppStore = create<Store>()(
               env: tab.env,
               launchClaude: tab.launchClaude,       // Claude タブ属性 (復元対象)
               claudeSessionId: tab.claudeSessionId, // claude セッション ID (resume に使用)
+              bypassPermissions: tab.bypassPermissions, // 権限バイパス設定 (復元対象)
               // status / ptyId / oscTitle は OFF (ランタイム状態)
             },
           ]),

@@ -2,7 +2,14 @@ import { useState, useMemo, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useShallow } from 'zustand/shallow';
 import type { Favorite } from '../types';
-import { buildProfileTemplates, findTemplate } from '../lib/profileTemplates';
+import {
+  buildProfileTemplates,
+  findTemplate,
+  isWslShell,
+  buildWslArgs,
+  parseWslArgs,
+  isStandardWslArgs,
+} from '../lib/profileTemplates';
 import { useAppStore } from '../store/appStore';
 
 interface FavoriteDialogProps {
@@ -60,6 +67,17 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   const [shell, setShell] = useState(initial?.shell ?? '');
   const [cwd, setCwd] = useState(initial?.cwd ?? '');
   const [argsText, setArgsText] = useState(initial?.args?.join('\n') ?? '');
+
+  // WSL 専用フィールド: distro と作業ディレクトリ (Linux パス) を args の代わりに編集する。
+  // 編集モードで既存の WSL お気に入りを開いたときは args から distro / dir を復元する。
+  const initialWslStandard = isWslShell(initial?.shell) && isStandardWslArgs(initial?.args);
+  const initialWslParsed = parseWslArgs(initial?.args);
+  const [wslDistro, setWslDistro] = useState(initialWslStandard ? initialWslParsed.distro : '');
+  const [wslCwd, setWslCwd] = useState(initialWslStandard ? initialWslParsed.dir : '');
+  // 既存 WSL お気に入りの args が標準形でない (`--` 等を含む) 場合のみ手動引数モードで開く。
+  const [wslManual, setWslManual] = useState(
+    isWslShell(initial?.shell) && !isStandardWslArgs(initial?.args),
+  );
   const [envText, setEnvText] = useState(
     initial?.env
       ? Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join('\n')
@@ -70,6 +88,15 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
+  // 現在の shell が WSL かどうか。WSL のときは distro / 作業ディレクトリの専用フィールドを出す。
+  const isWsl = isWslShell(shell);
+  // distro ドロップダウンの選択肢 (インストール済 distro + 現在値で未収載のもの)。
+  const distroOptions = useMemo(() => {
+    const set = [...wslDistros];
+    if (wslDistro && !set.includes(wslDistro)) set.unshift(wslDistro);
+    return set;
+  }, [wslDistros, wslDistro]);
+
   /** テンプレート選択時に shell・title・args を自動入力する (Phase 4 P-I で追加、P-K で動的化) */
   function applyTemplate(id: string) {
     const tpl = findTemplate(templates, id);
@@ -79,14 +106,32 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
     if (!title.trim()) setTitle(tpl.title);
     // テンプレに args が定義されていれば常に上書き (ユーザー意図的選択)
     if (tpl.args) setArgsText(tpl.args.join('\n'));
+    // WSL テンプレなら専用フィールド (distro / 作業dir) にも反映し、手動モードを解除する。
+    if (isWslShell(tpl.shell)) {
+      const { distro, dir } = parseWslArgs(tpl.args);
+      setWslDistro(distro);
+      setWslCwd(dir);
+      setWslManual(false);
+    }
   }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;  // title 必須
 
-    // args のパース（1 行 1 件、空行スキップ）
-    const args = parseArgsText(argsText);
+    // args / cwd の決定:
+    // - WSL かつ専用フィールド使用時は distro + 作業ディレクトリから args を組み立て、
+    //   Windows 側 cwd は送らない (WSL の着地点は `--cd` が決めるため)。
+    // - それ以外 (WSL 手動引数モード含む) は従来どおり args テキスト / cwd 欄を使う。
+    let args: string[];
+    let cwdOut: string | undefined;
+    if (isWsl && !wslManual) {
+      args = buildWslArgs(wslDistro || wslDistros[0] || '', wslCwd);
+      cwdOut = undefined;
+    } else {
+      args = parseArgsText(argsText);
+      cwdOut = cwd.trim() || undefined;
+    }
 
     // F-S3: env のパース（不正 KEY はエラーとして form を弾く）
     const { env, errors } = parseEnvText(envText);
@@ -100,7 +145,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
     onSubmit({
       title: title.trim(),
       shell: shell.trim() || undefined,
-      cwd: cwd.trim() || undefined,
+      cwd: cwdOut,
       args: args.length > 0 ? args : undefined,
       env: Object.keys(env).length > 0 ? env : undefined,
       defaultTabTitle: defaultTabTitle.trim() || undefined,
@@ -172,38 +217,116 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
               />
             </label>
 
-            <label className="dialog-field">
-              <span className="dialog-label">
-                CWD (例: <code>C:\Users\foo\projects</code>)
-              </span>
-              <input
-                className="dialog-input"
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                placeholder="(空 = ホーム)"
-              />
-            </label>
+            {isWsl && !wslManual ? (
+              /* WSL 専用フィールド: distro と作業ディレクトリだけで OK (-d / --cd は内部で自動構築) */
+              <>
+                <label className="dialog-field">
+                  <span className="dialog-label">WSL ディストリビューション</span>
+                  {distroOptions.length > 0 ? (
+                    <select
+                      className="dialog-input"
+                      value={wslDistro || wslDistros[0] || ''}
+                      onChange={(e) => setWslDistro(e.target.value)}
+                    >
+                      {distroOptions.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="dialog-input"
+                      value={wslDistro}
+                      onChange={(e) => setWslDistro(e.target.value)}
+                      placeholder="(例: Ubuntu-22.04)"
+                    />
+                  )}
+                </label>
 
-            <label className="dialog-field">
-              <span className="dialog-label">引数 (任意)</span>
-              <small className="dialog-hint">
-                shell の起動時に渡すコマンドライン引数を、<strong>1 行に 1 つずつ</strong>書きます。
-                ふだんターミナルでスペース区切りに打つ引数も、ここでは改行で 1 つずつ分けてください。
-              </small>
-              <textarea
-                className="dialog-textarea"
-                value={argsText}
-                onChange={(e) => setArgsText(e.target.value)}
-                rows={3}
-                placeholder={"--cd\n~"}
-              />
-              <small className="dialog-hint">
-                例) WSL をホームディレクトリで起動したい場合、ターミナルでの{' '}
-                <code>wsl.exe --cd ~</code> は、ここでは <code>--cd</code> と <code>~</code> の
-                2 行に分けて書きます。<br />
-                ❌ <code>--cd ~</code> と 1 行にまとめると、全体が 1 つの引数とみなされ正しく動きません。
-              </small>
-            </label>
+                <label className="dialog-field">
+                  <span className="dialog-label">作業ディレクトリ (Linux パス)</span>
+                  <input
+                    className="dialog-input"
+                    value={wslCwd}
+                    onChange={(e) => setWslCwd(e.target.value)}
+                    placeholder="(空 = ~) 例: ~/jdf-dev/uranus2/server"
+                  />
+                  <small className="dialog-hint">
+                    distro と作業ディレクトリを選ぶだけで、起動引数{' '}
+                    <code>-d {wslDistro || wslDistros[0] || '<distro>'} --cd {wslCwd.trim() || '~'}</code>{' '}
+                    を自動構築します（<code>-d</code> / <code>--cd</code> の手書きは不要）。
+                  </small>
+                </label>
+
+                <div className="dialog-field">
+                  <button
+                    type="button"
+                    className="dialog-link-btn"
+                    onClick={() => {
+                      // 手動モードへ: 現在の distro/dir を args テキストに展開してから切り替える
+                      setArgsText(buildWslArgs(wslDistro || wslDistros[0] || '', wslCwd).join('\n'));
+                      setWslManual(true);
+                    }}
+                  >
+                    引数を手動で指定する
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="dialog-field">
+                  <span className="dialog-label">
+                    CWD (例: <code>C:\Users\foo\projects</code>)
+                  </span>
+                  <input
+                    className="dialog-input"
+                    value={cwd}
+                    onChange={(e) => setCwd(e.target.value)}
+                    placeholder="(空 = ホーム)"
+                  />
+                </label>
+
+                <label className="dialog-field">
+                  <span className="dialog-label">引数 (任意)</span>
+                  <small className="dialog-hint">
+                    shell の起動時に渡すコマンドライン引数を、<strong>1 行に 1 つずつ</strong>書きます。
+                    ふだんターミナルでスペース区切りに打つ引数も、ここでは改行で 1 つずつ分けてください。
+                  </small>
+                  <textarea
+                    className="dialog-textarea"
+                    value={argsText}
+                    onChange={(e) => setArgsText(e.target.value)}
+                    rows={3}
+                    placeholder={"--cd\n~"}
+                  />
+                  <small className="dialog-hint">
+                    例) WSL をホームディレクトリで起動したい場合、ターミナルでの{' '}
+                    <code>wsl.exe --cd ~</code> は、ここでは <code>--cd</code> と <code>~</code> の
+                    2 行に分けて書きます。<br />
+                    ❌ <code>--cd ~</code> と 1 行にまとめると、全体が 1 つの引数とみなされ正しく動きません。
+                    {/* 簡易フォームへ戻す導線は「distro/--cd だけの標準形」のときだけ出す。
+                        `--` 等を含む手動コマンドを簡易フォームで黙って失わないため (レビュー C1)。 */}
+                    {isWsl && isStandardWslArgs(parseArgsText(argsText)) && (
+                      <>
+                        <br />
+                        <button
+                          type="button"
+                          className="dialog-link-btn"
+                          onClick={() => {
+                            // WSL フォームへ戻す: 現在の args から distro/dir を復元
+                            const { distro, dir } = parseWslArgs(parseArgsText(argsText));
+                            setWslDistro(distro);
+                            setWslCwd(dir);
+                            setWslManual(false);
+                          }}
+                        >
+                          WSL 簡易フォームに戻す
+                        </button>
+                      </>
+                    )}
+                  </small>
+                </label>
+              </>
+            )}
 
             <label className="dialog-field">
               <span className="dialog-label">

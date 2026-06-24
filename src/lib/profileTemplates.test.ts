@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { buildProfileTemplates, findTemplate } from './profileTemplates';
+import {
+  buildProfileTemplates,
+  findTemplate,
+  isWslShell,
+  buildWslArgs,
+  parseWslArgs,
+  isStandardWslArgs,
+} from './profileTemplates';
 
 describe('buildProfileTemplates', () => {
   it('distro なしで静的テンプレ 5 件のみ返す', () => {
@@ -128,5 +135,71 @@ describe('buildProfileTemplates 整合性', () => {
     const templates = buildProfileTemplates(['Ubuntu', 'Debian']);
     const ids = templates.map((t) => t.id);
     expect(ids.length).toBe(new Set(ids).size);
+  });
+});
+
+describe('isWslShell', () => {
+  it('wsl.exe / フルパス / 大文字 / 拡張子なし を WSL と判定', () => {
+    expect(isWslShell('wsl.exe')).toBe(true);
+    expect(isWslShell('C:\\Windows\\System32\\wsl.exe')).toBe(true);
+    expect(isWslShell('WSL.EXE')).toBe(true);
+    expect(isWslShell('wsl')).toBe(true);
+  });
+
+  it('他シェル・未指定は false', () => {
+    expect(isWslShell('nu')).toBe(false);
+    expect(isWslShell('powershell.exe')).toBe(false);
+    expect(isWslShell(undefined)).toBe(false);
+    expect(isWslShell('')).toBe(false);
+  });
+});
+
+describe('buildWslArgs', () => {
+  it('distro + dir から -d / --cd を組み立てる', () => {
+    expect(buildWslArgs('Ubuntu-22.04', '~/jdf-dev/uranus2/server')).toEqual([
+      '-d', 'Ubuntu-22.04', '--cd', '~/jdf-dev/uranus2/server',
+    ]);
+  });
+
+  it('dir 空は --cd ~ にフォールバック', () => {
+    expect(buildWslArgs('Ubuntu', '')).toEqual(['-d', 'Ubuntu', '--cd', '~']);
+    expect(buildWslArgs('Ubuntu', '   ')).toEqual(['-d', 'Ubuntu', '--cd', '~']);
+  });
+
+  it('distro 空は -d を省略', () => {
+    expect(buildWslArgs('', '~/x')).toEqual(['--cd', '~/x']);
+  });
+});
+
+describe('parseWslArgs', () => {
+  it('-d / --cd の値を取り出す', () => {
+    expect(parseWslArgs(['-d', 'Ubuntu-22.04', '--cd', '~/x'])).toEqual({
+      distro: 'Ubuntu-22.04', dir: '~/x',
+    });
+  });
+
+  it('--distribution も distro として扱う', () => {
+    expect(parseWslArgs(['--distribution', 'Debian']).distro).toBe('Debian');
+  });
+
+  it('見つからなければ空文字 / undefined でも安全', () => {
+    expect(parseWslArgs(['--cd', '~'])).toEqual({ distro: '', dir: '~' });
+    expect(parseWslArgs(undefined)).toEqual({ distro: '', dir: '' });
+    expect(parseWslArgs([])).toEqual({ distro: '', dir: '' });
+  });
+});
+
+describe('isStandardWslArgs', () => {
+  it('-d / --cd ペアのみは標準形 (true)', () => {
+    expect(isStandardWslArgs(['-d', 'Ubuntu', '--cd', '~'])).toBe(true);
+    expect(isStandardWslArgs(['--cd', '~/x'])).toBe(true);
+    expect(isStandardWslArgs([])).toBe(true);
+    expect(isStandardWslArgs(undefined)).toBe(true);
+  });
+
+  it('-- や未知トークンを含むと非標準 (false)', () => {
+    expect(isStandardWslArgs(['-d', 'Ubuntu', '--', 'bash', '-ic', 'claude'])).toBe(false);
+    expect(isStandardWslArgs(['-u', 'root'])).toBe(false);
+    expect(isStandardWslArgs(['-d', 'Ubuntu', '--cd'])).toBe(false); // 値欠落
   });
 });

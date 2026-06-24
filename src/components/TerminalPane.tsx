@@ -12,7 +12,12 @@ import {
 } from '../lib/terminalRegistry';
 import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
+import { isWslShell } from '../lib/profileTemplates';
 import '../styles/terminal.css';
+
+// 後方互換: 既存の参照/テスト (TerminalPane.helpers.test.ts) のため再エクスポートする。
+// 実体は profileTemplates に集約（FavoriteDialog からも共有するため）。
+export { isWslShell };
 
 // (2.11) spawning タイムアウト定数
 export const SPAWN_TIMEOUT_MS = 10_000;
@@ -86,31 +91,80 @@ export function sanitizeSessionName(raw: string | null | undefined): string | nu
 }
 
 /**
- * Claude タブの自動起動コマンドを算出する。
+ * WSL タブの Claude 自動起動を「直接 exec 方式」で行うための spawn 引数を構築する純関数。
+ *
+ * 背景: spawn 直後にシェルへ `claude ...\r` をタイプ送信する方式は、wsl.exe → distro → ログイン
+ * シェル (reedline 等) の多段起動の「入力受付準備前」に届きやすく、特に cold 起動で取りこぼされる。
+ * そこで WSL では claude をタイプせず wsl の起動コマンドとして直接実行する
+ * (`-- bash -ic "<claudeCmd>; exec \"$SHELL\""`)。claude 終了後は exec でログインシェル ($SHELL)
+ * に落ちてタブが生存し続ける（手動運用で実績のある方式と同型）。
+ *
+ * - claudeCmd は injection 安全な形に組み立て済み（uuid + sanitizeSessionName 済みトークン）なので
+ *   引用符なしで埋め込んでよい。
+ * - baseArgs に既に `--`（コマンド区切り）が含まれる場合は、ユーザーが明示的に起動コマンドを
+ *   指定しているとみなして注入せず baseArgs をそのまま返す。
+ * - `exec "$SHELL"` により、claude 終了後・resume 失敗時のいずれもログインシェルに落ちるため、
+ *   タイプ方式のような「`--resume <不正id>` で crashed のまま復帰不能」になる事故も避けられる。
+ */
+export function buildWslClaudeArgs(
+  baseArgs: string[] | undefined,
+  claudeCmd: string,
+): string[] {
+  const args = baseArgs ?? [];
+  if (args.includes('--')) return args; // 明示コマンド指定済み: 触らない
+  return [...args, '--', 'bash', '-ic', `${claudeCmd}; exec "$SHELL"`];
+}
+
+/**
+ * Claude タブの自動起動方法を算出する。
+ *
+ * 戻り値:
+ *  - args: spawn に渡す最終的な引数。WSL の Claude タブは「直接 exec 方式」を注入した args、
+ *    それ以外は baseArgs をそのまま返す。
+ *  - bootstrap: spawn 後にシェルへタイプ送信するコマンド。Windows ネイティブ等の Claude タブのみ
+ *    返す（起動が即時で確実に届くため）。WSL の Claude タブ・非 Claude タブは undefined。
  *
  * StrictMode の effect 二重実行でも claudeSessionId が割れないよう、引数の closure ではなく
  * store の最新値 (getState) を読む。1 回目の発番＋保存を 2 回目が観測して再発番しないため、
  * 「起動した id」と「永続化した id」が必ず一致する。
  *
- * - launchClaude でない → undefined（自動起動なし）
+ * - launchClaude でない → args=baseArgs, bootstrap=undefined（自動起動なし）
  * - claudeSessionId 済み（復元・recycle・再オープン）→ `claude --resume <id>`
  * - 未設定（新規 Claude タブ）→ uuid 発番＋保存し、`claude --session-id <id> -n <名前>` で起動。
  *   セッション名は タブ名 → cwd フォルダ名 → 'claude' の順（A 方式: 初回固定。以後のタブ
  *   rename はアプリ表示のみで claude 側名称とは独立。resume は UUID で行うため影響なし）。
  */
-function computeClaudeBootstrap(tabId: string): string | undefined {
+function computeClaudeLaunch(
+  tabId: string,
+  baseArgs: string[] | undefined,
+): { args: string[] | undefined; bootstrap: string | undefined } {
   const tab = useAppStore.getState().tabs[tabId];
-  if (!tab?.launchClaude) return undefined;
+  if (!tab?.launchClaude) return { args: baseArgs, bootstrap: undefined };
+
+  let claudeCmd: string;
   if (tab.claudeSessionId) {
-    return `claude --resume ${tab.claudeSessionId}`;
+    claudeCmd = `claude --resume ${tab.claudeSessionId}`;
+  } else {
+    const sessionId = crypto.randomUUID();
+    useAppStore.getState().setClaudeSessionId(tabId, sessionId);
+    const name =
+      sanitizeSessionName(tab.userTitle) ??
+      sanitizeSessionName(cwdBasename(tab.cwd)) ??
+      'claude';
+    claudeCmd = `claude --session-id ${sessionId} -n ${name}`;
   }
-  const sessionId = crypto.randomUUID();
-  useAppStore.getState().setClaudeSessionId(tabId, sessionId);
-  const name =
-    sanitizeSessionName(tab.userTitle) ??
-    sanitizeSessionName(cwdBasename(tab.cwd)) ??
-    'claude';
-  return `claude --session-id ${sessionId} -n ${name}`;
+
+  // WSL は「直接 exec 方式」(タイプ送信しない)。それ以外 (Windows ネイティブ nu/pwsh 等) は
+  // 従来通りシェルへタイプ送信する (起動が即時で確実に届くため)。
+  if (isWslShell(tab.shell)) {
+    const wslArgs = buildWslClaudeArgs(baseArgs, claudeCmd);
+    // baseArgs に既に `--`(明示コマンド) があり直接 exec を注入できなかった場合は wslArgs===baseArgs。
+    // その際は従来どおりシェルへのタイプ送信にフォールバックして
+    // 「launchClaude を付けたのに何も起動しない」デグレを防ぐ。
+    if (wslArgs === baseArgs) return { args: baseArgs, bootstrap: claudeCmd };
+    return { args: wslArgs, bootstrap: undefined };
+  }
+  return { args: baseArgs, bootstrap: claudeCmd };
 }
 
 export const TerminalPane = memo(function TerminalPane({
@@ -156,11 +210,14 @@ export const TerminalPane = memo(function TerminalPane({
     );
 
     if (tab.status === 'spawning') {
+      // Claude タブの起動方法を算出する。WSL は args に直接 exec を注入し、
+      // Windows ネイティブ等は bootstrap をシェルへタイプ送信する（computeClaudeLaunch 参照）。
+      const { args: launchArgs, bootstrap } = computeClaudeLaunch(tabId, tab.args);
       runtime.startSpawn(
         {
           shell: tab.shell,
           cwd: tab.cwd,
-          args: tab.args,
+          args: launchArgs,
           env: tab.env,
           cols: Math.max(1, runtime.term.cols || 80),
           rows: Math.max(1, runtime.term.rows || 24),
@@ -169,7 +226,7 @@ export const TerminalPane = memo(function TerminalPane({
           spawnErrorRef.current = err.message;
           setTabStatus(tabId, 'crashed');
         },
-        computeClaudeBootstrap(tabId),
+        bootstrap,
       );
     }
 
@@ -398,12 +455,14 @@ export const TerminalPane = memo(function TerminalPane({
     // 1. UI 状態を spawning に更新
     setTabStatus(tabId, 'spawning');
     // 2. xterm を維持して PTY のみ差し替え（scrollback 保全）
+    //    Claude タブは computeClaudeLaunch で WSL=直接 exec / 非 WSL=タイプ送信を切り替える。
+    const { args: launchArgs, bootstrap } = computeClaudeLaunch(tabId, tab.args);
     recyclePty(
       tabId,
       {
         shell: tab.shell,
         cwd: tab.cwd,
-        args: tab.args,
+        args: launchArgs,
         env: tab.env,
         cols: Math.max(1, runtime.term.cols || 80),
         rows: Math.max(1, runtime.term.rows || 24),
@@ -412,7 +471,7 @@ export const TerminalPane = memo(function TerminalPane({
         spawnErrorRef.current = errMsg;
         setTabStatus(tabId, 'crashed');
       },
-      computeClaudeBootstrap(tabId),
+      bootstrap,
     );
   }
 

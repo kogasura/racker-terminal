@@ -31,3 +31,8 @@ dist-ssr
 # Local installer/manifest output
 dist-installer/
 latest.json
+
+# Release signing secrets (パスフレーズ等。コミット厳禁)
+.env
+.env.release
+.env.*.local

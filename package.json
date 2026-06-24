@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run",
-    "release:manifest": "node scripts/generate-update-manifest.mjs"
+    "release:manifest": "node scripts/generate-update-manifest.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

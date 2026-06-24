@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cwdBasename, sanitizeSessionName, isWslShell, buildWslClaudeArgs } from './TerminalPane';
+import { cwdBasename, sanitizeSessionName, isWslShell, buildWslClaudeArgs, buildClaudeCommand } from './TerminalPane';
 import { isWslShell as isWslShellSrc } from '../lib/profileTemplates';
 
 describe('cwdBasename', () => {
@@ -64,6 +64,33 @@ describe('isWslShell (re-export)', () => {
   // ここでは TerminalPane が実体を素通しで再エクスポートしていることだけ検証する。
   it('profileTemplates の実体をそのまま再エクスポートしている', () => {
     expect(isWslShell).toBe(isWslShellSrc);
+  });
+});
+
+describe('buildClaudeCommand', () => {
+  it('新規セッション: --session-id と -n を組み立てる', () => {
+    expect(buildClaudeCommand({ sessionId: 'abc', name: 'uranus2' })).toBe(
+      'claude --session-id abc -n uranus2',
+    );
+  });
+
+  it('resume: --resume を組み立てる', () => {
+    expect(buildClaudeCommand({ resume: 'xyz' })).toBe('claude --resume xyz');
+  });
+
+  it('bypass=true で --dangerously-skip-permissions を末尾に付ける（新規/resume 両方）', () => {
+    expect(buildClaudeCommand({ sessionId: 'abc', name: 'n' }, { bypass: true })).toBe(
+      'claude --session-id abc -n n --dangerously-skip-permissions',
+    );
+    expect(buildClaudeCommand({ resume: 'xyz' }, { bypass: true })).toBe(
+      'claude --resume xyz --dangerously-skip-permissions',
+    );
+  });
+
+  it('bypass=false / 未指定では付けない', () => {
+    expect(buildClaudeCommand({ resume: 'xyz' }, { bypass: false })).toBe('claude --resume xyz');
+    expect(buildClaudeCommand({ resume: 'xyz' }, {})).toBe('claude --resume xyz');
+    expect(buildClaudeCommand({ resume: 'xyz' })).toBe('claude --resume xyz');
   });
 });
 

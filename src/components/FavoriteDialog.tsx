@@ -85,6 +85,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
   );
   const [defaultTabTitle, setDefaultTabTitle] = useState(initial?.defaultTabTitle ?? '');
   const [launchClaude, setLaunchClaude] = useState(initial?.launchClaude ?? false);
+  const [bypassPermissions, setBypassPermissions] = useState(initial?.bypassPermissions ?? false);
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
@@ -150,6 +151,8 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
       env: Object.keys(env).length > 0 ? env : undefined,
       defaultTabTitle: defaultTabTitle.trim() || undefined,
       launchClaude: launchClaude || undefined,
+      // 権限バイパスは Claude 自動起動が前提。launchClaude OFF のときは保存しない。
+      bypassPermissions: (launchClaude && bypassPermissions) || undefined,
     });
   }
 
@@ -379,6 +382,22 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 （<code>claude</code> が PATH にある環境が前提）。
               </small>
             </label>
+
+            {launchClaude && (
+              <label className="dialog-field dialog-field--checkbox dialog-field--indent">
+                <input
+                  type="checkbox"
+                  checked={bypassPermissions}
+                  onChange={(e) => setBypassPermissions(e.target.checked)}
+                />
+                <span className="dialog-label">権限プロンプトをバイパスする</span>
+                <small className="dialog-hint">
+                  ⚠️ ON にすると <code>claude --dangerously-skip-permissions</code> で起動し、
+                  ファイル編集・コマンド実行などの確認をスキップします。信頼できる作業ディレクトリ専用に
+                  してください。
+                </small>
+              </label>
+            )}
 
             <div className="dialog-actions">
               <button type="button" className="dialog-btn dialog-btn--cancel" onClick={onClose}>

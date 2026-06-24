@@ -630,6 +630,11 @@
   flex-basis: 100%;
 }
 
+/* 親チェックボックス (Claude 自動起動) に従属する子オプションの字下げ */
+.dialog-field--indent {
+  margin-left: 1.25rem;
+}
+
 .dialog-label {
   font-size: 11px;
   color: var(--sidebar-fg);

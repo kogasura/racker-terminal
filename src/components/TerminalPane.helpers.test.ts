@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { cwdBasename, sanitizeSessionName } from './TerminalPane';
+import { cwdBasename, sanitizeSessionName, isWslShell, buildWslClaudeArgs } from './TerminalPane';
+import { isWslShell as isWslShellSrc } from '../lib/profileTemplates';
 
 describe('cwdBasename', () => {
   it('POSIX パスの末尾フォルダ名を返す', () => {
@@ -55,5 +56,46 @@ describe('sanitizeSessionName', () => {
     expect(sanitizeSessionName(undefined)).toBeNull();
     expect(sanitizeSessionName('   ')).toBeNull();
     expect(sanitizeSessionName('"\'`$;|&')).toBeNull();
+  });
+});
+
+describe('isWslShell (re-export)', () => {
+  // 振る舞いの網羅テストは profileTemplates.test.ts 側にあるため、
+  // ここでは TerminalPane が実体を素通しで再エクスポートしていることだけ検証する。
+  it('profileTemplates の実体をそのまま再エクスポートしている', () => {
+    expect(isWslShell).toBe(isWslShellSrc);
+  });
+});
+
+describe('buildWslClaudeArgs', () => {
+  it('baseArgs の末尾に直接 exec 起動コマンドを注入する', () => {
+    const out = buildWslClaudeArgs(
+      ['-d', 'Ubuntu-22.04', '--cd', '~/jdf-dev/uranus2/server'],
+      'claude --session-id abc -n uranus2',
+    );
+    expect(out).toEqual([
+      '-d', 'Ubuntu-22.04', '--cd', '~/jdf-dev/uranus2/server',
+      '--', 'bash', '-ic', 'claude --session-id abc -n uranus2; exec "$SHELL"',
+    ]);
+  });
+
+  it('resume コマンドも同様に注入する', () => {
+    const out = buildWslClaudeArgs(['-d', 'Ubuntu-22.04', '--cd', '~'], 'claude --resume xyz');
+    expect(out[out.length - 1]).toBe('claude --resume xyz; exec "$SHELL"');
+    expect(out.slice(-4, -1)).toEqual(['--', 'bash', '-ic']);
+  });
+
+  it('baseArgs が undefined でも動く', () => {
+    const out = buildWslClaudeArgs(undefined, 'claude --resume xyz');
+    expect(out).toEqual(['--', 'bash', '-ic', 'claude --resume xyz; exec "$SHELL"']);
+  });
+
+  it('既に -- を含む場合は注入せず baseArgs を同一参照で返す（明示コマンド尊重）', () => {
+    const base = ['-d', 'Ubuntu-22.04', '--', 'bash', '-lc', 'echo hi'];
+    const out = buildWslClaudeArgs(base, 'claude --resume xyz');
+    expect(out).toEqual(base);
+    // computeClaudeLaunch は `wslArgs === baseArgs` で「注入できなかった」を判定し
+    // タイプ送信へフォールバックするため、同一参照で返すことが契約 (レビュー B1)。
+    expect(out).toBe(base);
   });
 });

@@ -93,6 +93,19 @@ export function expandGroupContaining(
   );
 }
 
+/**
+ * パス末尾のフォルダ名を返す純関数（Windows `\` / POSIX `/` 両対応）。
+ * ドライブ直下（例: `C:\`）や取得できない場合は 'Terminal' を返す。
+ * Explorer「Racker Terminal で開く」で開いたタブのタイトルに使う。
+ */
+export function pathBasename(path: string): string {
+  const parts = path.split(/[\\/]+/).filter((p) => p.length > 0 && p !== '~');
+  const last = parts[parts.length - 1];
+  // `C:` のようなドライブレターだけになった場合はフォールバックする
+  if (!last || /^[A-Za-z]:$/.test(last)) return 'Terminal';
+  return last;
+}
+
 interface AppActions {
   /**
    * tabId を active に設定する（直接更新経路）。
@@ -128,6 +141,15 @@ interface AppActions {
    * - 存在しない favId は null を返す
    */
   spawnFavorite: (favId: string) => string | null;
+
+  /**
+   * 指定フォルダを cwd にした新しいタブを spawn し、そのタブ ID を返す。
+   * Windows Explorer の「Racker Terminal で開く」コンテキストメニューから使う。
+   * - 既定お気に入りが設定されている場合は、その shell / args / env / Claude 設定を
+   *   引き継ぎつつ cwd だけを指定フォルダに差し替える。
+   * - 既定お気に入りが無い場合は、フォルダ名をタイトルにした plain タブを開く。
+   */
+  spawnAtPath: (path: string) => string;
   /**
    * tabId を active にし、その tabId を含むグループが折りたたまれていれば自動展開する。
    * Ctrl+Tab / Ctrl+Shift+Tab のキーボード遷移で使用する。
@@ -422,6 +444,28 @@ export const useAppStore = create<Store>()(
       launchClaude: fav.launchClaude,
       bypassPermissions: fav.bypassPermissions,
     });
+  },
+
+  spawnAtPath: (path) => {
+    const state = get();
+    const { defaultFavoriteId } = state.settings;
+    // 既定お気に入りがあれば、その設定を引き継ぎつつ cwd を上書きして開く。
+    if (defaultFavoriteId) {
+      const fav = state.favorites.find((f) => f.id === defaultFavoriteId);
+      if (fav) {
+        return get().createTab(undefined, {
+          userTitle: fav.defaultTabTitle ?? fav.title,
+          shell: fav.shell,
+          cwd: path,
+          args: fav.args ? [...fav.args] : undefined,
+          env: fav.env ? { ...fav.env } : undefined,
+          launchClaude: fav.launchClaude,
+          bypassPermissions: fav.bypassPermissions,
+        });
+      }
+    }
+    // 既定お気に入りなし → フォルダ名をタイトルにした plain タブ
+    return get().createTab(undefined, { userTitle: pathBasename(path), cwd: path });
   },
 
   setActiveTab: (tabId) =>

@@ -60,3 +60,12 @@
   flex-shrink: 0;
   opacity: 0.85;
 }
+
+/* メニュー見出し（非選択のラベル行） */
+.dropdown-menu__label {
+  padding: 6px 12px;
+  font-size: 11px;
+  opacity: 0.6;
+  color: var(--sidebar-fg, #c0caf5);
+  user-select: none;
+}

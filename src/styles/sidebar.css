@@ -70,6 +70,26 @@
   background: var(--tab-item-bg-hover);
 }
 
+/* 「フォルダを選んで開く」ボタン（Settings と同じアイコンボタン形状） */
+.sidebar__open-folder-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  color: var(--sidebar-fg);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar__open-folder-btn:hover {
+  background: var(--tab-item-bg-hover);
+}
+
 /* B3: Settings ボタン */
 .sidebar__settings-btn {
   flex-shrink: 0;

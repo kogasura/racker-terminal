@@ -16,6 +16,7 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { GroupSection } from './GroupSection';
 import { FavoritesSection } from './FavoritesSection';
+import { OpenFolderButton } from './OpenFolderButton';
 import {
   resolveDropTarget,
   GROUP_DROPPABLE_PREFIX,
@@ -272,6 +273,8 @@ export const Sidebar = memo(function Sidebar() {
             >
               + New Group
             </button>
+            {/* フォルダを選んで臨時のタブを開く（Windows / WSL 両対応） */}
+            <OpenFolderButton />
             {/* B3: Settings ボタン */}
             <button
               type="button"

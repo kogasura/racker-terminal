@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from './store/appStore';
-import { getAllRuntimes } from './lib/terminalRegistry';
+import { getAllRuntimes, clearAllTextureAtlases } from './lib/terminalRegistry';
 import { listWslDistros } from './lib/wsl';
 import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
@@ -93,6 +93,18 @@ function App() {
       unsub();
       if (intervalId !== null) clearInterval(intervalId);
     };
+  }, []);
+
+  // #5: WebGL グリフキャッシュ(TextureAtlas)の無制限肥大を抑えるため、一定間隔で全 runtime の
+  // アトラスをクリアする。truecolor 出力で (glyph,fg,bg,ext) の組が無限に溜まり JS ヒープが
+  // 単調増加するのを防ぐ。クリア後は次フレームでアトラスが再構築されるだけ（表示中タブで
+  // 数 ms のコスト、sleep 中/透明タブは DOM renderer なので no-op）。
+  useEffect(() => {
+    const GLYPH_CACHE_CLEAR_INTERVAL_MS = 10 * 60 * 1000; // 10 分
+    const id = setInterval(() => {
+      clearAllTextureAtlases();
+    }, GLYPH_CACHE_CLEAR_INTERVAL_MS);
+    return () => clearInterval(id);
   }, []);
 
   // App 起動時に WSL distro 一覧を取得して store に保存する。

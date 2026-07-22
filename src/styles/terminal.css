@@ -18,12 +18,17 @@
 }
 
 .terminal-pane--hidden {
-  visibility: hidden;
+  /* #2: 画面外へ移動して xterm の IntersectionObserver を「非交差」にし、背景タブの
+     描画ループ (rAF / WebGL / DOM renderer) を停止させる。
+     visibility:hidden ではレイアウトボックスが画面上に残り交差判定が true のままで
+     描画が止まらない（背景タブが全て描画し続けてメインスレッドを食う）ため使わない。
+     transform は要素のレイアウト寸法 (inset:0) を変えないので、fit の cols/rows 計算と
+     PTY spawn サイズは従来どおり正しく保たれる（display:none だと 0 寸法になり不可）。 */
+  transform: translateX(-200vw);
   pointer-events: none;
 }
 
 .terminal-pane--visible {
-  visibility: visible;
   pointer-events: auto;
 }
 

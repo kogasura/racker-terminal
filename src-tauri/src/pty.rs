@@ -37,6 +37,11 @@ const TINY_READ_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_mi
 /// `yes` / `find /` 等の暴走出力で OOM になるのを防ぐための back-pressure 上限。
 const RAW_BUF_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
+/// フロー制御（#4）で read スレッドを pause できる最大連続時間。
+/// フロント側の resume(ack) が失われても、この時間を超えたら read を強制再開して
+/// ターミナルが恒久ハングするのを防ぐ安全弁。
+const MAX_READ_PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
+
 // ─── IPC イベント ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -91,6 +96,10 @@ struct FlushState {
 /// read / flush スレッド間で共有する状態 + Condvar の型エイリアス
 type SharedFlushState = Arc<(Mutex<FlushState>, Condvar)>;
 
+/// read スレッドの pause 制御を共有する型（#4 フロー制御 / back-pressure）。
+/// bool = pause 中か。Condvar で resume / stop 時に read スレッドを即時起床させる。
+type ReadPause = Arc<(Mutex<bool>, Condvar)>;
+
 // ─── PtySession ──────────────────────────────────────────────────────────────
 
 // SF-B1 参照: 0 clamp に使用するため定数は残しておく（Phase 2 でも流用）
@@ -112,6 +121,7 @@ struct PtySessionArgs {
     flush_handle: JoinHandle<()>,
     watch_handle: JoinHandle<()>,
     flush_state: SharedFlushState,
+    read_pause: ReadPause,
 }
 
 pub struct PtySession {
@@ -130,6 +140,9 @@ pub struct PtySession {
     /// Drop 時に flush スレッドを即時起床させるための Condvar 共有参照
     /// （flush スレッドが wait_timeout で待機中でも stop_flag チェックに誘導できる）
     flush_state: SharedFlushState,
+    /// #4 フロー制御: read スレッドの pause/resume 制御。kill/Drop 時に notify して
+    /// pause 中の read スレッドを起こし stop_flag チェックへ誘導する。
+    read_pause: ReadPause,
 }
 
 impl PtySession {
@@ -144,7 +157,16 @@ impl PtySession {
             flush_handle: Mutex::new(Some(args.flush_handle)),
             watch_handle: Mutex::new(Some(args.watch_handle)),
             flush_state: args.flush_state,
+            read_pause: args.read_pause,
         }
+    }
+
+    /// #4 フロー制御: read スレッドの pause/resume を切り替える。
+    /// resume(false) 時に Condvar を notify して pause 待機中の read スレッドを即時起床させる。
+    pub fn set_read_paused(&self, paused: bool) {
+        let (plock, pcvar) = &*self.read_pause;
+        *plock.lock() = paused;
+        pcvar.notify_one();
     }
 
     pub fn write_data(&self, data: &str) -> Result<(), PtyError> {
@@ -190,6 +212,9 @@ impl PtySession {
         let (_, cvar) = &*self.flush_state;
         cvar.notify_one();
 
+        // #4: pause 中の read スレッドを起床させて stop_flag チェックへ誘導する
+        self.read_pause.1.notify_one();
+
         // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
         if let Some(mut child) = self.child.lock().take() {
             let _ = child.kill();
@@ -219,6 +244,10 @@ impl Drop for PtySession {
         // これにより stop_flag チェックが即座に走り、flush スレッドが終了できる
         let (_, cvar) = &*self.flush_state;
         cvar.notify_one();
+
+        // #4: pause 中の read スレッドを起床させて stop_flag チェックへ誘導する
+        // （pause 待機中でも Drop の join が最大 MAX_READ_PAUSE 待たされないようにする）
+        self.read_pause.1.notify_one();
 
         // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
         if let Some(mut child) = self.child.lock().take() {
@@ -299,6 +328,7 @@ struct ReaderThreads {
     read_handle: JoinHandle<()>,
     flush_handle: JoinHandle<()>,
     flush_state: SharedFlushState,
+    read_pause: ReadPause,
 }
 
 fn spawn_reader_threads(
@@ -319,10 +349,14 @@ fn spawn_reader_threads(
         Condvar::new(),
     ));
 
+    // #4 フロー制御: read スレッドの pause 制御（false = 稼働中）
+    let read_pause: ReadPause = Arc::new((Mutex::new(false), Condvar::new()));
+
     // ── read スレッド ──────────────────────────────────────────────────────
     // blocking read のみ担当。UTF-8 検証は行わず raw bytes を raw_buf に追記する。
     let read_state = Arc::clone(&flush_state);
     let read_stop = Arc::clone(&stop_flag);
+    let read_pause_reader = Arc::clone(&read_pause);
     let read_handle = std::thread::spawn(move || {
         let mut read_buf = [0u8; 4096];
         let mut read_count: u32 = 0;
@@ -331,6 +365,27 @@ fn spawn_reader_threads(
         loop {
             if read_stop.load(Ordering::Relaxed) {
                 dbg_log!("[pty-read] stop_flag set, exit");
+                break;
+            }
+
+            // #4 フロー制御: フロント側が high watermark に達したら pause 要求が来る。
+            // paused の間は read を止めて PTY の OS バッファを埋め、子プロセスに背圧をかける。
+            // MAX_READ_PAUSE を超えたら安全弁として強制再開する（resume 消失時のハング防止）。
+            {
+                let (plock, pcvar) = &*read_pause_reader;
+                let mut paused = plock.lock();
+                if *paused {
+                    let start = Instant::now();
+                    while *paused
+                        && !read_stop.load(Ordering::Relaxed)
+                        && start.elapsed() < MAX_READ_PAUSE
+                    {
+                        pcvar.wait_for(&mut paused, std::time::Duration::from_millis(200));
+                    }
+                }
+            }
+            if read_stop.load(Ordering::Relaxed) {
+                dbg_log!("[pty-read] stop_flag set after pause, exit");
                 break;
             }
 
@@ -522,6 +577,7 @@ fn spawn_reader_threads(
         read_handle,
         flush_handle,
         flush_state,
+        read_pause,
     }
 }
 
@@ -768,6 +824,7 @@ impl PtyManager {
             flush_handle: threads.flush_handle,
             watch_handle,
             flush_state: threads.flush_state,
+            read_pause: threads.read_pause,
         }));
 
         self.sessions.write().insert(id.clone(), session);
@@ -789,6 +846,16 @@ impl PtyManager {
             .get(id)
             .ok_or_else(|| PtyError::SessionNotFound { id: id.to_string() })?;
         session.resize(cols, rows)
+    }
+
+    /// #4 フロー制御: 指定セッションの read スレッドを pause/resume する。
+    pub fn set_read_paused(&self, id: &str, paused: bool) -> Result<(), PtyError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(id)
+            .ok_or_else(|| PtyError::SessionNotFound { id: id.to_string() })?;
+        session.set_read_paused(paused);
+        Ok(())
     }
 
     pub fn kill(&self, id: &str) -> Result<(), PtyError> {
@@ -845,6 +912,17 @@ pub fn pty_resize(
 #[tauri::command]
 pub fn pty_kill(state: tauri::State<PtyManager>, id: String) -> Result<(), String> {
     state.kill(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pty_set_read_paused(
+    state: tauri::State<PtyManager>,
+    id: String,
+    paused: bool,
+) -> Result<(), String> {
+    state
+        .set_read_paused(&id, paused)
+        .map_err(|e| e.to_string())
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────

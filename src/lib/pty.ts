@@ -73,3 +73,15 @@ export async function resizePty(
 export async function killPty(id: string): Promise<void> {
   await invoke<void>("pty_kill", { id });
 }
+
+/**
+ * PTY の read スレッドの一時停止/再開を切り替える（フロー制御 / back-pressure）。
+ *
+ * フロントの xterm 書き込みバッファが high watermark を超えたら paused=true を送り、
+ * Rust の read スレッドを止めて PTY の OS バッファを埋め、子プロセスに背圧をかける。
+ * バッファが low watermark まで捌けたら paused=false で再開する。
+ * Rust 側は安全弁として一定時間で強制再開するため、ack 消失時もハングしない。
+ */
+export async function setReadPaused(id: string, paused: boolean): Promise<void> {
+  await invoke<void>("pty_set_read_paused", { id, paused });
+}

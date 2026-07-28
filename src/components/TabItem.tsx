@@ -28,12 +28,26 @@ export function statusDotClassName(status: TabStatus, agentState?: AgentState): 
   return `${base} tab-item__status-dot--agent-${agentState}`;
 }
 
+/**
+ * タブの並び方向。
+ * - 'horizontal': TabBar（画面上部の横並び）。現行レイアウトの既定の使われ方
+ * - 'vertical':   縦リスト用。ドラッグプレビューなど、横タブ以外の文脈で使う
+ *
+ * コンテキストメニュー・InlineEdit・sortable の挙動は共通で、CSS だけが切り替わる。
+ */
+export type TabItemVariant = 'horizontal' | 'vertical';
+
 interface TabItemProps {
   tabId: string;
   isActive: boolean;
+  variant?: TabItemVariant;
 }
 
-export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) {
+export const TabItem = memo(function TabItem({
+  tabId,
+  isActive,
+  variant = 'vertical',
+}: TabItemProps) {
   // 個別 subscribe で他タブの status 変化による再レンダを防ぐ
   const tab = useAppStore((s) => s.tabs[tabId]);
   // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
@@ -86,7 +100,7 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           style={style}
           {...attributes}
           {...listeners}
-          className={`tab-item${isActive ? ' active' : ''}`}
+          className={`tab-item tab-item--${variant}${isActive ? ' active' : ''}`}
           onClick={() => setActiveTab(tabId)}
           onDoubleClick={handleDoubleClick}
           // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する

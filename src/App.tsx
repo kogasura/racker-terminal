@@ -5,6 +5,8 @@ import { useAppStore } from './store/appStore';
 import { getAllRuntimes, clearAllTextureAtlases } from './lib/terminalRegistry';
 import { listWslDistros } from './lib/wsl';
 import { Sidebar } from './components/Sidebar';
+import { TabBar } from './components/TabBar';
+import { DragDropProvider } from './components/DragDropProvider';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import { UpdateDialog } from './components/UpdateDialog';
@@ -190,8 +192,15 @@ function App() {
       <TitleBar />
       <UpdateDialog />
       <div className="app-body">
-        <Sidebar />
-        <TerminalPaneContainer />
+        {/* D&D は Sidebar と TabBar をまたぐため、両方を包む位置に DndContext を置く
+            (TabBar のタブをサイドバーのグループ行へドロップして移動できるようにする) */}
+        <DragDropProvider>
+          <Sidebar />
+          <div className="main-column">
+            <TabBar />
+            <TerminalPaneContainer />
+          </div>
+        </DragDropProvider>
         <FileDropOverlay isDragging={isDragging} />
       </div>
     </div>

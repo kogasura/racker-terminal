@@ -1,11 +1,10 @@
-import { memo, useEffect } from 'react';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { memo } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
-import { TabItem } from './TabItem';
 import { InlineEdit } from './InlineEdit';
 import { GROUP_DROPPABLE_PREFIX, DRAG_KIND } from '../lib/dndResolve';
 import { AGENT_STATE_LABEL, dominantAgentState } from '../types';
@@ -15,22 +14,15 @@ interface GroupSectionProps {
 }
 
 /**
- * グループ本体の droppable ラッパー。
- * 空グループへのドロップや、タブリスト下部への drop を受け付ける。
- * id は "group-{groupId}" 形式で Sidebar の onDragEnd から参照する。
+ * サイドバーのグループ 1 行（フォルダ）。
+ *
+ * 配下のタブはここには描画しない。グループを選択すると、そのグループのタブが
+ * 上部の TabBar に横並びで表示される。タブが見えなくなる代わりに、
+ * 配下タブの代表エージェント状態とタブ数をこの行に集約して表示する。
+ *
+ * この行自体が drop ターゲット (`group-{id}`) を兼ねており、TabBar から
+ * タブをここへドロップすると、そのグループの末尾へ移動する。
  */
-function GroupBody({ groupId, children }: { groupId: string; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `${GROUP_DROPPABLE_PREFIX}${groupId}` });
-  return (
-    <div
-      ref={setNodeRef}
-      className={`group-body${isOver ? ' group-body--drop-over' : ''}`}
-    >
-      {children}
-    </div>
-  );
-}
-
 export const GroupSection = memo(function GroupSection({
   groupId,
 }: GroupSectionProps) {
@@ -40,18 +32,22 @@ export const GroupSection = memo(function GroupSection({
       const g = s.groups.find((x) => x.id === groupId);
       if (!g) return null;
       // 配下タブの代表エージェント状態（優先度: blocked > working > done > idle）。
-      // 折りたたみの有無にかかわらず算出する: グループ単位で「応答待ちが混ざっている」ことを
-      // 常に見えるようにするため（子タブが見えていても、ざっと見でグループ単位に気付ける）。
+      // タブ自体がサイドバーに見えないため、グループ単位での集約表示が
+      // 「どのフォルダが応答待ちか」を知る唯一の手がかりになる。
       const agentState = dominantAgentState(g.tabIds.map((id) => s.tabs[id]?.agentState));
-      return { title: g.title, collapsed: g.collapsed, tabIds: g.tabIds, agentState };
+      return {
+        title: g.title,
+        tabCount: g.tabIds.length,
+        agentState,
+        isActive: s.activeGroupId === groupId,
+      };
     }),
   );
-  const activeTabId = useAppStore((s) => s.activeTabId);
   // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
   const isEditingGroup = useAppStore((s) => s.editingId === groupId);
   const createTab = useAppStore((s) => s.createTab);
   const removeGroup = useAppStore((s) => s.removeGroup);
-  const toggleCollapse = useAppStore((s) => s.toggleCollapse);
+  const setActiveGroup = useAppStore((s) => s.setActiveGroup);
   const startEditing = useAppStore((s) => s.startEditing);
   const updateGroupTitle = useAppStore((s) => s.updateGroupTitle);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
@@ -74,40 +70,29 @@ export const GroupSection = memo(function GroupSection({
     transition: groupTransition,
   };
 
-  // B4a: 折りたたみグループヘッダへのドロップホバー検知（600ms で auto-expand）
-  const { setNodeRef: setHeaderDropRef, isOver: isHeaderOver } = useDroppable({
-    id: `group-header-${groupId}`,
+  // タブをこの行にドロップするとグループ末尾へ移動する (resolveDropTarget が解決する)
+  const { setNodeRef: setRowDropRef, isOver } = useDroppable({
+    id: `${GROUP_DROPPABLE_PREFIX}${groupId}`,
   });
-
-  useEffect(() => {
-    // 折りたたみ状態かつヘッダ上にホバー中の場合のみ展開タイマーを起動する
-    if (!isHeaderOver || !groupView?.collapsed) return;
-    const timer = setTimeout(() => {
-      toggleCollapse(groupId);
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [isHeaderOver, groupView?.collapsed, groupId, toggleCollapse]);
 
   if (!groupView) return null;
 
-  const { title, collapsed, tabIds, agentState } = groupView;
-  // 'idle' と未検出はヘッダに出さない（動きのないグループを装飾しない）
+  const { title, tabCount, agentState, isActive } = groupView;
+  // 'idle' と未検出は出さない（動きのないグループを装飾しない）
   const showAgentIndicator = agentState !== undefined && agentState !== 'idle';
-  const isEmpty = tabIds.length === 0;
 
   // グループ削除可能条件: タブが空 + グループが 2 個以上
-  const canDeleteGroup = isEmpty && canDelete;
+  const canDeleteGroup = tabCount === 0 && canDelete;
 
-  const handleToggle = () => {
-    // 編集中はトグルを無効化
+  const handleSelect = () => {
+    // 編集中は選択操作を無効化
     if (isEditingGroup) return;
-    toggleCollapse(groupId);
+    setActiveGroup(groupId);
   };
 
   function handleGroupDoubleClick(e: React.MouseEvent) {
     // 編集中のダブルクリックは無視
     if (isEditingGroup) return;
-    // chevron のクリックはトグルに任せるため、ここでは stopPropagation しない
     e.stopPropagation();
     startEditing(groupId);
   }
@@ -131,21 +116,26 @@ export const GroupSection = memo(function GroupSection({
           disabled={isEditingGroup}
           asChild
         >
-          {/* F1: グループヘッダを role="button" + onKeyDown で a11y 化 */}
-          {/* setHeaderDropRef: 折りたたみ時の auto-expand drop 検知用 (B4a) */}
+          {/* F1: グループ行を role="button" + onKeyDown で a11y 化 */}
+          {/* setRowDropRef: タブのグループ間移動を受け付ける drop ターゲット */}
           <div
-            ref={setHeaderDropRef}
-            className={`group-header${isHeaderOver && collapsed ? ' group-header--drop-hover' : ''}`}
+            ref={setRowDropRef}
+            className={
+              'group-header' +
+              (isActive ? ' group-header--active' : '') +
+              (isOver ? ' group-header--drop-hover' : '')
+            }
             role="button"
             tabIndex={0}
-            onClick={handleToggle}
+            aria-current={isActive ? 'true' : undefined}
+            onClick={handleSelect}
             // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
             onContextMenu={isEditingGroup ? (e) => e.preventDefault() : undefined}
             onKeyDown={(e) => {
               if (isEditingGroup) return;
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                handleToggle();
+                handleSelect();
               }
             }}
           >
@@ -156,14 +146,13 @@ export const GroupSection = memo(function GroupSection({
               {...groupListeners}
               title="ドラッグしてグループを並び替え"
               aria-label="グループを並び替え"
-              // ドラッグハンドルのクリックがグループトグルに伝播しないよう停止
+              // ドラッグハンドルのクリックがグループ選択に伝播しないよう停止
               onClick={(e) => e.stopPropagation()}
             >
               ⠿
             </span>
-            <span className="group-header__chevron">{collapsed ? '▶' : '▼'}</span>
 
-            {/* 配下タブの代表エージェント状態をヘッダに反映する
+            {/* 配下タブの代表エージェント状態
                 (herdr の "A blocked agent makes its pane, tab, and workspace look blocked" 相当) */}
             {showAgentIndicator && (
               <span
@@ -179,6 +168,11 @@ export const GroupSection = memo(function GroupSection({
               onCommit={handleGroupCommit}
               className="group-header__title"
             />
+
+            {/* タブがサイドバーに見えないぶん、本数だけは常に示しておく */}
+            <span className="group-header__count" aria-label={`${tabCount} タブ`}>
+              {tabCount}
+            </span>
 
             {/* グループ名のダブルクリックで編集モードに入る（表示モードのみ） */}
             {!isEditingGroup && (
@@ -233,23 +227,6 @@ export const GroupSection = memo(function GroupSection({
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
-
-      {/* グループ本体（折りたたみ時は非表示） */}
-      {!collapsed && (
-        // GroupBody: useDroppable で空グループや末尾へのドロップを受け付ける
-        <GroupBody groupId={groupId}>
-          {/* SortableContext: 各タブを sortable にする */}
-          <SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
-            {tabIds.map((tabId) => (
-              <TabItem
-                key={tabId}
-                tabId={tabId}
-                isActive={tabId === activeTabId}
-              />
-            ))}
-          </SortableContext>
-        </GroupBody>
-      )}
     </div>
   );
 });

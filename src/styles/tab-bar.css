@@ -1,0 +1,83 @@
+/* =====================================================================
+   TabBar — サイドバーで選択中のグループのタブを横に並べるバー
+   縦のフォルダ階層 (Sidebar) の下に横タブを生やすレイアウトの下半分。
+   ===================================================================== */
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: 34px;
+  background: var(--group-header-bg);
+  border-bottom: 1px solid var(--sidebar-border);
+  /* タブが増えてもバー自体は伸ばさない（内側の __tabs が横スクロールする） */
+  overflow: hidden;
+}
+
+/* タブの並び。溢れたら横スクロールし、+ ボタンは常に右端に残る */
+.tab-bar__tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+/* 横スクロールバーがタブの表示領域を削らないよう細くする */
+.tab-bar__tabs::-webkit-scrollbar {
+  height: 3px;
+}
+
+.tab-bar__tabs::-webkit-scrollbar-thumb {
+  background: var(--panel-divider);
+}
+
+.tab-bar__new-btn {
+  flex-shrink: 0;
+  width: 32px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--sidebar-border);
+  color: var(--sidebar-fg);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tab-bar__new-btn:hover {
+  background: var(--tab-item-bg-hover);
+}
+
+/* ----- 横向きタブ本体 -----
+   .tab-item の共通スタイル（ドット・タイトル・× ボタン）はそのまま活かし、
+   縦リスト前提の箱組みだけをここで上書きする。 */
+.tab-item--horizontal {
+  flex-shrink: 0;
+  max-width: 220px;
+  min-width: 120px;
+  padding: 0 8px 0 10px;
+  border-left: none;
+  border-right: 1px solid var(--sidebar-border);
+  /* アクティブタブの下線用。非アクティブ時は透明で確保しておき、
+     切り替え時に文字が上下にずれないようにする */
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+
+.tab-item--horizontal.active {
+  background: var(--terminal-bg);
+  border-bottom-color: var(--focus-ring);
+}
+
+/* 横タブはホバーしたときだけ × を出す（常時表示だと本数が多いとき煩い）。
+   アクティブタブは誤クリックを避けたいので常時表示する。 */
+.tab-item--horizontal .tab-item__close-btn {
+  visibility: hidden;
+}
+
+.tab-item--horizontal:hover .tab-item__close-btn,
+.tab-item--horizontal.active .tab-item__close-btn {
+  visibility: visible;
+}

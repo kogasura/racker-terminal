@@ -131,9 +131,32 @@ export function getTabDisplayTitle(tab: Tab, defaultTitle = 'Terminal'): string 
   return tab.userTitle ?? tab.oscTitle ?? defaultTitle;
 }
 
+/**
+ * D&D でドラッグしている対象の種別。
+ *
+ * dndResolve.ts が re-export しているため、利用側は従来どおり
+ * `from '../lib/dndResolve'` で参照できる。ここに定義があるのは、
+ * AppState がドラッグ中の種別を保持する必要があるため
+ * (types → lib への import は循環になる)。
+ */
+export const DRAG_KIND = {
+  TAB: 'tab',
+  GROUP: 'group',
+  FAVORITE: 'favorite',
+} as const;
+
+export type DragKind = typeof DRAG_KIND[keyof typeof DRAG_KIND];
+
 export interface Group {
   id: string;
   title: string;
+  /**
+   * 折りたたみ状態。
+   *
+   * 横タブバー導入によりサイドバーはグループ 1 行のみを描画するようになり、
+   * UI からは参照されなくなった。永続化データとの互換のためフィールドは残す
+   * (将来グループを入れ子にする場合に再び使う想定)。
+   */
   collapsed: boolean;
   /**
    * このグループに属するタブ ID の配列（順序保持）。
@@ -247,7 +270,7 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
+ * - Persist OFF（ランタイム状態）: activeTabId, activeGroupId, lastActiveTabByGroup, dragId, dragKind, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings
  */
 export interface AppState {
@@ -256,6 +279,34 @@ export interface AppState {
   tabs: Record<string, Tab>;
   favorites: Favorite[];
   activeTabId: string | null;
+  /**
+   * サイドバーで選択中のグループ。横タブバーはこのグループのタブを並べる。
+   *
+   * activeTabId から導出せず独立して持つ理由: タブが 1 つもないグループを
+   * 選択している状態を表現する必要があるため (新規グループ作成直後など)。
+   * activeTabId が変わるときは常にこちらも同期する (syncGroupSelection)。
+   * ランタイム状態のため persist 対象外。
+   */
+  activeGroupId: string | null;
+  /**
+   * グループごとに「最後にアクティブだったタブ」を覚えておく辞書。
+   * グループを切り替えて戻ってきたとき、先頭タブではなく直前に見ていた
+   * タブへ復帰させるために使う。
+   *
+   * 削除済みタブの ID が残ることがあるため、参照側で存在を確認すること
+   * (掃除しないのは、タブ削除のたびに全グループを走査する方が高コストなため)。
+   * ランタイム状態のため persist 対象外。
+   */
+  lastActiveTabByGroup: Record<string, string>;
+  /**
+   * D&D でドラッグ中の要素 ID と種別。ドラッグしていないときは null。
+   *
+   * DndContext は App 直下に置かれ、Sidebar と TabBar の両方を包む。
+   * 両者が「いまタブをドラッグ中か」を知る必要があるため、React context ではなく
+   * store に置いて購読できるようにしている。ランタイム状態のため persist 対象外。
+   */
+  dragId: string | null;
+  dragKind: DragKind | null;
   /**
    * 現在インライン編集中の ID（tabId または groupId）。
    * 右クリック「リネーム」と InlineEdit のダブルクリックで共有される。

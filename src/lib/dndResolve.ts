@@ -18,19 +18,13 @@ export const GROUP_HEADER_DROPPABLE_PREFIX = 'group-header-';
 export const DROP_AS_NEW_GROUP_ID = 'drop-as-new-group';
 
 /**
- * F-M6: D&D の kind を表す定数オブジェクト。
- * リテラル文字列から定数経由に変更することで typo を型レベルで検出できる。
+ * F-M6: D&D の kind を表す定数オブジェクトと型。
+ *
+ * 定義の実体は types/index.ts にある (AppState がドラッグ中の種別を保持するため、
+ * types → lib への import になると循環する)。利用側の import 文を変えずに済むよう
+ * ここから re-export する。
  */
-export const DRAG_KIND = {
-  TAB: 'tab',
-  GROUP: 'group',
-  FAVORITE: 'favorite',
-} as const;
-
-/**
- * F-M6: D&D の kind 型。DRAG_KIND の値 union から導出する。
- */
-export type DragKind = typeof DRAG_KIND[keyof typeof DRAG_KIND];
+export { DRAG_KIND, type DragKind } from '../types';
 
 /**
  * F-M3: 既存グループのタイトルから "New Group N" の最大 N を求め、N+1 のタイトルを返す純関数。

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AgentState, AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import type { AgentState, AppState, ClosedTab, DragKind, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
@@ -91,6 +91,51 @@ export function expandGroupContaining(
   return groups.map((g) =>
     g.id === target.id ? { ...g, collapsed: false } : g,
   );
+}
+
+/**
+ * グループを選択したときにアクティブにすべきタブ ID を返す純関数。
+ *
+ * 優先順位:
+ *   1. そのグループで最後に見ていたタブ（現存し、まだそのグループに属している場合）
+ *   2. グループ先頭のタブ
+ *   3. タブが 1 つもなければ null
+ *
+ * lastActiveTabByGroup には削除済みタブの ID が残りうるので、必ず現存確認を通す。
+ */
+export function selectTabForGroup(
+  group: Group | undefined,
+  lastActiveTabByGroup: Record<string, string>,
+  tabs: Record<string, Tab>,
+): string | null {
+  if (!group) return null;
+  const last = lastActiveTabByGroup[group.id];
+  if (last !== undefined && tabs[last] !== undefined && group.tabIds.includes(last)) {
+    return last;
+  }
+  return group.tabIds[0] ?? null;
+}
+
+/**
+ * activeTabId の変更に追随して activeGroupId と lastActiveTabByGroup を更新する純関数。
+ * set() に spread して使う想定で、更新が不要な場合は空オブジェクトを返す。
+ *
+ * tabId が null / 不明のときは **activeGroupId を変更しない**。
+ * 最後のタブを閉じたときにグループ選択まで外れると、サイドバーの選択が飛んで
+ * 「新しいタブをどこに作るか」の文脈が失われるため。
+ */
+export function syncGroupSelection(
+  tabs: Record<string, Tab>,
+  lastActiveTabByGroup: Record<string, string>,
+  tabId: string | null,
+): { activeGroupId?: string; lastActiveTabByGroup?: Record<string, string> } {
+  if (tabId === null) return {};
+  const tab = tabs[tabId];
+  if (tab === undefined) return {};
+  return {
+    activeGroupId: tab.groupId,
+    lastActiveTabByGroup: { ...lastActiveTabByGroup, [tab.groupId]: tabId },
+  };
 }
 
 /**
@@ -331,6 +376,22 @@ interface AppActions {
    */
   setTabAgentState: (tabId: string, state: AgentState) => void;
 
+  /**
+   * サイドバーでグループを選択する。横タブバーの表示対象がこのグループに切り替わる。
+   *
+   * そのグループで最後に見ていたタブ（なければ先頭タブ）を自動でアクティブにする。
+   * タブが 1 つもないグループを選んだ場合は activeTabId を null にして、
+   * ターミナル領域を空表示にする。
+   * - 存在しない groupId は no-op
+   */
+  setActiveGroup: (groupId: string) => void;
+
+  /**
+   * D&D の進行状態を記録する。DragDropProvider の onDragStart / onDragEnd から呼ぶ。
+   * ドラッグ終了時は (null, null) を渡す。
+   */
+  setDragState: (dragId: string | null, dragKind: DragKind | null) => void;
+
   // --- updater アクション ---
   /**
    * 起動時に App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新があれば
@@ -376,6 +437,10 @@ export const useAppStore = create<Store>()(
   tabs: {},
   favorites: [],
   activeTabId: null,
+  activeGroupId: null,
+  lastActiveTabByGroup: {},
+  dragId: null,
+  dragKind: null,
   editingId: null,
   contextMenuOpen: false,
   settings: defaultSettings,
@@ -475,15 +540,18 @@ export const useAppStore = create<Store>()(
   setActiveTab: (tabId) =>
     set((state) => {
       const tab = tabId !== null ? state.tabs[tabId] : undefined;
+      // グループ選択（サイドバーのハイライトと横タブバーの表示対象）を追随させる
+      const groupSync = syncGroupSelection(state.tabs, state.lastActiveTabByGroup, tabId);
       // 完了通知 ('done') は「ユーザーが見るまで残す」状態なので、見た時点でクリアする。
       // 'blocked' は応答するまで残す（タブを開いただけでは応答待ちは解消しない）。
       if (tab?.agentState === 'done') {
         return {
           activeTabId: tabId,
+          ...groupSync,
           tabs: { ...state.tabs, [tabId!]: { ...tab, agentState: 'idle' } },
         };
       }
-      return { activeTabId: tabId };
+      return { activeTabId: tabId, ...groupSync };
     }),
   navigateToTab: (tabId) =>
     set((state) => {
@@ -491,6 +559,9 @@ export const useAppStore = create<Store>()(
       const base = {
         activeTabId: tabId,
         groups: expandGroupContaining(state.groups, tabId),
+        // Ctrl+Tab で別グループのタブへ渡ったときも、サイドバーの選択と
+        // 横タブバーの表示対象を追随させる
+        ...syncGroupSelection(state.tabs, state.lastActiveTabByGroup, tabId),
       };
       // setActiveTab と同じ規約: 完了通知だけをクリアし、応答待ち ('blocked') は残す
       if (tab?.agentState === 'done') {
@@ -498,6 +569,23 @@ export const useAppStore = create<Store>()(
       }
       return base;
     }),
+  setActiveGroup: (groupId) => {
+    const state = get();
+    const group = state.groups.find((g) => g.id === groupId);
+    if (!group) return;  // 存在しない groupId は no-op
+
+    const tabId = selectTabForGroup(group, state.lastActiveTabByGroup, state.tabs);
+    if (tabId === null) {
+      // タブが 1 つもないグループ: 選択だけ移してターミナル領域は空表示にする
+      set({ activeGroupId: groupId, activeTabId: null });
+      return;
+    }
+    // activeGroupId / lastActiveTabByGroup の更新と done のクリアは setActiveTab に委ねる
+    get().setActiveTab(tabId);
+  },
+
+  setDragState: (dragId, dragKind) => set({ dragId, dragKind }),
+
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
   setContextMenuOpen: (open) => set({ contextMenuOpen: open }),
@@ -573,6 +661,10 @@ export const useAppStore = create<Store>()(
         groups: expandGroupContaining(updatedGroups, tabId),
         tabs: { ...state.tabs, [tabId]: tab },
         activeTabId: tabId,
+        // 新規タブの所属グループをサイドバーの選択にも反映する
+        // (syncGroupSelection は state.tabs を見るため、まだ追加前の tab を直接参照する)
+        activeGroupId: resolvedGroupId,
+        lastActiveTabByGroup: { ...state.lastActiveTabByGroup, [resolvedGroupId]: tabId },
       };
     });
     return tabId;
@@ -620,7 +712,17 @@ export const useAppStore = create<Store>()(
       };
       const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
 
-      return { groups: finalGroups, tabs: newTabs, activeTabId: newActiveTabId, editingId: newEditingId, closedTabs: newClosedTabs };
+      return {
+        groups: finalGroups,
+        tabs: newTabs,
+        activeTabId: newActiveTabId,
+        editingId: newEditingId,
+        closedTabs: newClosedTabs,
+        // フォールバック先が別グループのタブなら選択も移す。
+        // グループ内の最後のタブを閉じた場合 (newActiveTabId が null) は
+        // syncGroupSelection が空を返し、そのグループの選択が維持される。
+        ...syncGroupSelection(newTabs, state.lastActiveTabByGroup, newActiveTabId),
+      };
     });
   },
 
@@ -1124,9 +1226,24 @@ export const useAppStore = create<Store>()(
         }
         state.tabs = newTabs;
 
+        // 5. アクティブ選択を張り直す。
+        //    activeTabId / activeGroupId は persist 対象外なので復元直後は null になる。
+        //    横タブバーは activeGroupId のタブを並べるため、未選択のままだと再起動後に
+        //    タブが 1 つも表示されない。タブを持つ最初のグループの先頭タブを選ぶ。
+        const firstGroupWithTabs =
+          state.groups.find((g) => g.tabIds.length > 0) ?? state.groups[0];
+        state.activeGroupId = firstGroupWithTabs?.id ?? null;
+        state.activeTabId = firstGroupWithTabs?.tabIds[0] ?? null;
+        state.lastActiveTabByGroup =
+          state.activeGroupId !== null && state.activeTabId !== null
+            ? { [state.activeGroupId]: state.activeTabId }
+            : {};
+
         // ランタイム状態は復元しない
         state.editingId = null;
         state.contextMenuOpen = false;
+        state.dragId = null;
+        state.dragKind = null;
 
         // updater 系は永続化対象外のため再起動時にデフォルト値で明示初期化する
         state.updateInfo = null;

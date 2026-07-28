@@ -263,6 +263,29 @@
   filter: brightness(1.15);
 }
 
+/* 選択中グループ。このグループのタブが上部の TabBar に並ぶ。
+   タブがサイドバーに見えなくなったぶん、どのフォルダを見ているかを
+   左端のアクセントバーと背景ではっきり示す。 */
+.group-header--active {
+  background: var(--tab-item-bg-active);
+  box-shadow: inset 2px 0 0 var(--focus-ring);
+}
+
+/* グループ内のタブ数。タブ自体が見えないので本数だけは常に示す */
+.group-header__count {
+  flex-shrink: 0;
+  min-width: 16px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.group-header--active .group-header__count {
+  opacity: 0.8;
+}
+
 /* B1: グループドラッグハンドル（左端の grip アイコン） */
 .group-header__drag-handle {
   font-size: 12px;

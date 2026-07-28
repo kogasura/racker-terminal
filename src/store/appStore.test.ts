@@ -5,6 +5,8 @@ import {
   selectNextTabId,
   selectPrevTabId,
   expandGroupContaining,
+  selectTabForGroup,
+  syncGroupSelection,
   pathBasename,
   CLOSED_TABS_MAX,
 } from './appStore';
@@ -1491,6 +1493,10 @@ function makeState(
     tabs: {},
     favorites: [],
     activeTabId,
+    activeGroupId: null,
+    lastActiveTabByGroup: {},
+    dragId: null,
+    dragKind: null,
     editingId: null,
     contextMenuOpen: false,
     wslDistros: [],
@@ -1694,6 +1700,168 @@ describe('navigateToTab', () => {
 });
 
 // これより下は appStore describe の外 (純関数・navigateToTab 等のスタンドアロンテスト)
+
+// --- selectTabForGroup / syncGroupSelection (グループ選択の純関数) ---
+
+describe('selectTabForGroup', () => {
+  const tabs = {
+    t1: { id: 't1', groupId: 'g1', status: 'live' as const },
+    t2: { id: 't2', groupId: 'g1', status: 'live' as const },
+  };
+  const group = { id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1', 't2'] };
+
+  it('最後に見ていたタブが現存すればそれを返す', () => {
+    expect(selectTabForGroup(group, { g1: 't2' }, tabs)).toBe('t2');
+  });
+
+  it('記録がなければ先頭タブを返す', () => {
+    expect(selectTabForGroup(group, {}, tabs)).toBe('t1');
+  });
+
+  it('記録されたタブが削除済みなら先頭タブにフォールバックする', () => {
+    expect(selectTabForGroup(group, { g1: 'deleted-tab' }, tabs)).toBe('t1');
+  });
+
+  it('記録されたタブが別グループへ移動済みなら先頭タブにフォールバックする', () => {
+    const moved = { ...group, tabIds: ['t1'] };
+    expect(selectTabForGroup(moved, { g1: 't2' }, tabs)).toBe('t1');
+  });
+
+  it('タブが 1 つもないグループは null', () => {
+    expect(selectTabForGroup({ ...group, tabIds: [] }, {}, tabs)).toBeNull();
+  });
+
+  it('グループが undefined なら null', () => {
+    expect(selectTabForGroup(undefined, {}, tabs)).toBeNull();
+  });
+});
+
+describe('syncGroupSelection', () => {
+  const tabs = { t1: { id: 't1', groupId: 'g1', status: 'live' as const } };
+
+  it('タブの所属グループを activeGroupId として返し、最後のタブを記録する', () => {
+    expect(syncGroupSelection(tabs, {}, 't1')).toEqual({
+      activeGroupId: 'g1',
+      lastActiveTabByGroup: { g1: 't1' },
+    });
+  });
+
+  it('既存の記録を保ったまま該当グループのぶんだけ更新する', () => {
+    expect(syncGroupSelection(tabs, { g2: 'other' }, 't1').lastActiveTabByGroup).toEqual({
+      g2: 'other',
+      g1: 't1',
+    });
+  });
+
+  it('tabId が null なら空を返す（グループ選択を維持するため）', () => {
+    expect(syncGroupSelection(tabs, { g1: 't1' }, null)).toEqual({});
+  });
+
+  it('存在しない tabId なら空を返す', () => {
+    expect(syncGroupSelection(tabs, {}, 'unknown')).toEqual({});
+  });
+});
+
+// --- setActiveGroup / グループ選択の同期 ---
+
+describe('グループ選択 (activeGroupId)', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      activeGroupId: null,
+      lastActiveTabByGroup: {},
+      dragId: null,
+      dragKind: null,
+      editingId: null,
+      contextMenuOpen: false,
+      closedTabs: [],
+    });
+  });
+
+  it('createTab はタブの所属グループを選択状態にする', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const tabId = useAppStore.getState().createTab(g1);
+
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+    expect(useAppStore.getState().lastActiveTabByGroup[g1]).toBe(tabId);
+  });
+
+  it('setActiveTab は別グループのタブでも選択を追随させる', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const t1 = useAppStore.getState().createTab(g1);
+    const g2 = useAppStore.getState().createGroup('G2');
+    const t2 = useAppStore.getState().createTab(g2);
+    expect(useAppStore.getState().activeGroupId).toBe(g2);
+
+    useAppStore.getState().setActiveTab(t1);
+
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+    expect(t2).not.toBe(t1);
+  });
+
+  it('setActiveGroup は最後に見ていたタブへ戻る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const t1a = useAppStore.getState().createTab(g1);
+    const t1b = useAppStore.getState().createTab(g1);
+    // g1 では t1b を見ていた状態にする
+    useAppStore.getState().setActiveTab(t1b);
+
+    const g2 = useAppStore.getState().createGroup('G2');
+    useAppStore.getState().createTab(g2);
+    expect(useAppStore.getState().activeGroupId).toBe(g2);
+
+    // g1 に戻ると先頭 (t1a) ではなく直前に見ていた t1b が選ばれる
+    useAppStore.getState().setActiveGroup(g1);
+
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+    expect(useAppStore.getState().activeTabId).toBe(t1b);
+    expect(t1a).not.toBe(t1b);
+  });
+
+  it('タブが 0 のグループを選ぶと activeTabId が null になる', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1);
+    const empty = useAppStore.getState().createGroup('Empty');
+
+    useAppStore.getState().setActiveGroup(empty);
+
+    expect(useAppStore.getState().activeGroupId).toBe(empty);
+    expect(useAppStore.getState().activeTabId).toBeNull();
+  });
+
+  it('存在しない groupId は no-op', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1);
+
+    useAppStore.getState().setActiveGroup('nonexistent');
+
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+  });
+
+  it('グループ内の最後のタブを閉じてもグループ選択は維持される', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const t1 = useAppStore.getState().createTab(g1);
+
+    useAppStore.getState().removeTab(t1);
+
+    expect(useAppStore.getState().activeTabId).toBeNull();
+    // 選択が飛ぶと「次のタブをどこに作るか」の文脈が失われるため維持する
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+  });
+
+  it('setDragState はドラッグ中の id と kind を保持し、終了時にクリアできる', () => {
+    useAppStore.getState().setDragState('tab-1', 'tab');
+    expect(useAppStore.getState().dragId).toBe('tab-1');
+    expect(useAppStore.getState().dragKind).toBe('tab');
+
+    useAppStore.getState().setDragState(null, null);
+    expect(useAppStore.getState().dragId).toBeNull();
+    expect(useAppStore.getState().dragKind).toBeNull();
+  });
+});
 
 // --- removeTab fallback で折りたたみグループを自動展開 ---
 

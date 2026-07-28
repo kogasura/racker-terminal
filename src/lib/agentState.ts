@@ -1,7 +1,16 @@
 import type { AgentState } from '../types';
 
 /**
- * エージェント状態の検出ロジック。
+ * 画面出力からエージェント状態を推測する **フォールバック** 実装。
+ *
+ * ⚠️ 通常は `claudeSessions.ts` が Claude Code のセッションファイルから
+ * 公式の status を読み取り、そちらが優先される（store の `setTabAgentState` が
+ * `agentStateFromSession` を見て画面判定を弾く）。
+ * ここは **セッションファイルが読めないとき専用**の推測経路:
+ * - Claude Code のバージョンが古い / 形式が変わった
+ * - セッションとタブの照合に失敗した（同一 cwd に複数タブ等）
+ *
+ * 画面の英語文言に依存するため、公式 status が取れる環境ではこちらを使わない。
  *
  * 設計方針（herdr の screen-manifest 方式に準拠）:
  * - 状態の判定権限は本モジュールに一本化する（"one status authority"）。

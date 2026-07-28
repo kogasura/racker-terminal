@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
-import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type TabStatus } from '../types';
+import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type Tab, type TabStatus } from '../types';
 import { DRAG_KIND } from '../lib/dndResolve';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
@@ -26,6 +26,27 @@ export function statusDotClassName(status: TabStatus, agentState?: AgentState): 
   const base = STATUS_DOT_CLASS[status];
   if (!agentState || agentState === 'idle') return base;
   return `${base} tab-item__status-dot--agent-${agentState}`;
+}
+
+/**
+ * ステータスドットの tooltip 文言を組み立てる。
+ *
+ * Claude のセッション情報が取れているタブでは、状態名だけでなく理由まで出す:
+ * - 応答待ちなら `waitingFor`（'input needed' 等）を添える
+ * - working のうち **シェルコマンド実行中** (`status === 'shell'`) は
+ *   表示上 working に統合しているため、ここで区別を補う
+ */
+export function agentTooltip(tab: Pick<Tab, 'agentState' | 'waitingFor' | 'claudeStatus'>): string | undefined {
+  if (tab.agentState === undefined) return undefined;
+  const label = AGENT_STATE_LABEL[tab.agentState];
+
+  if (tab.agentState === 'blocked' && tab.waitingFor !== undefined) {
+    return `${label}: ${tab.waitingFor}`;
+  }
+  if (tab.agentState === 'working' && tab.claudeStatus === 'shell') {
+    return `${label}（シェルコマンド）`;
+  }
+  return label;
 }
 
 /**
@@ -108,7 +129,7 @@ export const TabItem = memo(function TabItem({
         >
           <span
             className={statusDotClassName(tab.status, tab.agentState)}
-            title={tab.agentState ? AGENT_STATE_LABEL[tab.agentState] : undefined}
+            title={agentTooltip(tab)}
           />
 
           <InlineEdit

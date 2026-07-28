@@ -1863,6 +1863,127 @@ describe('グループ選択 (activeGroupId)', () => {
   });
 });
 
+// --- applyClaudeSessions (Claude セッションとの照合結果の反映) ---
+
+describe('applyClaudeSessions', () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      groups: [],
+      tabs: {},
+      favorites: [],
+      activeTabId: null,
+      activeGroupId: null,
+      lastActiveTabByGroup: {},
+      dragId: null,
+      dragKind: null,
+      editingId: null,
+      contextMenuOpen: false,
+      closedTabs: [],
+    });
+  });
+
+  /** 非アクティブなタブを 1 つ用意する（done 判定はアクティブだと出ないため） */
+  function makeInactiveTab(): string {
+    const g = useAppStore.getState().createGroup('G');
+    const target = useAppStore.getState().createTab(g);
+    const other = useAppStore.getState().createTab(g);
+    useAppStore.getState().setActiveTab(other);
+    return target;
+  }
+
+  it('手動起動タブに検出した sessionId を書き込む（resume 可能にする）', () => {
+    const tabId = makeInactiveTab();
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBeUndefined();
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'found-session', status: 'busy' }]]),
+    );
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('found-session');
+  });
+
+  it('racker が発番済みの sessionId は上書きしない', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, { claudeSessionId: 'racker-issued' });
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'different', status: 'busy' }]]),
+    );
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('racker-issued');
+  });
+
+  it('status を agentState に反映し、セッション由来フラグを立てる', () => {
+    const tabId = makeInactiveTab();
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { status: 'waiting', waitingFor: 'input needed' }]]),
+    );
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.agentState).toBe('blocked');
+    expect(tab.agentStateFromSession).toBe(true);
+    expect(tab.waitingFor).toBe('input needed');
+    expect(tab.claudeStatus).toBe('waiting');
+  });
+
+  it('working → idle の遷移で done になる', () => {
+    const tabId = makeInactiveTab();
+    useAppStore.getState().applyClaudeSessions(new Map([[tabId, { status: 'busy' }]]));
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('working');
+
+    useAppStore.getState().applyClaudeSessions(new Map([[tabId, { status: 'idle' }]]));
+
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('done');
+  });
+
+  it('セッションが見つからなくなったらフラグを落として画面判定に戻す', () => {
+    const tabId = makeInactiveTab();
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { status: 'waiting', waitingFor: 'dialog open' }]]),
+    );
+    expect(useAppStore.getState().tabs[tabId].agentStateFromSession).toBe(true);
+
+    // claude が終了して対応表から消えた
+    useAppStore.getState().applyClaudeSessions(new Map());
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.agentStateFromSession).toBe(false);
+    expect(tab.waitingFor).toBeUndefined();
+    expect(tab.claudeStatus).toBeUndefined();
+  });
+
+  it('セッション由来のタブでは画面判定 (setTabAgentState) を無視する', () => {
+    const tabId = makeInactiveTab();
+    useAppStore.getState().applyClaudeSessions(new Map([[tabId, { status: 'idle' }]]));
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('idle');
+
+    // 画面パターン判定が blocked を主張しても、公式 status のほうを信じる
+    useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('idle');
+  });
+
+  it('セッションが無いタブでは画面判定が従来どおり効く', () => {
+    const tabId = makeInactiveTab();
+
+    useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('blocked');
+  });
+
+  it('変化がなければ tabs の参照を変えない（毎秒の再レンダーを防ぐ）', () => {
+    const tabId = makeInactiveTab();
+    const matches = new Map([[tabId, { sessionId: 's1', status: 'busy' }]]);
+    useAppStore.getState().applyClaudeSessions(matches);
+    const after = useAppStore.getState().tabs;
+
+    useAppStore.getState().applyClaudeSessions(matches);
+
+    expect(useAppStore.getState().tabs).toBe(after);
+  });
+});
+
 // --- removeTab fallback で折りたたみグループを自動展開 ---
 
 describe('removeTab — fallback expand', () => {

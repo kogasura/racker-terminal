@@ -17,10 +17,12 @@
   --status-live: #9ece6a;
   --status-crashed: #f7768e;
   /* エージェント状態 (Claude タブのステータスドットに外周リングとして重ねる)
-     idle は装飾なしのため色を持たない。Tokyo Night のパレットに合わせる。 */
-  --agent-blocked: #f7768e;  /* red    — ユーザーの応答待ち。最も目立たせる */
-  --agent-working: #7aa2f7;  /* blue   — 実行中 */
-  --agent-done:    #9ece6a;  /* green  — 完了（見るまで残る） */
+     Claude Code 本体がターミナルタブに出す配色に合わせている。
+     idle は「何も起きていない」ので装飾しない方針のため色を持たない
+     (本体は idle に緑を使うが、racker ではその緑を done に回している)。 */
+  --agent-blocked: #5f87ff;  /* 本体 waiting rgb(95,135,255) — 応答待ち */
+  --agent-working: #ff9500;  /* 本体 busy    rgb(255,149,0)  — 実行中 (shell も含む) */
+  --agent-done:    #9ece6a;  /* racker 独自 — 完了（見るまで残る）。本体に対応する状態はない */
 
   /* crashed 状態の薄赤背景（MainPane 用） */
   --crashed-overlay-bg: rgba(247, 118, 142, 0.08);

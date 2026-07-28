@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AgentState, AppState, ClosedTab, DragKind, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import { applyIdleTransition } from '../types';
 import { newId } from '../lib/id';
 import {
   nextAgentStateFromSession,
   type ClaudeSession as ClaudeSessionInfo,
 } from '../lib/claudeSessions';
+import type { PrInfo as PrInfoValue } from '../lib/prStatus';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
 
@@ -396,6 +398,30 @@ interface AppActions {
   applyClaudeSessions: (matches: Map<string, ClaudeSessionInfo>) => void;
 
   /**
+   * OSC 21337 (TAB_STATUS) で受け取った状態を反映する。
+   *
+   * Claude Code が端末へ直接送ってくる状態なので、セッションファイル由来と同じく
+   * **画面パターン判定より優先**する（agentStateFromSession を立てる）。
+   * PTY を流れてくるぶん、WSL でもファイルパスの解決に依存せず確実に届く。
+   *
+   * - `state === null` は「表示の解除」= claude の終了。状態を消して
+   *   画面パターン判定へフォールバックさせる
+   * - Claude タブとして登録していないタブ（手動で `claude` と打った等）にも適用する
+   */
+  applyTabStatusOsc: (tabId: string, state: AgentState | null) => void;
+
+  /**
+   * 作業ディレクトリごとに引いた PR 状態を、該当タブへまとめて反映する。
+   *
+   * 同じリポジトリを複数タブで開いていることが多いため、cwd 単位で 1 回引いた結果を
+   * 複数タブへ配る形にしている（`gh` はネットワークを伴うので回数を抑えたい）。
+   *
+   * `pr === null` は「PR が無い / 取得できない」。既存の表示を消す。
+   * 変化が無ければ tabs の参照を据え置く。
+   */
+  applyPrStatus: (tabIds: string[], pr: PrInfoValue | null) => void;
+
+  /**
    * サイドバーでグループを選択する。横タブバーの表示対象がこのグループに切り替わる。
    *
    * そのグループで最後に見ていたタブ（なければ先頭タブ）を自動でアクティブにする。
@@ -604,6 +630,71 @@ export const useAppStore = create<Store>()(
   },
 
   setDragState: (dragId, dragKind) => set({ dragId, dragKind }),
+
+  applyPrStatus: (tabIds, pr) =>
+    set((state) => {
+      let changed = false;
+      const tabs = { ...state.tabs };
+
+      for (const id of tabIds) {
+        const tab = state.tabs[id];
+        if (!tab) continue;
+
+        const next = {
+          prNumber: pr?.number,
+          prState: pr?.state,
+          prUrl: pr?.url,
+          prIsDraft: pr?.isDraft,
+          prBranch: pr?.branch,
+        };
+        const isSame =
+          tab.prNumber === next.prNumber &&
+          tab.prState === next.prState &&
+          tab.prUrl === next.prUrl &&
+          tab.prIsDraft === next.prIsDraft &&
+          tab.prBranch === next.prBranch;
+        if (isSame) continue;
+
+        tabs[id] = { ...tab, ...next };
+        changed = true;
+      }
+
+      return changed ? { tabs } : {};
+    }),
+
+  applyTabStatusOsc: (tabId, agentState) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};
+
+      // 解除（claude 終了）: 状態を消して画面パターン判定へ戻す
+      if (agentState === null) {
+        if (tab.agentState === undefined && tab.agentStateFromSession !== true) return {};
+        return {
+          tabs: {
+            ...state.tabs,
+            [tabId]: {
+              ...tab,
+              agentState: undefined,
+              agentStateFromSession: false,
+              waitingFor: undefined,
+              claudeStatus: undefined,
+            },
+          },
+        };
+      }
+
+      // idle への遷移を done に読み替える規則はセッションファイル経由と共通
+      const next = applyIdleTransition(tab.agentState, agentState, tabId === state.activeTabId);
+      if (tab.agentState === next && tab.agentStateFromSession === true) return {};
+
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: { ...tab, agentState: next, agentStateFromSession: true },
+        },
+      };
+    }),
 
   applyClaudeSessions: (matches) =>
     set((state) => {

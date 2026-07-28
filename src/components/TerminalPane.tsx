@@ -13,6 +13,7 @@ import {
 import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import { isWslShell } from '../lib/profileTemplates';
+import { loadScrollback, RESTORE_BANNER } from '../lib/scrollback';
 import '../styles/terminal.css';
 
 // 後方互換: 既存の参照/テスト (TerminalPane.helpers.test.ts) のため再エクスポートする。
@@ -225,6 +226,10 @@ export const TerminalPane = memo(function TerminalPane({
         onAgentState: tab.launchClaude
           ? (agentState) => useAppStore.getState().setTabAgentState(tabId, agentState)
           : undefined,
+        // OSC 21337 は Claude タブ以外にも常に登録する。手動で `claude` と打った
+        // タブこそ、この経路で状態が取れる価値が大きいため。
+        onTabStatusOsc: (agentState) =>
+          useAppStore.getState().applyTabStatusOsc(tabId, agentState),
       }),
     );
     runtimeRef.current = runtime;
@@ -234,6 +239,19 @@ export const TerminalPane = memo(function TerminalPane({
     );
 
     if (tab.status === 'spawning') {
+      // 前回の画面内容が残っていれば、新しいプロセスの出力より先に書き戻す。
+      // 「タブは復元されたが中身は空」を避けるための表示専用の復元で、
+      // PTY とは無関係（プロセスは復活しない）。
+      //
+      // fire-and-forget にしているのは、読み込みを待つと起動が遅れるため。
+      // 復元内容が後から差し込まれても、区切り (RESTORE_BANNER) があるので
+      // どこまでが過去の出力かは読み取れる。
+      void loadScrollback(tabId).then((saved) => {
+        if (saved !== null && saved.length > 0) {
+          runtime.term.write(saved + RESTORE_BANNER);
+        }
+      });
+
       // Claude タブの起動方法を算出する。WSL は args に直接 exec を注入し、
       // Windows ネイティブ等は bootstrap をシェルへタイプ送信する（computeClaudeLaunch 参照）。
       const { args: launchArgs, bootstrap } = computeClaudeLaunch(tabId, tab.args);

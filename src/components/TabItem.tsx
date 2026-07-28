@@ -6,6 +6,8 @@ import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
 import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type Tab, type TabStatus } from '../types';
 import { DRAG_KIND } from '../lib/dndResolve';
+import { prBadgeKind, prTooltip } from '../lib/prStatus';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   live: 'tab-item__status-dot tab-item__status-dot--live',
@@ -92,6 +94,14 @@ export const TabItem = memo(function TabItem({
 
   if (!tab) return null;
 
+  // PR バッジの区分（未作成・取得できない場合は null で非表示）
+  const prKind = prBadgeKind({
+    branch: tab.prBranch ?? '',
+    number: tab.prNumber,
+    state: tab.prState,
+    isDraft: tab.prIsDraft,
+  });
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -138,6 +148,27 @@ export const TabItem = memo(function TabItem({
             onCommit={handleCommit}
             className="tab-item__title"
           />
+
+          {/* 作業ディレクトリのブランチに対応する PR。クリックでブラウザを開く */}
+          {prKind !== null && tab.prNumber !== undefined && (
+            <button
+              type="button"
+              className={`tab-item__pr tab-item__pr--${prKind}`}
+              title={prTooltip({
+                branch: tab.prBranch ?? '',
+                number: tab.prNumber,
+                state: tab.prState,
+                isDraft: tab.prIsDraft,
+              })}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tab.prUrl !== undefined) void openUrl(tab.prUrl);
+              }}
+            >
+              #{tab.prNumber}
+            </button>
+          )}
 
           <button
             type="button"

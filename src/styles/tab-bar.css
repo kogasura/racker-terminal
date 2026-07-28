@@ -71,6 +71,32 @@
   border-bottom-color: var(--focus-ring);
 }
 
+/* ----- PR バッジ -----
+   作業ディレクトリのブランチに対応する PR 番号。クリックでブラウザを開く。
+   色は GitHub の PR 状態表示に合わせている。 */
+.tab-item__pr {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border: none;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  color: #fff;
+  opacity: 0.85;
+}
+
+.tab-item__pr:hover {
+  opacity: 1;
+}
+
+.tab-item__pr--open   { background: #238636; }  /* GitHub green  — オープン */
+.tab-item__pr--merged { background: #8957e5; }  /* GitHub purple — マージ済み */
+.tab-item__pr--closed { background: #da3633; }  /* GitHub red    — クローズ */
+.tab-item__pr--draft  { background: #6e7681; }  /* GitHub gray   — 下書き */
+
 /* 横タブはホバーしたときだけ × を出す（常時表示だと本数が多いとき煩い）。
    アクティブタブは誤クリックを避けたいので常時表示する。 */
 .tab-item--horizontal .tab-item__close-btn {

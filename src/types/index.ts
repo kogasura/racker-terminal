@@ -43,6 +43,37 @@ export const AGENT_STATE_LABEL: Record<AgentState, string> = {
 };
 
 /**
+ * 「まだ見ていない完了」(`done`) を作るための状態遷移ルール。
+ *
+ * Claude が申告する状態には `done` が存在しない（処理が終わると `idle` に戻るだけ）。
+ * そこで **working から idle への遷移**を完了とみなして `done` に読み替える。
+ *
+ * - idle 以外はそのまま通す
+ * - idle に落ちたとき:
+ *   - アクティブタブなら idle（見えているので通知の意味がない）
+ *   - 直前が working なら **done**（処理が完了した）
+ *   - すでに done ならそのまま **done を維持**（見るまで消さない）
+ *   - それ以外は idle
+ *
+ * blocked からの idle 遷移を done にしないのは、ダイアログのキャンセル等で
+ * 「何も完了していないのに完了と表示される」ことを避けるため。
+ *
+ * セッションファイル経由 (claudeSessions.ts) と OSC 経由 (tabStatusOsc.ts) の
+ * どちらの入力に対しても同じ規則を適用するため、ここに集約している。
+ */
+export function applyIdleTransition(
+  prev: AgentState | undefined,
+  next: AgentState,
+  isActive: boolean,
+): AgentState {
+  if (next !== 'idle') return next;
+  if (isActive) return 'idle';
+  if (prev === 'done') return 'done';
+  if (prev === 'working') return 'done';
+  return 'idle';
+}
+
+/**
  * タブ集合の代表となるエージェント状態を返す（優先度が最も高いもの）。
  * グループヘッダに配下タブの状態をまとめて出すために使う。
  *
@@ -122,6 +153,20 @@ export interface Tab {
    * ランタイム状態のため persist 対象外。
    */
   claudeStatus?: string;
+  /**
+   * 作業ディレクトリのブランチに対応する GitHub PR の情報。
+   *
+   * 「Claude に作らせた PR がマージされたか」をタブを見るだけで分かるようにする。
+   * `git` / `gh` が使えない環境や WSL タブでは設定されない。
+   * ランタイム状態のため persist 対象外（起動のたびに引き直す）。
+   */
+  prNumber?: number;
+  /** 'OPEN' | 'MERGED' | 'CLOSED' */
+  prState?: string;
+  prUrl?: string;
+  prIsDraft?: boolean;
+  /** PR を引いたときのブランチ名。tooltip に出す */
+  prBranch?: string;
   /**
    * true のとき、このタブは spawn 時に Claude Code を自動起動する「Claude タブ」。
    * お気に入りの launchClaude フラグから createTab/spawnFavorite 経由で引き継ぐ。永続化対象。

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AgentState } from '../types';
+import { applyIdleTransition, type AgentState } from '../types';
 
 /**
  * Claude Code のセッション情報を読み取り、racker のタブへ結びつけるロジック。
@@ -122,12 +122,8 @@ export function nextAgentStateFromSession(
 ): AgentState | undefined {
   const mapped = agentStateFromStatus(status);
   if (mapped === undefined) return prev;   // 未知の status では触らない
-  if (mapped !== 'idle') return mapped;
-
-  if (isActive) return 'idle';
-  if (prev === 'done') return 'done';      // 見るまで残す
-  if (prev === 'working') return 'done';   // 処理が完了した
-  return 'idle';
+  // idle への遷移を done に読み替える規則は OSC 経由と共通 (types の applyIdleTransition)
+  return applyIdleTransition(prev, mapped, isActive);
 }
 
 /**

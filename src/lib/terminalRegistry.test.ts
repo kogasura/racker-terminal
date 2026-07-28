@@ -62,6 +62,8 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
   const writeParsedSub = { dispose: vi.fn() };
+
+  const tabStatusSub = { dispose: vi.fn() };
   const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
   const disposeFn = vi.fn(() => {
@@ -71,6 +73,8 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     oscSub.dispose();
     bellSub.dispose();
     writeParsedSub.dispose();
+
+    tabStatusSub.dispose();
     webLinksHandle.dispose();
     compositionAbort.abort();
   });
@@ -86,12 +90,16 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     oscSub,
     bellSub,
     writeParsedSub,
+
+    tabStatusSub,
     webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
     writeInput: vi.fn(),
+
+    serializeScreen: vi.fn(() => ''),
     writeOutput: vi.fn(),
     wakeWebgl: vi.fn(),
     sleepWebgl: vi.fn(),
@@ -240,6 +248,8 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
   const writeParsedSub = { dispose: vi.fn() };
+
+  const tabStatusSub = { dispose: vi.fn() };
   const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
 
@@ -254,12 +264,16 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     oscSub,
     bellSub,
     writeParsedSub,
+
+    tabStatusSub,
     webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
     resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
     writeInput: vi.fn(),
+
+    serializeScreen: vi.fn(() => ''),
     writeOutput: vi.fn(),
     wakeWebgl: vi.fn(),
     sleepWebgl: vi.fn(),
@@ -306,6 +320,8 @@ describe('applySettings', () => {
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
     const writeParsedSub = { dispose: vi.fn() };
+
+    const tabStatusSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
@@ -319,6 +335,8 @@ describe('applySettings', () => {
       oscSub,
       bellSub,
       writeParsedSub,
+
+      tabStatusSub,
       webLinksHandle,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
@@ -331,6 +349,8 @@ describe('applySettings', () => {
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+
+      serializeScreen: vi.fn(() => ''),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),
@@ -389,6 +409,8 @@ describe('titleSub dispose', () => {
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
     const writeParsedSub = { dispose: vi.fn() };
+
+    const tabStatusSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
@@ -402,12 +424,16 @@ describe('titleSub dispose', () => {
       oscSub,
       bellSub,
       writeParsedSub,
+
+      tabStatusSub,
       webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+
+      serializeScreen: vi.fn(() => ''),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),
@@ -419,6 +445,8 @@ describe('titleSub dispose', () => {
         oscSub.dispose();
         bellSub.dispose();
         writeParsedSub.dispose();
+
+        tabStatusSub.dispose();
         webLinksHandle.dispose();
         compositionAbort.abort();
       },
@@ -529,6 +557,8 @@ describe('memory leak', () => {
       const oscSub = { dispose: vi.fn() };
       const bellSub = { dispose: vi.fn() };
       const writeParsedSub = { dispose: vi.fn() };
+
+      const tabStatusSub = { dispose: vi.fn() };
       const webLinksHandle = { dispose: vi.fn() };
       const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
@@ -542,12 +572,16 @@ describe('memory leak', () => {
         oscSub,
         bellSub,
         writeParsedSub,
+
+        tabStatusSub,
         webLinksHandle,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
         resetForRecycle: vi.fn(),
         writeInput: vi.fn(),
+
+        serializeScreen: vi.fn(() => ''),
         writeOutput: vi.fn(),
         wakeWebgl: vi.fn(),
         sleepWebgl: vi.fn(),
@@ -649,6 +683,8 @@ describe('IME compositionAbort (2.13)', () => {
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
     const writeParsedSub = { dispose: vi.fn() };
+
+    const tabStatusSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -661,12 +697,16 @@ describe('IME compositionAbort (2.13)', () => {
       oscSub,
       bellSub,
       writeParsedSub,
+
+      tabStatusSub,
       webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+
+      serializeScreen: vi.fn(() => ''),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),

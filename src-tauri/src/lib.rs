@@ -1,6 +1,8 @@
 mod claude_sessions;
+mod git_pr;
 mod launch;
 mod pty;
+mod scrollback;
 mod wsl;
 
 use pty::PtyManager;
@@ -37,6 +39,11 @@ pub fn run() {
             wsl::list_wsl_distros,
             launch::get_launch_path,
             claude_sessions::list_claude_sessions,
+            git_pr::get_pr_status,
+            scrollback::save_scrollback,
+            scrollback::load_scrollback,
+            scrollback::delete_scrollback,
+            scrollback::prune_scrollback,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

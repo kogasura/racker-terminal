@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from './store/appStore';
-import { getAllRuntimes, clearAllTextureAtlases } from './lib/terminalRegistry';
+import { getAllRuntimes, clearAllTextureAtlases, getRuntimeScreen } from './lib/terminalRegistry';
+import { saveScrollback, pruneScrollback } from './lib/scrollback';
 import { listWslDistros } from './lib/wsl';
 import {
   listClaudeSessions,
@@ -10,6 +11,7 @@ import {
   collectWslDistros,
 } from './lib/claudeSessions';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
+import { getPrStatus, groupTabsByCwd } from './lib/prStatus';
 import { getTabDisplayTitle, type AgentState } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
@@ -114,6 +116,73 @@ function App() {
       clearAllTextureAtlases();
     }, GLYPH_CACHE_CLEAR_INTERVAL_MS);
     return () => clearInterval(id);
+  }, []);
+
+  // タブの画面内容を定期的に保存する。
+  //
+  // PTY のスクロールバックはプロセスと一蓮托生なので、再起動すると中身が失われる。
+  // 定期的にシリアライズして保存しておき、復元時に書き戻す（TerminalPane 側）。
+  //
+  // 保存は「直前の作業が見える」ことが目的なので、間隔は粗くてよい。
+  // 短くするとシリアライズのコストが毎回かかる。
+  useEffect(() => {
+    const SAVE_INTERVAL_MS = 30_000;
+
+    const saveAll = () => {
+      for (const tabId of Object.keys(useAppStore.getState().tabs)) {
+        const content = getRuntimeScreen(tabId);
+        if (content !== null) void saveScrollback(tabId, content);
+      }
+    };
+
+    // 起動時に、もう存在しないタブの保存ファイルを掃除する
+    // （クラッシュ等で削除できなかったぶんが残り続けるため）
+    const pruneOnce = () => {
+      void pruneScrollback(Object.keys(useAppStore.getState().tabs));
+    };
+    if (useAppStore.persist.hasHydrated()) pruneOnce();
+    else useAppStore.persist.onFinishHydration(pruneOnce);
+
+    const id = setInterval(saveAll, SAVE_INTERVAL_MS);
+    return () => {
+      clearInterval(id);
+      // アンマウント（＝アプリ終了）時にも一度保存して、直前の内容を残す
+      saveAll();
+    };
+  }, []);
+
+  // タブの作業ディレクトリに対応する GitHub PR の状態を定期的に引く。
+  //
+  // 「Claude に作らせた PR がマージされたか」がタブを見るだけで分かるようにする。
+  // gh はネットワークを伴うので間隔は長め、かつ cwd 単位で 1 回だけ叩く。
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 30_000;
+    let cancelled = false;
+    // 前回の実行が終わるまで次を出さない。gh が遅いときに要求が積み上がるのを防ぐ。
+    let running = false;
+
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const tabList = Object.values(useAppStore.getState().tabs);
+        for (const [cwd, tabIds] of groupTabsByCwd(tabList)) {
+          if (cancelled) return;
+          const pr = await getPrStatus(cwd);
+          if (cancelled) return;
+          useAppStore.getState().applyPrStatus(tabIds, pr);
+        }
+      } finally {
+        running = false;
+      }
+    };
+
+    void tick();
+    const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
   // Claude タブの状態変化をデスクトップ通知で知らせる。

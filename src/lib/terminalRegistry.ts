@@ -1,5 +1,6 @@
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -8,6 +9,18 @@ import type { Settings, AgentState } from '../types';
 import { spawnPty, writePty, resizePty, setReadPaused } from './pty';
 import { isAllowedUrl } from './urlValidator';
 import { readBottomSnapshot, classifyAgentState, AGENT_SETTLE_MS } from './agentState';
+import {
+  parseTabStatusOsc,
+  agentStateFromTabStatus,
+  isTabStatusCleared,
+} from './tabStatusOsc';
+import { SAVE_SCROLLBACK_LINES } from './scrollback';
+
+/**
+ * Claude Code がタブ状態を送ってくる OSC の番号。
+ * Claude Code の実装上の定数 `TAB_STATUS: 21337` に対応する。
+ */
+const TAB_STATUS_OSC = 21337;
 
 interface WebglRendererHandle {
   /** dispose() で WebGL addon と onContextLoss listener を解放 */
@@ -473,6 +486,20 @@ export interface TerminalRuntime {
   writeParsedSub: IDisposable;
 
   /**
+   * OSC 21337 (TAB_STATUS) 購読の解放ハンドル。
+   * dispose() の中で writeParsedSub.dispose() の直後に解放する。
+   */
+  tabStatusSub: { dispose: () => void };
+
+  /**
+   * 現在の画面内容を ANSI 付きの文字列にして返す。
+   *
+   * 再起動後に「タブは戻るが中身は空」にならないよう、定期的に呼んで保存する。
+   * dispose 済みの場合は空文字を返す。
+   */
+  serializeScreen(): string;
+
+  /**
    * WebLinksAddon のライフサイクルハンドル。
    * createRuntime 内で setupWebLinks(term) を呼んで取得する。
    * dispose() の中で bellSub.dispose() の直後 (= webglHandle?.dispose() の前) に呼ぶ。
@@ -619,6 +646,16 @@ export function createRuntime(
      * 同じ状態が続く間は再通知しない（変化時のみ発火）。
      */
     onAgentState?: (state: AgentState) => void;
+    /**
+     * OSC 21337 (TAB_STATUS) 受信時のコールバック。
+     *
+     * Claude Code が端末へ直接送ってくる状態。`null` は表示の解除（claude の終了）。
+     *
+     * `onAgentState`（画面パターン判定）と違い **Claude タブ以外にも常に登録する**。
+     * 手動で `claude` と打ったタブこそ、この経路で状態が取れる価値が大きいため。
+     * OSC が来ないタブでは何も起きないのでコストもない。
+     */
+    onTabStatusOsc?: (state: AgentState | null) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -675,6 +712,10 @@ export function createRuntime(
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  // 画面内容のシリアライズ用。再起動後にタブの中身を復元するために使う。
+  const serializeAddon = new SerializeAddon();
+  term.loadAddon(serializeAddon);
 
   // WebGL renderer は「遅延生成 + LRU 上限」で管理する（#3 Sleep/Wake）。
   // 従来は createRuntime で即 attach していたが、全タブ分の context が常駐して
@@ -849,6 +890,28 @@ export function createRuntime(
     scheduleAgentSettle();
   });
 
+  // OSC 21337 (TAB_STATUS): Claude Code が端末タブへ状態を表示させるために送るシーケンス。
+  //   ESC ] 21337 ; indicator=#ff9500;status=Working…;status-color=#ff9500 ST
+  // セッションファイルのポーリングより確実で、とくに WSL では PTY を流れてくるぶん
+  // \\wsl.localhost のパス解決に依存しない。
+  //
+  // false を返して他のハンドラにも伝播させる（既定動作を妨げない）。
+  const tabStatusSub = term.parser.registerOscHandler(TAB_STATUS_OSC, (data) => {
+    if (isDisposed) return false;
+    try {
+      const payload = parseTabStatusOsc(data);
+      if (isTabStatusCleared(payload)) {
+        callbacks.onTabStatusOsc?.(null);
+      } else {
+        const state = agentStateFromTabStatus(payload);
+        if (state !== undefined) callbacks.onTabStatusOsc?.(state);
+      }
+    } catch (e) {
+      console.warn('[terminalRegistry] onTabStatusOsc threw:', e);
+    }
+    return false;
+  });
+
   // v0.5 改善: OSC 10/11 (default foreground/background color 設定) を無視する。
   // nushell / PowerShell 等のシェルが起動時に背景色を OSC 11 で設定すると、
   // 我々の theme.background (transparency 設定) が上書きされて不透明になってしまう。
@@ -873,6 +936,7 @@ export function createRuntime(
     oscSub,
     bellSub,
     writeParsedSub,
+    tabStatusSub,
     webLinksHandle,
 
     setOnEvent(handler) {
@@ -918,6 +982,17 @@ export function createRuntime(
       // dispose() との違い: xterm / fitAddon / onDataSub / isDisposed には触れない。
       ptyHandle = null;
       spawning = false;
+    },
+
+    serializeScreen() {
+      if (isDisposed) return '';
+      try {
+        return serializeAddon.serialize({ scrollback: SAVE_SCROLLBACK_LINES });
+      } catch (e) {
+        // 保存は付加機能なので、失敗してもターミナルの動作に影響させない
+        console.warn('[terminalRegistry] serialize failed:', e);
+        return '';
+      }
     },
 
     writeInput(data: string) {
@@ -1031,6 +1106,8 @@ export function createRuntime(
       bellSub.dispose();
       // 画面書き込み購読を解放する (bellSub と同じくエージェント状態検出の入力源)
       writeParsedSub.dispose();
+      // OSC 21337 (TAB_STATUS) 購読を解放する
+      tabStatusSub.dispose();
       // pending な状態確定タイマーをキャンセルする (dispose 済み term への getLine を防ぐ)
       if (settleTimer !== null) {
         clearTimeout(settleTimer);
@@ -1164,6 +1241,20 @@ export function recyclePty(
  */
 export function getAllRuntimes(): TerminalRuntime[] {
   return Array.from(runtimes.values()).map((e) => e.runtime);
+}
+
+/**
+ * 指定タブの画面内容をシリアライズして返す。
+ *
+ * runtime が無い（まだ mount していない / 既に破棄された）タブや、
+ * 内容が空のタブは null を返す。空を保存すると、次回の復元で
+ * 「中身が消えた」ように見えてしまうため。
+ */
+export function getRuntimeScreen(tabId: string): string | null {
+  const entry = runtimes.get(tabId);
+  if (!entry) return null;
+  const content = entry.runtime.serializeScreen();
+  return content.length > 0 ? content : null;
 }
 
 /**

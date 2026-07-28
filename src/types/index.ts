@@ -237,6 +237,14 @@ export interface Settings {
    * Phase 4 P-H で追加。
    */
   defaultFavoriteId?: string;
+  /**
+   * Claude タブが応答待ち / 完了になったときにデスクトップ通知を出すか。
+   *
+   * 未設定 (undefined) は **有効**として扱う。サイドバーの表示は racker の
+   * ウィンドウを見ていないと気付けないため、既定では通知する。
+   * 通知は侵襲的なので、明示的に false にして切れるようにしている。
+   */
+  notificationsEnabled?: boolean;
 }
 
 /**

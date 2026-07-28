@@ -89,6 +89,12 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       patch.transparency = sanitizedTransparency;
     }
 
+    // 未設定 (undefined) は有効扱いなので、比較も「false かどうか」で揃える
+    const nextNotifications = draft.notificationsEnabled !== false;
+    if (nextNotifications !== (settings.notificationsEnabled !== false)) {
+      patch.notificationsEnabled = nextNotifications;
+    }
+
     if (Object.keys(patch).length > 0) {
       updateSettings({ ...settings, ...patch });
     }
@@ -232,6 +238,21 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 透明度は frameless window モードでのみ有効です。
               </small>
             </div>
+
+            <label className="dialog-field dialog-field--checkbox">
+              <input
+                type="checkbox"
+                checked={draft.notificationsEnabled !== false}
+                onChange={(e) =>
+                  setDraft({ ...draft, notificationsEnabled: e.target.checked })
+                }
+              />
+              <span className="dialog-label">Claude の応答待ち / 完了をデスクトップ通知する</span>
+              <small className="dialog-hint">
+                表示中でないタブの Claude が応答待ちになったとき、または処理を終えたときに
+                Windows の通知を出します。いま開いているタブは通知しません。
+              </small>
+            </label>
 
             <div className="dialog-field">
               <span className="dialog-label">バージョン情報</span>

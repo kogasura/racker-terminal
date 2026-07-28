@@ -1151,59 +1151,112 @@ describe('appStore', () => {
     });
   });
 
-  // --- setTabAttention ---
-  describe('setTabAttention', () => {
-    it('setTabAttention(id, true) で needsAttention が true になる', () => {
+  // --- setTabAgentState ---
+  describe('setTabAgentState', () => {
+    /** 対象タブを非アクティブにするため、別タブを作ってアクティブにするヘルパー。 */
+    function setupInactiveTab(): { tabId: string; otherTabId: string } {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId);
-      // 別タブをアクティブにしてから対象タブの attention をセットする
       const otherTabId = useAppStore.getState().createTab(groupId);
       useAppStore.getState().setActiveTab(otherTabId);
+      return { tabId, otherTabId };
+    }
 
-      useAppStore.getState().setTabAttention(tabId, true);
+    it('非アクティブタブに done を設定できる', () => {
+      const { tabId } = setupInactiveTab();
 
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+      useAppStore.getState().setTabAgentState(tabId, 'done');
+
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('done');
     });
 
-    it('アクティブタブに setTabAttention(active, true) を呼んでも無視される', () => {
+    it('アクティブタブへの done は idle に落とされる（見えているので通知の意味がない）', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId);
       expect(useAppStore.getState().activeTabId).toBe(tabId);
 
-      useAppStore.getState().setTabAttention(tabId, true);
+      useAppStore.getState().setTabAgentState(tabId, 'done');
 
-      // アクティブタブなので attention はセットされない
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('idle');
     });
 
-    it('setActiveTab で attention タブが選ばれたら自動でクリアされる', () => {
+    it('アクティブタブでも blocked はそのまま保持される（見ただけでは応答待ちは解消しない）', () => {
       const groupId = useAppStore.getState().createGroup();
       const tabId = useAppStore.getState().createTab(groupId);
-      const otherTabId = useAppStore.getState().createTab(groupId);
-      useAppStore.getState().setActiveTab(otherTabId);
-      // attention を付与
-      useAppStore.getState().setTabAttention(tabId, true);
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+      expect(useAppStore.getState().activeTabId).toBe(tabId);
 
-      // attention タブをアクティブにするとクリアされる
+      useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('blocked');
+    });
+
+    it('アクティブタブでも working はそのまま保持される', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+
+      useAppStore.getState().setTabAgentState(tabId, 'working');
+
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('working');
+    });
+
+    it('存在しない tabId は no-op', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      const before = useAppStore.getState().tabs;
+
+      useAppStore.getState().setTabAgentState('nonexistent-tab-id', 'blocked');
+
+      // tabs オブジェクトの参照ごと変わらないこと（再レンダーを誘発しない）
+      expect(useAppStore.getState().tabs).toBe(before);
+      expect(useAppStore.getState().tabs[tabId].agentState).toBeUndefined();
+    });
+
+    it('同値の再設定は tabs の参照を変えない（不要な再レンダー抑止）', () => {
+      const { tabId } = setupInactiveTab();
+      useAppStore.getState().setTabAgentState(tabId, 'blocked');
+      const after = useAppStore.getState().tabs;
+
+      useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+      expect(useAppStore.getState().tabs).toBe(after);
+    });
+
+    it('setActiveTab で done タブが選ばれたら idle にクリアされる', () => {
+      const { tabId } = setupInactiveTab();
+      useAppStore.getState().setTabAgentState(tabId, 'done');
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('done');
+
       useAppStore.getState().setActiveTab(tabId);
 
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('idle');
     });
 
-    it('navigateToTab で attention タブが選ばれたら自動でクリアされる', () => {
-      const groupId = useAppStore.getState().createGroup();
-      const tabId = useAppStore.getState().createTab(groupId);
-      const otherTabId = useAppStore.getState().createTab(groupId);
-      useAppStore.getState().setActiveTab(otherTabId);
-      // attention を付与
-      useAppStore.getState().setTabAttention(tabId, true);
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBe(true);
+    it('setActiveTab で blocked タブが選ばれても blocked は残る', () => {
+      const { tabId } = setupInactiveTab();
+      useAppStore.getState().setTabAgentState(tabId, 'blocked');
 
-      // navigateToTab でもクリアされる
+      useAppStore.getState().setActiveTab(tabId);
+
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('blocked');
+    });
+
+    it('navigateToTab で done タブが選ばれたら idle にクリアされる', () => {
+      const { tabId } = setupInactiveTab();
+      useAppStore.getState().setTabAgentState(tabId, 'done');
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('done');
+
       useAppStore.getState().navigateToTab(tabId);
 
-      expect(useAppStore.getState().tabs[tabId].needsAttention).toBeFalsy();
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('idle');
+    });
+
+    it('navigateToTab で blocked タブが選ばれても blocked は残る', () => {
+      const { tabId } = setupInactiveTab();
+      useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+      useAppStore.getState().navigateToTab(tabId);
+
+      expect(useAppStore.getState().tabs[tabId].agentState).toBe('blocked');
     });
   });
 

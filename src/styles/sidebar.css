@@ -385,39 +385,72 @@
 .tab-item__status-dot--spawning { background: var(--status-spawning); }
 .tab-item__status-dot--crashed  { background: var(--status-crashed); }
 
-/* アテンション通知リング: BEL 受信タブにオレンジの外周リングを付加する。
-   既存の status 色を上書きせず box-shadow で装飾を重ねるため live/spawning/crashed 全状態に対応。 */
-@keyframes attention-pulse {
+/* エージェント状態インジケータ (Claude タブのみ)
+   PTY の status 色 (live/spawning/crashed) は塗りとして残し、その上に外周リングを重ねる。
+   これにより「PTY は生きているが応答待ち」のような直交する 2 軸を同時に表現できる。
+
+   状態ごとに動きを変えて、色だけに依存せず区別できるようにする:
+   - blocked: 速い明滅 + 太いリング（止まっていることに気付かせる）
+   - working: ゆっくりした明滅（動作中の穏やかな表示）
+   - done:    静止（完了は落ち着いた表示にする。動きで急かさない） */
+@keyframes agent-pulse-slow {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.55; }
+  50%      { opacity: 0.55; }
 }
 
-.tab-item__status-dot--attention {
-  box-shadow: 0 0 0 2px var(--status-attention);
-  animation: attention-pulse 2s ease-in-out infinite;
+@keyframes agent-pulse-fast {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
 }
 
-/* アニメーションが煩わしいユーザーに配慮してモーション無効化 */
-@media (prefers-reduced-motion: reduce) {
-  .tab-item__status-dot--attention {
-    animation: none;
-  }
+.tab-item__status-dot--agent-blocked {
+  box-shadow: 0 0 0 3px var(--agent-blocked);
+  animation: agent-pulse-fast 1.1s ease-in-out infinite;
 }
 
-/* グループヘッダのアテンションインジケータ: 折りたたみ中に内部タブが attention のとき表示 */
-.group-header__attention {
+.tab-item__status-dot--agent-working {
+  box-shadow: 0 0 0 2px var(--agent-working);
+  animation: agent-pulse-slow 2s ease-in-out infinite;
+}
+
+.tab-item__status-dot--agent-done {
+  box-shadow: 0 0 0 2px var(--agent-done);
+}
+
+/* グループヘッダのエージェントインジケータ: 配下タブの代表状態を表示する
+   (herdr の "A blocked agent makes its pane, tab, and workspace look blocked" 相当) */
+.group-header__agent {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--status-attention);
-  box-shadow: 0 0 0 2px var(--status-attention);
-  animation: attention-pulse 2s ease-in-out infinite;
   flex-shrink: 0;
 }
 
+.group-header__agent--blocked {
+  background: var(--agent-blocked);
+  box-shadow: 0 0 0 2px var(--agent-blocked);
+  animation: agent-pulse-fast 1.1s ease-in-out infinite;
+}
+
+.group-header__agent--working {
+  background: var(--agent-working);
+  box-shadow: 0 0 0 2px var(--agent-working);
+  animation: agent-pulse-slow 2s ease-in-out infinite;
+}
+
+.group-header__agent--done {
+  background: var(--agent-done);
+  box-shadow: 0 0 0 2px var(--agent-done);
+}
+
+/* アニメーションが煩わしいユーザーに配慮してモーション無効化。
+   リング (box-shadow) は残るため、動きなしでも状態は判別できる。 */
 @media (prefers-reduced-motion: reduce) {
-  .group-header__attention {
+  .tab-item__status-dot--agent-blocked,
+  .tab-item__status-dot--agent-working,
+  .group-header__agent--blocked,
+  .group-header__agent--working {
     animation: none;
   }
 }

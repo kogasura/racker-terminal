@@ -2,6 +2,10 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AgentState, AppState, ClosedTab, DragKind, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
+import {
+  nextAgentStateFromSession,
+  type ClaudeSession as ClaudeSessionInfo,
+} from '../lib/claudeSessions';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
 
@@ -377,6 +381,21 @@ interface AppActions {
   setTabAgentState: (tabId: string, state: AgentState) => void;
 
   /**
+   * Claude Code のセッション一覧との照合結果を一括反映する。
+   *
+   * ポーリングのたびに全タブぶんの対応表を受け取り、次を行う:
+   * 1. セッション ID 未設定のタブに検出した ID を書き込む
+   *    → **手動で `claude` と打ったタブも再起動後に `--resume` できるようになる**
+   * 2. Claude が申告した status からタブの状態を更新する
+   *    （working → idle の遷移を done に読み替える。nextAgentStateFromSession 参照）
+   * 3. セッションが見つからなかったタブは agentStateFromSession を落とし、
+   *    画面パターン判定へフォールバックさせる
+   *
+   * 変化がまったく無ければ tabs の参照を変えない（毎秒の再レンダーを避ける）。
+   */
+  applyClaudeSessions: (matches: Map<string, ClaudeSessionInfo>) => void;
+
+  /**
    * サイドバーでグループを選択する。横タブバーの表示対象がこのグループに切り替わる。
    *
    * そのグループで最後に見ていたタブ（なければ先頭タブ）を自動でアクティブにする。
@@ -585,6 +604,67 @@ export const useAppStore = create<Store>()(
   },
 
   setDragState: (dragId, dragKind) => set({ dragId, dragKind }),
+
+  applyClaudeSessions: (matches) =>
+    set((state) => {
+      let changed = false;
+      const tabs: Record<string, Tab> = {};
+
+      for (const [id, tab] of Object.entries(state.tabs)) {
+        const session = matches.get(id);
+
+        if (session === undefined) {
+          // セッションが見つからない = claude が終了した / 検出できない。
+          // 画面パターン判定へフォールバックできるようフラグを落とす。
+          if (tab.agentStateFromSession === true) {
+            tabs[id] = {
+              ...tab,
+              agentStateFromSession: false,
+              waitingFor: undefined,
+              claudeStatus: undefined,
+            };
+            changed = true;
+          } else {
+            tabs[id] = tab;
+          }
+          continue;
+        }
+
+        const nextAgentState = nextAgentStateFromSession(
+          tab.agentState,
+          session.status,
+          id === state.activeTabId,
+        );
+        // 手動起動タブでも resume できるよう、未設定なら検出した ID を採用する。
+        // すでに ID を持つタブ（racker が --session-id で起動した）は上書きしない。
+        const nextSessionId = tab.claudeSessionId ?? session.sessionId;
+
+        const isSame =
+          tab.agentState === nextAgentState &&
+          tab.agentStateFromSession === true &&
+          tab.claudeSessionId === nextSessionId &&
+          tab.waitingFor === session.waitingFor &&
+          tab.claudeStatus === session.status;
+
+        if (isSame) {
+          tabs[id] = tab;
+          continue;
+        }
+
+        tabs[id] = {
+          ...tab,
+          agentState: nextAgentState,
+          agentStateFromSession: true,
+          claudeSessionId: nextSessionId,
+          waitingFor: session.waitingFor,
+          claudeStatus: session.status,
+        };
+        changed = true;
+      }
+
+      // 何も変わっていなければ参照ごと据え置く（毎秒の再レンダーを防ぐ）
+      return changed ? { tabs } : {};
+    }),
 
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
@@ -993,6 +1073,10 @@ export const useAppStore = create<Store>()(
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};  // 存在しない tabId は no-op
+      // Claude 自身が申告した status を持つタブでは、画面パターンによる推測を採用しない。
+      // このアクションの呼び出し元は画面判定 (terminalRegistry) だけなので、
+      // ここで弾けばセッション由来の状態が推測に上書きされることはない。
+      if (tab.agentStateFromSession === true) return {};
       // 'done' は「まだ見ていない完了」を伝える状態。見えているタブでは意味を持たないため
       // 'idle' に落とす。'blocked' は見ていても応答するまで解消しないのでそのまま通す。
       const next: AgentState =

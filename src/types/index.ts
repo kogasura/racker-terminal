@@ -101,6 +101,28 @@ export interface Tab {
    */
   agentState?: AgentState;
   /**
+   * agentState が Claude Code のセッションファイル由来かどうか。
+   *
+   * true のあいだは、画面出力のパターン判定 (agentState.ts) による更新を無視する。
+   * Claude 自身が申告した status のほうが確実なので、推測で上書きさせない。
+   * セッションが見つからなくなったら false に戻り、画面判定へフォールバックする。
+   *
+   * ランタイム状態のため persist 対象外。
+   */
+  agentStateFromSession?: boolean;
+  /**
+   * Claude が応答待ち (status = 'waiting') のときの理由。
+   * 'input needed' / 'dialog open' / 'sandbox request' 等。tooltip に出す。
+   * ランタイム状態のため persist 対象外。
+   */
+  waitingFor?: string;
+  /**
+   * 直近に観測した Claude の生の status ('busy' | 'shell' | 'idle' | 'waiting')。
+   * working に統合した 'shell' を tooltip で区別するために保持する。
+   * ランタイム状態のため persist 対象外。
+   */
+  claudeStatus?: string;
+  /**
    * true のとき、このタブは spawn 時に Claude Code を自動起動する「Claude タブ」。
    * お気に入りの launchClaude フラグから createTab/spawnFavorite 経由で引き継ぐ。永続化対象。
    */

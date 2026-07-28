@@ -1,3 +1,4 @@
+mod claude_sessions;
 mod launch;
 mod pty;
 mod wsl;
@@ -34,6 +35,7 @@ pub fn run() {
             pty::pty_set_read_paused,
             wsl::list_wsl_distros,
             launch::get_launch_path,
+            claude_sessions::list_claude_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

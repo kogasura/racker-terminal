@@ -4,6 +4,11 @@ import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from './store/appStore';
 import { getAllRuntimes, clearAllTextureAtlases } from './lib/terminalRegistry';
 import { listWslDistros } from './lib/wsl';
+import {
+  listClaudeSessions,
+  matchSessionsToTabs,
+  collectWslDistros,
+} from './lib/claudeSessions';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { DragDropProvider } from './components/DragDropProvider';
@@ -107,6 +112,48 @@ function App() {
       clearAllTextureAtlases();
     }, GLYPH_CACHE_CLEAR_INTERVAL_MS);
     return () => clearInterval(id);
+  }, []);
+
+  // Claude Code のセッションファイルを定期的に読み、タブと突き合わせる。
+  //
+  // これにより (1) ユーザーが自分で `claude` と打ったタブのセッション ID を特定して
+  // 再起動後の resume 対象にでき、(2) タブの状態を画面パターンの推測ではなく
+  // Claude 自身が申告した status から決められる。
+  //
+  // ファイル読み取りが失敗する環境（Claude 未使用・形式変更）では単に空が返り、
+  // 従来どおり画面パターン判定にフォールバックする。
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 2000;
+    let cancelled = false;
+
+    const tick = async () => {
+      const before = useAppStore.getState();
+      const tabList = Object.values(before.tabs);
+      // 実際に開いている WSL タブの distro だけを渡す。
+      // 使っていない distro を渡すと、停止中の WSL をポーリングのたびに起こしてしまう。
+      const sessions = await listClaudeSessions(collectWslDistros(tabList));
+      if (cancelled || sessions.length === 0) return;
+
+      // await の前後で store が変化しうるので、照合には最新のタブ一覧を使う
+      const after = useAppStore.getState();
+      const matches = matchSessionsToTabs(
+        sessions,
+        Object.values(after.tabs).map((t) => ({
+          id: t.id,
+          cwd: t.cwd,
+          args: t.args,
+          claudeSessionId: t.claudeSessionId,
+        })),
+      );
+      after.applyClaudeSessions(matches);
+    };
+
+    void tick();
+    const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
   // App 起動時に WSL distro 一覧を取得して store に保存する。

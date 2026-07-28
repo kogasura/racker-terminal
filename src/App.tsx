@@ -9,6 +9,8 @@ import {
   matchSessionsToTabs,
   collectWslDistros,
 } from './lib/claudeSessions';
+import { shouldNotify, notifyAgentState } from './lib/notifications';
+import { getTabDisplayTitle, type AgentState } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { DragDropProvider } from './components/DragDropProvider';
@@ -112,6 +114,53 @@ function App() {
       clearAllTextureAtlases();
     }, GLYPH_CACHE_CLEAR_INTERVAL_MS);
     return () => clearInterval(id);
+  }, []);
+
+  // Claude タブの状態変化をデスクトップ通知で知らせる。
+  //
+  // サイドバーのステータスドットは racker のウィンドウを見ていないと意味がない。
+  // 別のアプリで作業している間に Claude が応答待ちで止まっていることに気付けるよう、
+  // 応答待ち / 完了になった瞬間だけトーストを出す。
+  useEffect(() => {
+    // 直前の状態。差分が出たタブだけを通知対象にする。
+    const prevStates = new Map<string, AgentState | undefined>();
+    let initialized = false;
+
+    const unsub = useAppStore.subscribe((state) => {
+      // 初回は現在の状態を控えるだけにする。
+      // 起動直後は全タブが「未検出 → 何か」の遷移に見えるため、
+      // これをしないと復元したタブの数だけ通知が飛ぶ。
+      if (!initialized) {
+        for (const [id, tab] of Object.entries(state.tabs)) {
+          prevStates.set(id, tab.agentState);
+        }
+        initialized = true;
+        return;
+      }
+
+      for (const [id, tab] of Object.entries(state.tabs)) {
+        const prev = prevStates.get(id);
+        if (prev === tab.agentState) continue;
+        prevStates.set(id, tab.agentState);
+
+        // 設定は通知の直前に読む。effect を張り直さずに ON/OFF を反映するため。
+        if (state.settings.notificationsEnabled === false) continue;
+
+        const kind = shouldNotify(prev, tab.agentState, id === state.activeTabId);
+        if (kind !== null) {
+          void notifyAgentState(kind, getTabDisplayTitle(tab), tab.waitingFor);
+        }
+      }
+
+      // 閉じられたタブを控えから外す（タブ ID が再利用されることはないが、
+      // 長時間の運用で Map が単調増加するのを防ぐ）
+      if (prevStates.size > Object.keys(state.tabs).length) {
+        for (const id of prevStates.keys()) {
+          if (!(id in state.tabs)) prevStates.delete(id);
+        }
+      }
+    });
+    return unsub;
   }, []);
 
   // Claude Code のセッションファイルを定期的に読み、タブと突き合わせる。

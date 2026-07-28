@@ -4,9 +4,10 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
-import type { Settings } from '../types';
+import type { Settings, AgentState } from '../types';
 import { spawnPty, writePty, resizePty } from './pty';
 import { isAllowedUrl } from './urlValidator';
+import { readBottomSnapshot, classifyAgentState, AGENT_SETTLE_MS } from './agentState';
 
 interface WebglRendererHandle {
   /** dispose() で WebGL addon と onContextLoss listener を解放 */
@@ -388,8 +389,17 @@ export interface TerminalRuntime {
    * BEL (\x07) 受信購読の IDisposable。
    * createRuntime 内で term.onBell を購読して取得する。
    * dispose() の中で oscSub.dispose() の隣に配置して解放する。
+   *
+   * BEL は「処理が完了した」合図としてエージェント状態検出 (agentState) の材料になる。
    */
   bellSub: IDisposable;
+
+  /**
+   * 画面書き込み完了 (onWriteParsed) 購読の IDisposable。
+   * エージェント状態検出で「出力が動いている / 止まった」を検知するために使う。
+   * dispose() の中で bellSub.dispose() の直後に解放する。
+   */
+  writeParsedSub: IDisposable;
 
   /**
    * WebLinksAddon のライフサイクルハンドル。
@@ -447,10 +457,15 @@ export function createRuntime(
      */
     onCwdChange: (cwd: string) => void;
     /**
-     * BEL (\x07) 受信時のコールバック。
-     * TerminalPane の useEffect 内で activeTabId チェック後に setTabAttention を呼ぶ。
+     * エージェント状態が変化したときのコールバック。
+     *
+     * **このコールバックを渡したタブでのみ状態検出が動く。** Claude タブ (launchClaude=true)
+     * にのみ渡し、通常のシェルタブでは undefined にすることで検出コストを払わない
+     * （herdr が前景プロセスでエージェントを識別しているのに相当する)。
+     *
+     * 同じ状態が続く間は再通知しない（変化時のみ発火）。
      */
-    onBell: () => void;
+    onAgentState?: (state: AgentState) => void;
   },
 ): TerminalRuntime {
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
@@ -596,15 +611,64 @@ export function createRuntime(
     return false;
   });
 
-  // BEL (\x07) を購読してアテンション通知を発火する。
-  // isDisposed ガード後に callbacks.onBell を呼ぶ（titleSub / oscSub と同じパターン）。
-  const bellSub = term.onBell(() => {
-    if (isDisposed) return;
+  // --- エージェント状態検出 (Claude タブのみ) ---
+  //
+  // 検出の流れ:
+  //   1. 画面に書き込みがある間は暫定的に 'working' を出して即応性を確保する
+  //   2. 書き込みが AGENT_SETTLE_MS 途切れたら、落ち着いた画面のスナップショットを
+  //      classifyAgentState に渡して状態を確定する
+  //   3. BEL は「完了した」フラグとして貯めておき、確定時に材料として消費する
+  //
+  // 判定そのものは agentState.ts に一本化しており、ここは材料を集めるだけに徹する。
+  const agentDetectionEnabled = typeof callbacks.onAgentState === 'function';
+  /** 前回の確定以降に BEL を受信したか。確定時に消費して false に戻す。 */
+  let bellPending = false;
+  /** 出力停止を待つタイマー。書き込みのたびに張り直す。 */
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 最後に通知した状態。同値の再通知を抑止して不要な再レンダーを防ぐ。 */
+  let lastAgentState: AgentState | null = null;
+
+  function reportAgentState(next: AgentState): void {
+    if (lastAgentState === next) return;
+    lastAgentState = next;
     try {
-      callbacks.onBell();
+      callbacks.onAgentState?.(next);
     } catch (e) {
-      console.warn('[terminalRegistry] onBell threw:', e);
+      console.warn('[terminalRegistry] onAgentState threw:', e);
     }
+  }
+
+  /** 出力が止まるのを待って状態を確定する。書き込みのたびに呼んでタイマーを延長する。 */
+  function scheduleAgentSettle(): void {
+    if (settleTimer !== null) clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      if (isDisposed) return;
+      const next = classifyAgentState(readBottomSnapshot(term), bellPending);
+      // 確定に使った BEL は消費する。持ち越すと、次に出力が落ち着いたときに
+      // 完了していないのに 'done' へ戻ってしまう。
+      bellPending = false;
+      reportAgentState(next);
+    }, AGENT_SETTLE_MS);
+  }
+
+  // BEL (\x07) を購読する。BEL 自体では状態を確定せず、フラグを立てて確定を促すだけ。
+  // Claude は承認プロンプトの提示時にも BEL を鳴らすため、ここで即 'done' にすると
+  // 「応答待ちなのに完了と表示される」誤りが起きる（判定順序は classifyAgentState 参照）。
+  const bellSub = term.onBell(() => {
+    if (isDisposed || !agentDetectionEnabled) return;
+    bellPending = true;
+    scheduleAgentSettle();
+  });
+
+  // 画面書き込みのパース完了を購読して「出力が動いている」ことを検知する。
+  // PTY データは TerminalPane 側の handlePtyEvent から term.write() されるため、
+  // 書き込み元に依存しないこのイベントで捕捉する。
+  const writeParsedSub = term.onWriteParsed(() => {
+    if (isDisposed || !agentDetectionEnabled) return;
+    // 出力が動いている = 実行中とみなす暫定表示。AGENT_SETTLE_MS 後に確定判定で上書きされる。
+    reportAgentState('working');
+    scheduleAgentSettle();
   });
 
   // v0.5 改善: OSC 10/11 (default foreground/background color 設定) を無視する。
@@ -630,6 +694,7 @@ export function createRuntime(
     titleSub,
     oscSub,
     bellSub,
+    writeParsedSub,
     webLinksHandle,
 
     setOnEvent(handler) {
@@ -734,6 +799,13 @@ export function createRuntime(
       // (onBell コールバック中の use-after-dispose を防ぐため、isDisposed=true を立てた
       // 後に他の dispose と一緒の塊で実行する)
       bellSub.dispose();
+      // 画面書き込み購読を解放する (bellSub と同じくエージェント状態検出の入力源)
+      writeParsedSub.dispose();
+      // pending な状態確定タイマーをキャンセルする (dispose 済み term への getLine を防ぐ)
+      if (settleTimer !== null) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
       // WebLinksAddon を解放する。§3.2 規約: bellSub.dispose() の直後 (webglHandle より前)
       webLinksHandle.dispose();
       // v0.5 改善: OSC 10/11/110/111 (default fg/bg 設定) suppress ハンドラを解放

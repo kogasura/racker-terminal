@@ -55,6 +55,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
+  const writeParsedSub = { dispose: vi.fn() };
   const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
   const disposeFn = vi.fn(() => {
@@ -63,6 +64,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     titleSub.dispose();
     oscSub.dispose();
     bellSub.dispose();
+    writeParsedSub.dispose();
     webLinksHandle.dispose();
     compositionAbort.abort();
   });
@@ -77,6 +79,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     titleSub,
     oscSub,
     bellSub,
+    writeParsedSub,
     webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
@@ -225,6 +228,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
   const titleSub = { dispose: vi.fn() };
   const oscSub = { dispose: vi.fn() };
   const bellSub = { dispose: vi.fn() };
+  const writeParsedSub = { dispose: vi.fn() };
   const webLinksHandle = { dispose: vi.fn() };
   const compositionAbort = new AbortController();
 
@@ -238,6 +242,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     titleSub,
     oscSub,
     bellSub,
+    writeParsedSub,
     webLinksHandle,
     applySettings: vi.fn(),
     setOnEvent: vi.fn(),
@@ -284,6 +289,7 @@ describe('applySettings', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const writeParsedSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
@@ -296,6 +302,7 @@ describe('applySettings', () => {
       titleSub,
       oscSub,
       bellSub,
+      writeParsedSub,
       webLinksHandle,
       applySettings(settings) {
         // isDisposed ガードの実装を模擬
@@ -360,6 +367,7 @@ describe('titleSub dispose', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const writeParsedSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const compositionAbort = new AbortController();
     const runtime: TerminalRuntime = {
@@ -372,6 +380,7 @@ describe('titleSub dispose', () => {
       titleSub,
       oscSub,
       bellSub,
+      writeParsedSub,
       webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),
@@ -383,6 +392,7 @@ describe('titleSub dispose', () => {
         titleSub.dispose();
         oscSub.dispose();
         bellSub.dispose();
+        writeParsedSub.dispose();
         webLinksHandle.dispose();
         compositionAbort.abort();
       },
@@ -492,6 +502,7 @@ describe('memory leak', () => {
       const titleSub = { dispose: vi.fn() };
       const oscSub = { dispose: vi.fn() };
       const bellSub = { dispose: vi.fn() };
+      const writeParsedSub = { dispose: vi.fn() };
       const webLinksHandle = { dispose: vi.fn() };
       const compositionAbort = new AbortController();
       const runtime: TerminalRuntime = {
@@ -504,6 +515,7 @@ describe('memory leak', () => {
         titleSub,
         oscSub,
         bellSub,
+        writeParsedSub,
         webLinksHandle,
         applySettings: vi.fn(),
         setOnEvent: vi.fn(),
@@ -605,6 +617,7 @@ describe('IME compositionAbort (2.13)', () => {
     const titleSub = { dispose: vi.fn() };
     const oscSub = { dispose: vi.fn() };
     const bellSub = { dispose: vi.fn() };
+    const writeParsedSub = { dispose: vi.fn() };
     const webLinksHandle = { dispose: vi.fn() };
     const runtime: TerminalRuntime = {
       get term() { return {} as never; },
@@ -616,6 +629,7 @@ describe('IME compositionAbort (2.13)', () => {
       titleSub,
       oscSub,
       bellSub,
+      writeParsedSub,
       webLinksHandle,
       applySettings: vi.fn(),
       setOnEvent: vi.fn(),

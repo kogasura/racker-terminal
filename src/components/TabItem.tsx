@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
-import { getTabDisplayTitle, type TabStatus } from '../types';
+import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type TabStatus } from '../types';
 import { DRAG_KIND } from '../lib/dndResolve';
 
 const STATUS_DOT_CLASS: Record<TabStatus, string> = {
@@ -12,6 +12,21 @@ const STATUS_DOT_CLASS: Record<TabStatus, string> = {
   spawning: 'tab-item__status-dot tab-item__status-dot--spawning',
   crashed: 'tab-item__status-dot tab-item__status-dot--crashed',
 };
+
+/**
+ * ステータスドットの class を組み立てる。
+ *
+ * PTY のライフサイクル (TabStatus) を基底の色とし、Claude タブのエージェント状態を
+ * modifier で重ねる。'idle' と未検出 (undefined) は modifier を付けず、
+ * 通常のタブと同じ見た目にする（「何も起きていない」ことを装飾で主張しない）。
+ *
+ * Sidebar のドラッグプレビューと共有するため export している。
+ */
+export function statusDotClassName(status: TabStatus, agentState?: AgentState): string {
+  const base = STATUS_DOT_CLASS[status];
+  if (!agentState || agentState === 'idle') return base;
+  return `${base} tab-item__status-dot--agent-${agentState}`;
+}
 
 interface TabItemProps {
   tabId: string;
@@ -78,10 +93,8 @@ export const TabItem = memo(function TabItem({ tabId, isActive }: TabItemProps) 
           onContextMenu={isEditing ? (e) => e.preventDefault() : undefined}
         >
           <span
-            className={
-              STATUS_DOT_CLASS[tab.status] +
-              (tab.needsAttention ? ' tab-item__status-dot--attention' : '')
-            }
+            className={statusDotClassName(tab.status, tab.agentState)}
+            title={tab.agentState ? AGENT_STATE_LABEL[tab.agentState] : undefined}
           />
 
           <InlineEdit

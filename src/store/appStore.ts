@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import type { AgentState, AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { newId } from '../lib/id';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
@@ -298,12 +298,16 @@ interface AppActions {
   setWslDistros: (distros: string[]) => void;
 
   /**
-   * タブのアテンション状態を設定する。BEL 受信時に terminalRegistry → TerminalPane 経由で呼ぶ。
+   * タブのエージェント状態を設定する。
+   * terminalRegistry の状態検出 → TerminalPane 経由で、状態が変化したときだけ呼ばれる。
+   *
    * - 存在しない tabId は no-op
-   * - value === true かつ tabId === activeTabId は no-op（アクティブタブには通知しない）
+   * - 'done' をアクティブタブに設定しようとした場合は 'idle' に落とす
+   *   （完了通知は「見るまで残す」ものなので、見ているタブでは即座に用済み）
+   * - 'blocked' はアクティブタブでも保持する（見ているだけでは応答待ちは解消しないため）
    * - 既に同じ値なら no-op（不要な再レンダ抑止）
    */
-  setTabAttention: (tabId: string, value: boolean) => void;
+  setTabAgentState: (tabId: string, state: AgentState) => void;
 
   // --- updater アクション ---
   /**
@@ -427,11 +431,12 @@ export const useAppStore = create<Store>()(
   setActiveTab: (tabId) =>
     set((state) => {
       const tab = tabId !== null ? state.tabs[tabId] : undefined;
-      // アクティブ化したタブの attention をクリアする
-      if (tab?.needsAttention) {
+      // 完了通知 ('done') は「ユーザーが見るまで残す」状態なので、見た時点でクリアする。
+      // 'blocked' は応答するまで残す（タブを開いただけでは応答待ちは解消しない）。
+      if (tab?.agentState === 'done') {
         return {
           activeTabId: tabId,
-          tabs: { ...state.tabs, [tabId!]: { ...tab, needsAttention: false } },
+          tabs: { ...state.tabs, [tabId!]: { ...tab, agentState: 'idle' } },
         };
       }
       return { activeTabId: tabId };
@@ -443,9 +448,9 @@ export const useAppStore = create<Store>()(
         activeTabId: tabId,
         groups: expandGroupContaining(state.groups, tabId),
       };
-      // アクティブ化したタブの attention をクリアする
-      if (tab?.needsAttention) {
-        return { ...base, tabs: { ...state.tabs, [tabId]: { ...tab, needsAttention: false } } };
+      // setActiveTab と同じ規約: 完了通知だけをクリアし、応答待ち ('blocked') は残す
+      if (tab?.agentState === 'done') {
+        return { ...base, tabs: { ...state.tabs, [tabId]: { ...tab, agentState: 'idle' } } };
       }
       return base;
     }),
@@ -838,15 +843,16 @@ export const useAppStore = create<Store>()(
 
   setWslDistros: (distros) => set({ wslDistros: distros }),
 
-  setTabAttention: (tabId, value) =>
+  setTabAgentState: (tabId, agentState) =>
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return {};  // 存在しない tabId は no-op
-      // value === true でアクティブタブと一致するときは無視（アクティブには通知しない）。
-      // value === false は activeTabId 一致でも常に通過し、クリア経路として動作する。
-      if (value === true && tabId === state.activeTabId) return {};
-      if (tab.needsAttention === value) return {};  // 同値は no-op（不要な再レンダ抑止）
-      return { tabs: { ...state.tabs, [tabId]: { ...tab, needsAttention: value } } };
+      // 'done' は「まだ見ていない完了」を伝える状態。見えているタブでは意味を持たないため
+      // 'idle' に落とす。'blocked' は見ていても応答するまで解消しないのでそのまま通す。
+      const next: AgentState =
+        agentState === 'done' && tabId === state.activeTabId ? 'idle' : agentState;
+      if (tab.agentState === next) return {};  // 同値は no-op（不要な再レンダ抑止）
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, agentState: next } } };
     }),
 
   runUpdateCheck: async () => {
@@ -1027,7 +1033,7 @@ export const useAppStore = create<Store>()(
               launchClaude: tab.launchClaude,       // Claude タブ属性 (復元対象)
               claudeSessionId: tab.claudeSessionId, // claude セッション ID (resume に使用)
               bypassPermissions: tab.bypassPermissions, // 権限バイパス設定 (復元対象)
-              // status / ptyId / oscTitle は OFF (ランタイム状態)
+              // status / ptyId / oscTitle / agentState は OFF (ランタイム状態)
             },
           ]),
         ),

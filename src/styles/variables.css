@@ -16,8 +16,11 @@
   --status-spawning: #e0af68;
   --status-live: #9ece6a;
   --status-crashed: #f7768e;
-  /* アテンション通知リング (Tokyo Night yellow — BEL 受信タブに外周リングで表示) */
-  --status-attention: #e0af68;
+  /* エージェント状態 (Claude タブのステータスドットに外周リングとして重ねる)
+     idle は装飾なしのため色を持たない。Tokyo Night のパレットに合わせる。 */
+  --agent-blocked: #f7768e;  /* red    — ユーザーの応答待ち。最も目立たせる */
+  --agent-working: #7aa2f7;  /* blue   — 実行中 */
+  --agent-done:    #9ece6a;  /* green  — 完了（見るまで残る） */
 
   /* crashed 状態の薄赤背景（MainPane 用） */
   --crashed-overlay-bg: rgba(247, 118, 142, 0.08);

@@ -25,33 +25,24 @@ import {
   type DragKind,
   nextNewGroupTitle,
 } from '../lib/dndResolve';
-import { getTabDisplayTitle, type TabStatus } from '../types';
+import { getTabDisplayTitle, type AgentState, type TabStatus } from '../types';
+import { statusDotClassName } from './TabItem';
 import '../styles/sidebar.css';
-
-/** ドラッグ中に Portal 描画される最小プレビュー（status dot + title） */
-const STATUS_DOT_CLASS: Record<TabStatus, string> = {
-  live: 'tab-item__status-dot tab-item__status-dot--live',
-  spawning: 'tab-item__status-dot tab-item__status-dot--spawning',
-  crashed: 'tab-item__status-dot tab-item__status-dot--crashed',
-};
 
 /** ドラッグプレビュー用に必要な最小タブ情報 */
 interface TabPreviewData {
   id: string;
   displayTitle: string;
   status: TabStatus;
-  needsAttention?: boolean;
+  agentState?: AgentState;
 }
 
+/** ドラッグ中に Portal 描画される最小プレビュー（status dot + title） */
 function TabItemPreview({ tab }: { tab: TabPreviewData }) {
   return (
     <div className="tab-item tab-item--drag-overlay">
-      <span
-        className={
-          STATUS_DOT_CLASS[tab.status] +
-          (tab.needsAttention ? ' tab-item__status-dot--attention' : '')
-        }
-      />
+      {/* ドット の class 生成は TabItem と共有する（見た目を一致させるため） */}
+      <span className={statusDotClassName(tab.status, tab.agentState)} />
       <span className="tab-item__title">{tab.displayTitle}</span>
     </div>
   );
@@ -106,7 +97,7 @@ export const Sidebar = memo(function Sidebar() {
   // B3: Settings Dialog の開閉状態
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // F2: useShallow で id/displayTitle/status/needsAttention の 4 フィールドのみ抽出する。
+  // F2: useShallow で id/displayTitle/status/agentState の 4 フィールドのみ抽出する。
   // Tab オブジェクト全体を返すと OSC タイトル更新等で Sidebar 全体が再レンダーされ、
   // DndContext の collision 計算が走り直す問題を防ぐ。
   const activeDragTab = useAppStore(
@@ -118,7 +109,7 @@ export const Sidebar = memo(function Sidebar() {
             id: t.id,
             displayTitle: getTabDisplayTitle(t),
             status: t.status,
-            needsAttention: t.needsAttention,
+            agentState: t.agentState,
           }
         : null;
     }),

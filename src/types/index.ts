@@ -8,6 +8,58 @@
  */
 export type TabStatus = 'spawning' | 'live' | 'crashed';
 
+/**
+ * Claude タブで動作しているエージェントの意味的な状態。
+ * TabStatus（PTY のライフサイクル）とは独立した軸で、launchClaude=true のタブにのみ設定される。
+ *
+ * - 'idle':    入力待ち。エージェントは何もしていない
+ * - 'working': 実行中（画面に "esc to interrupt" が出ている、または出力が継続中）
+ * - 'blocked': 権限確認 / 質問プロンプトでユーザーの応答を待っている（最優先で通知すべき状態）
+ * - 'done':    処理が完了して BEL が鳴った。ユーザーがタブを見るまで保持される
+ *
+ * 判定は src/lib/agentState.ts の classifyAgentState が単独で担う（"one status authority"）。
+ * ランタイム状態のため persist 対象外。
+ */
+export type AgentState = 'idle' | 'working' | 'blocked' | 'done';
+
+/**
+ * サイドバー表示で「どの状態を優先して見せるか」の序列。数値が大きいほど優先。
+ * グループヘッダに配下タブの代表状態を出すときや、同時成立時の勝敗判定に使う。
+ * blocked（ユーザーの応答待ち = 止まっている）を最優先に置く。
+ */
+export const AGENT_STATE_PRIORITY: Record<AgentState, number> = {
+  blocked: 3,
+  working: 2,
+  done: 1,
+  idle: 0,
+};
+
+/** ステータスドットの tooltip / aria-label に使う表示名。 */
+export const AGENT_STATE_LABEL: Record<AgentState, string> = {
+  blocked: '応答待ち',
+  working: '実行中',
+  done: '完了',
+  idle: '待機中',
+};
+
+/**
+ * タブ集合の代表となるエージェント状態を返す（優先度が最も高いもの）。
+ * グループヘッダに配下タブの状態をまとめて出すために使う。
+ *
+ * 該当する状態がひとつもない（全タブが未検出）場合は undefined を返す。
+ * 'idle' しかない場合は 'idle' を返すので、呼び出し側で表示要否を判断すること。
+ */
+export function dominantAgentState(states: (AgentState | undefined)[]): AgentState | undefined {
+  let best: AgentState | undefined;
+  for (const s of states) {
+    if (!s) continue;
+    if (best === undefined || AGENT_STATE_PRIORITY[s] > AGENT_STATE_PRIORITY[best]) {
+      best = s;
+    }
+  }
+  return best;
+}
+
 export interface Tab {
   id: string;
   groupId: string;
@@ -41,10 +93,13 @@ export interface Tab {
    */
   ptyId?: string;
   /**
-   * BEL (\x07) 受信により注意が必要な状態。ランタイム状態のため persist 対象外。
-   * アクティブタブには設定しない（即見えているため）。アクティブ化で自動クリアされる。
+   * Claude タブのエージェント状態。launchClaude=true のタブにのみ設定される。
+   * ランタイム状態のため persist 対象外（再起動直後は undefined = 未検出）。
+   *
+   * アクティブタブには 'blocked' / 'done' を設定しない（即見えているため）。
+   * 'done' はタブをアクティブ化した時点でクリアされる。
    */
-  needsAttention?: boolean;
+  agentState?: AgentState;
   /**
    * true のとき、このタブは spawn 時に Claude Code を自動起動する「Claude タブ」。
    * お気に入りの launchClaude フラグから createTab/spawnFavorite 経由で引き継ぐ。永続化対象。
@@ -192,7 +247,7 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].needsAttention, wslDistros
+ * - Persist OFF（ランタイム状態）: activeTabId, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings
  */
 export interface AppState {

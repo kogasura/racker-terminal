@@ -12,6 +12,12 @@ import {
   setupWebglRenderer,
   parseOsc7Path,
   attachImeCompositionGuard,
+  reserveWebglLru,
+  promoteWebglLru,
+  nextPauseState,
+  MAX_WEBGL_CONTEXTS,
+  WRITE_HIGH_WATERMARK,
+  WRITE_LOW_WATERMARK,
   type TerminalRuntime,
 } from './terminalRegistry';
 
@@ -86,6 +92,11 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
     writeInput: vi.fn(),
+    writeOutput: vi.fn(),
+    wakeWebgl: vi.fn(),
+    sleepWebgl: vi.fn(),
+    clearGlyphCache: vi.fn(),
+    reclaimPty: vi.fn(),
     dispose: disposeFn,
     get disposeCallCount() { return disposeCallCount; },
   };
@@ -249,6 +260,11 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
     resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
     writeInput: vi.fn(),
+    writeOutput: vi.fn(),
+    wakeWebgl: vi.fn(),
+    sleepWebgl: vi.fn(),
+    clearGlyphCache: vi.fn(),
+    reclaimPty: vi.fn(),
     dispose: vi.fn(() => { callOrder.push('dispose'); }),
     get callOrder() { return callOrder; },
   };
@@ -315,6 +331,11 @@ describe('applySettings', () => {
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+      writeOutput: vi.fn(),
+      wakeWebgl: vi.fn(),
+      sleepWebgl: vi.fn(),
+      clearGlyphCache: vi.fn(),
+      reclaimPty: vi.fn(),
       dispose() {
         disposed = true;
       },
@@ -387,6 +408,11 @@ describe('titleSub dispose', () => {
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+      writeOutput: vi.fn(),
+      wakeWebgl: vi.fn(),
+      sleepWebgl: vi.fn(),
+      clearGlyphCache: vi.fn(),
+      reclaimPty: vi.fn(),
       dispose: () => {
         sub.dispose();
         titleSub.dispose();
@@ -522,6 +548,11 @@ describe('memory leak', () => {
         startSpawn: vi.fn(),
         resetForRecycle: vi.fn(),
         writeInput: vi.fn(),
+        writeOutput: vi.fn(),
+        wakeWebgl: vi.fn(),
+        sleepWebgl: vi.fn(),
+        clearGlyphCache: vi.fn(),
+        reclaimPty: vi.fn(),
         dispose: disposeMock,
       };
       acquireRuntime(id, () => runtime);
@@ -636,6 +667,11 @@ describe('IME compositionAbort (2.13)', () => {
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
       writeInput: vi.fn(),
+      writeOutput: vi.fn(),
+      wakeWebgl: vi.fn(),
+      sleepWebgl: vi.fn(),
+      clearGlyphCache: vi.fn(),
+      reclaimPty: vi.fn(),
       dispose() {
         sub.dispose();
         titleSub.dispose();
@@ -1108,5 +1144,93 @@ describe('computeBackground', () => {
     // alpha < 1.0 は完全透明（baseHex は参照されない）
     expect(computeBackground(0.9)).toBe('rgba(0, 0, 0, 0)');
     expect(computeBackground(1.0)).toBe('#1a1b26');
+  });
+});
+
+// --- WebGL context LRU (#3 Sleep/Wake) ---
+
+describe('reserveWebglLru (#3)', () => {
+  it('上限未満なら evict せず lru を変更しない', () => {
+    const lru = ['a', 'b'];
+    const evicted = reserveWebglLru(lru, 'c', 8);
+    expect(evicted).toEqual([]);
+    expect(lru).toEqual(['a', 'b']);
+  });
+
+  it('ちょうど上限のとき最古を 1 つ evict する（push 後に max 以下になる）', () => {
+    const lru = ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7']; // 8 個 = MAX
+    const evicted = reserveWebglLru(lru, 'new', 8);
+    expect(evicted).toEqual(['t0']); // 最古を 1 つ
+    expect(lru).toEqual(['t1', 't2', 't3', 't4', 't5', 't6', 't7']); // 7 個 → push で 8
+  });
+
+  it('上限超過時は複数を古い順に evict する', () => {
+    const lru = ['a', 'b', 'c', 'd']; // 4 個
+    const evicted = reserveWebglLru(lru, 'e', 2); // max=2 → push 後 2 以下にするため 3 個 evict
+    expect(evicted).toEqual(['a', 'b', 'c']);
+    expect(lru).toEqual(['d']);
+  });
+
+  it('exceptId が先頭に居る場合は自分を evict せず break する（保険）', () => {
+    const lru = ['self'];
+    const evicted = reserveWebglLru(lru, 'self', 1);
+    expect(evicted).toEqual([]);
+    expect(lru).toEqual(['self']);
+  });
+
+  it('MAX_WEBGL_CONTEXTS は 1〜15（Chromium 16 上限の安全マージン内）', () => {
+    expect(MAX_WEBGL_CONTEXTS).toBeGreaterThanOrEqual(1);
+    expect(MAX_WEBGL_CONTEXTS).toBeLessThan(16);
+  });
+});
+
+describe('promoteWebglLru (#3)', () => {
+  it('存在する id を末尾(MRU)へ移動する', () => {
+    const lru = ['a', 'b', 'c'];
+    promoteWebglLru(lru, 'a');
+    expect(lru).toEqual(['b', 'c', 'a']);
+  });
+
+  it('末尾の id はそのまま', () => {
+    const lru = ['a', 'b', 'c'];
+    promoteWebglLru(lru, 'c');
+    expect(lru).toEqual(['a', 'b', 'c']);
+  });
+
+  it('存在しない id は何もしない', () => {
+    const lru = ['a', 'b'];
+    promoteWebglLru(lru, 'x');
+    expect(lru).toEqual(['a', 'b']);
+  });
+});
+
+// --- 書き込みフロー制御 (#4 back-pressure) ---
+
+describe('nextPauseState (#4)', () => {
+  it('未 pause + high 以上 → pause(true)', () => {
+    expect(nextPauseState(1000, false, 1000, 200)).toBe(true);
+    expect(nextPauseState(1500, false, 1000, 200)).toBe(true);
+  });
+
+  it('未 pause + high 未満 → 現状維持(false)', () => {
+    expect(nextPauseState(999, false, 1000, 200)).toBe(false);
+  });
+
+  it('pause 中 + low 以下 → resume(false)', () => {
+    expect(nextPauseState(200, true, 1000, 200)).toBe(false);
+    expect(nextPauseState(0, true, 1000, 200)).toBe(false);
+  });
+
+  it('pause 中 + low 超過 → 現状維持(true)。ヒステリシスで頻繁な切替を防ぐ', () => {
+    expect(nextPauseState(201, true, 1000, 200)).toBe(true);
+    expect(nextPauseState(999, true, 1000, 200)).toBe(true);
+  });
+
+  it('デフォルト watermark は high > low > 0', () => {
+    expect(WRITE_HIGH_WATERMARK).toBeGreaterThan(WRITE_LOW_WATERMARK);
+    expect(WRITE_LOW_WATERMARK).toBeGreaterThan(0);
+    // デフォルト引数でも動作する
+    expect(nextPauseState(WRITE_HIGH_WATERMARK, false)).toBe(true);
+    expect(nextPauseState(WRITE_LOW_WATERMARK, true)).toBe(false);
   });
 });

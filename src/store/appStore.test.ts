@@ -5,6 +5,7 @@ import {
   selectNextTabId,
   selectPrevTabId,
   expandGroupContaining,
+  pathBasename,
   CLOSED_TABS_MAX,
 } from './appStore';
 import { SPAWN_TIMEOUT_MS } from '../components/TerminalPane';
@@ -901,6 +902,72 @@ describe('appStore', () => {
       const favId = useAppStore.getState().addFavorite({ title: 'Y' });
       const tabId = useAppStore.getState().spawnFavorite(favId);
       expect(useAppStore.getState().tabs[tabId!].env).toBeUndefined();
+    });
+  });
+
+  // --- pathBasename ---
+  describe('pathBasename', () => {
+    it('Windows パスの末尾フォルダ名を返す', () => {
+      expect(pathBasename('C:\\Users\\me\\projects\\racker')).toBe('racker');
+    });
+    it('POSIX パスの末尾フォルダ名を返す', () => {
+      expect(pathBasename('/home/me/dev/app')).toBe('app');
+    });
+    it('末尾スラッシュがあっても末尾フォルダ名を返す', () => {
+      expect(pathBasename('C:\\Users\\me\\')).toBe('me');
+    });
+    it('ドライブ直下は Terminal にフォールバックする', () => {
+      expect(pathBasename('C:\\')).toBe('Terminal');
+      expect(pathBasename('C:')).toBe('Terminal');
+    });
+    it('空文字列は Terminal にフォールバックする', () => {
+      expect(pathBasename('')).toBe('Terminal');
+    });
+  });
+
+  // --- spawnAtPath ---
+  describe('spawnAtPath', () => {
+    it('既定お気に入りが無い場合はフォルダ名タイトルの plain タブを開く', () => {
+      useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().spawnAtPath('C:\\work\\myproj');
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab).toBeDefined();
+      expect(tab.cwd).toBe('C:\\work\\myproj');
+      expect(tab.userTitle).toBe('myproj');
+      expect(tab.status).toBe('spawning');
+      expect(tab.shell).toBeUndefined();
+    });
+
+    it('既定お気に入りがある場合は shell/args/env を引き継ぎ cwd を上書きする', () => {
+      useAppStore.getState().createGroup();
+      const favId = useAppStore.getState().addFavorite({
+        title: 'PS',
+        shell: 'pwsh',
+        cwd: '/original',
+        args: ['-NoLogo'],
+        env: { X: '1' },
+        defaultTabTitle: 'PowerShell',
+      });
+      useAppStore.getState().setDefaultFavorite(favId);
+
+      const tabId = useAppStore.getState().spawnAtPath('D:\\here');
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab.shell).toBe('pwsh');
+      expect(tab.cwd).toBe('D:\\here'); // お気に入りの cwd ではなく指定フォルダ
+      expect(tab.args).toEqual(['-NoLogo']);
+      expect(tab.env).toEqual({ X: '1' });
+      expect(tab.userTitle).toBe('PowerShell');
+    });
+
+    it('既定お気に入り ID が存在しない場合は plain タブにフォールバックする', () => {
+      useAppStore.getState().createGroup();
+      useAppStore.setState((s) => ({
+        settings: { ...s.settings, defaultFavoriteId: 'ghost' },
+      }));
+      const tabId = useAppStore.getState().spawnAtPath('/tmp/x');
+      const tab = useAppStore.getState().tabs[tabId];
+      expect(tab.cwd).toBe('/tmp/x');
+      expect(tab.userTitle).toBe('x');
     });
   });
 

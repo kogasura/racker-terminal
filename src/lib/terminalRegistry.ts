@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
 import type { Settings, AgentState } from '../types';
-import { spawnPty, writePty, resizePty } from './pty';
+import { spawnPty, writePty, resizePty, setReadPaused } from './pty';
 import { isAllowedUrl } from './urlValidator';
 import { readBottomSnapshot, classifyAgentState, AGENT_SETTLE_MS } from './agentState';
 
@@ -74,6 +74,7 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
       try {
         term.write('\r\n\x1b[33m[Renderer fell back to Canvas]\x1b[0m\r\n');
       } catch {}
+      // context は既にロスト済みなので loseContext は不要。addon を dispose して null 化する。
       webglAddon?.dispose();
       // 注: webglAddon = null とすることで以降の dispose() 内 webglAddon?.dispose() を no-op 化
       webglAddon = null;
@@ -84,9 +85,10 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
       `[terminalRegistry] WebGL addon failed to load for tab ${tabId}, using Canvas:`,
       e,
     );
-    // 初期化失敗時のクリーンアップ
+    // 初期化失敗時のクリーンアップ。構築済みなら context を明示解放してから dispose する。
     ctxLossSub?.dispose();
     ctxLossSub = null;
+    if (webglAddon) forceLoseWebglContext(webglAddon);
     webglAddon?.dispose();
     webglAddon = null;
   }
@@ -94,9 +96,40 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
   return {
     dispose: () => {
       ctxLossSub?.dispose();
+      // WebGL context を GPU レベルで明示解放してから addon を dispose する（#1）。
+      // dispose() だけでは context が GC まで残り、WebView2/Chromium の 16-context 上限を
+      // 圧迫してゾンビ context を積み上げるため、必ず loseContext を先に呼ぶ。
+      if (webglAddon) forceLoseWebglContext(webglAddon);
       webglAddon?.dispose();
     },
   };
+}
+
+/**
+ * WebglAddon が内部で保持する WebGL2 コンテキストを明示的に解放する（#1）。
+ *
+ * 背景: @xterm/addon-webgl 0.19.0 の dispose() は canvas を DOM から外して JS 参照を
+ * 捨てるだけで、WEBGL_lose_context.loseContext() を呼ばない。WebView2/Chromium では
+ * GPU プロセスが保持するコンテキストの GC 回収が大幅に遅延するため、タブ開閉のたびに
+ * 「ゾンビ WebGL コンテキスト」が積み上がり、~16 個の上限に達すると新規確保のたびに
+ * 最古が強制ロストされ、context loss の嵐で GPU/UI が固まる（本 issue の主因）。
+ *
+ * addon は context 解放 API を公開していないため、内部 renderer が持つ WebGL canvas
+ * (`_renderer._canvas`) から webgl2 コンテキストを取得して loseContext() を呼ぶ。
+ * getContext('webgl2') は同一 canvas に対して冪等（生成済みコンテキストを返す）なので
+ * 追加のコンテキストは作られない。addon の内部構造はバージョン依存のため、取得できない
+ * 場合や例外時は握り潰して従来どおり dispose にフォールバックする。
+ */
+function forceLoseWebglContext(webglAddon: WebglAddon): void {
+  try {
+    const canvas = (
+      webglAddon as unknown as { _renderer?: { _canvas?: HTMLCanvasElement } }
+    )._renderer?._canvas;
+    const gl = canvas?.getContext('webgl2') as WebGL2RenderingContext | null | undefined;
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  } catch (e) {
+    console.warn('[terminalRegistry] forceLoseWebglContext failed:', e);
+  }
 }
 
 /**
@@ -371,6 +404,44 @@ export interface TerminalRuntime {
   writeInput(data: string): void;
 
   /**
+   * PTY からの出力を xterm に書き込む（#4 フロー制御つき）。
+   * term.write のコールバックで未 parse バイト量を追跡し、high watermark 超過で
+   * Rust の read を pause、low watermark 到達で resume する。
+   * handlePtyEvent の 'data' から呼ぶ。dispose 済みは no-op。
+   */
+  writeOutput(text: string): void;
+
+  /**
+   * このタブの WebGL renderer を有効化する（#3 wake）。
+   * - 既に WebGL 済み → LRU を most-recently-used に更新するだけ
+   * - 未生成かつ不透明設定 → LRU に空きを作って（超過分は最古タブを sleep）WebGL を生成
+   * TerminalPane の isActive effect（アクティブ化時）から呼ぶ。
+   */
+  wakeWebgl(): void;
+
+  /**
+   * このタブの WebGL renderer を破棄して DOM/Canvas renderer にフォールバックする（#3 sleep）。
+   * WebGL context を loseContext で解放し、GPU スロットを即座に返す。xterm 本体は維持する。
+   * LRU 上限超過時に最古タブに対して自動的に呼ばれる。
+   */
+  sleepWebgl(): void;
+
+  /**
+   * WebGL のグリフキャッシュ（TextureAtlas）をクリアする（#5）。
+   * truecolor 出力で無制限に増える (glyph,fg,bg) キャッシュを定期的にリセットして
+   * JS ヒープの単調増加を抑える。DOM renderer では no-op。
+   */
+  clearGlyphCache(): void;
+
+  /**
+   * 子プロセスが自然終了/エラー終了したとき、Rust 側 PTY セッションを即時解放する（#6）。
+   * Rust の PtyManager は kill 経由でしか sessions から remove しないため、ここで解放しないと
+   * exited タブを開いたままにすると未 join スレッドハンドルを含むセッションが残留する。
+   * xterm は維持するので restart(recyclePty) で再 spawn できる。
+   */
+  reclaimPty(): void;
+
+  /**
    * OSC タイトル変更購読の IDisposable。
    * createRuntime 内で term.onTitleChange を購読して取得する。
    * dispose() の中で titleSub.dispose() を呼ぶ。
@@ -428,6 +499,88 @@ interface Entry {
 }
 
 const runtimes = new Map<string, Entry>();
+
+// ─── WebGL context の LRU 上限管理（#3 Sleep/Wake） ──────────────────────────
+//
+// WebView2/Chromium の WebGL context 上限は 16 個（compatibility-matrix.md 参照）。
+// 上限を越えると新規確保のたびに最古 context が強制ロストされ、context loss の嵐で
+// GPU/UI が固まる。これを防ぐため「同時にライブな WebGL context 数」を上限以下に抑える。
+//
+// 方針: WebGL は遅延生成し（アクティブ化時に wakeWebgl で生成）、直近で使ったタブだけが
+// context を保持する。上限を越えたら最も古い（LRU）タブの WebGL を dispose(loseContext)
+// して DOM/Canvas renderer にフォールバック（sleep）する。非アクティブタブは #2 により
+// 描画自体が停止しているため、DOM renderer でも描画コストは発生しない。
+
+/**
+ * 同時にライブに保つ WebGL context の最大数。Chromium の 16 上限に対する安全マージン。
+ * これ以下に保つことで context loss の嵐を構造的に回避する。
+ */
+export const MAX_WEBGL_CONTEXTS = 8;
+
+/** WebGL context を保持しているタブ ID の LRU 配列（末尾が most-recently-used）。 */
+const webglLru: string[] = [];
+
+/**
+ * exceptId を新たに WebGL 化する前に、上限を超えないよう LRU 先頭（古い方）から
+ * 間引くべき victim id 一覧を返す純関数。lru から victim を取り除く副作用を持つ。
+ * exceptId 自身は（保険として）victim にしない。テスト用に export する。
+ */
+export function reserveWebglLru(lru: string[], exceptId: string, max: number): string[] {
+  const evicted: string[] = [];
+  // exceptId を push した後に max 以下になるよう先頭から間引く
+  while (lru.length + 1 > max && lru.length > 0) {
+    const victim = lru[0];
+    if (victim === exceptId) break; // 通常 exceptId は未登録。保険。
+    lru.shift();
+    evicted.push(victim);
+  }
+  return evicted;
+}
+
+/**
+ * 既に LRU に居る id を most-recently-used（末尾）へ移動する純関数。
+ * 居なければ何もしない（新規追加は wake 側で push する）。テスト用に export する。
+ */
+export function promoteWebglLru(lru: string[], id: string): void {
+  const i = lru.indexOf(id);
+  if (i !== -1) {
+    lru.splice(i, 1);
+    lru.push(id);
+  }
+}
+
+/** LRU から id を取り除く（sleep / dispose 時）。 */
+function dropFromWebglLru(id: string): void {
+  const i = webglLru.indexOf(id);
+  if (i !== -1) webglLru.splice(i, 1);
+}
+
+// ─── 書き込みフロー制御（#4 back-pressure）の watermark ──────────────────────
+//
+// Tauri Channel は Rust→JS へ流量制御なしにイベントを送るため、UI スレッドが詰まると
+// xterm の書き込みバッファ（実測 ~500KB の滞留で既に応答不能になる）とイベントキューが
+// 無制限に膨らむ。term.write のコールバックで「未 parse バイト量」を追跡し、high を
+// 超えたら Rust の read を止め、low まで捌けたら再開する。
+
+/** これを超えたら PTY read を pause する（未 parse バイト量, UTF-16 code unit 換算）。 */
+export const WRITE_HIGH_WATERMARK = 1_000_000;
+/** ここまで捌けたら PTY read を resume する。 */
+export const WRITE_LOW_WATERMARK = 200_000;
+
+/**
+ * 未処理バイト量と現在の pause 状態から、次の pause 状態を返す純関数（ヒステリシス付き）。
+ * high 以上で pause、low 以下で resume、中間は現状維持。テスト用に export する。
+ */
+export function nextPauseState(
+  outstanding: number,
+  paused: boolean,
+  high: number = WRITE_HIGH_WATERMARK,
+  low: number = WRITE_LOW_WATERMARK,
+): boolean {
+  if (!paused && outstanding >= high) return true;
+  if (paused && outstanding <= low) return false;
+  return paused;
+}
 
 /**
  * TerminalRuntime を生成する内部ファクトリ。
@@ -523,18 +676,38 @@ export function createRuntime(
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
 
-  // WebGL renderer 有効化 (Phase 3 Unit P-C1)
-  // setupWebglRenderer ヘルパーで WebGL を attach する。
-  // onContextLoss で Canvas renderer に自動フォールバックする堅牢性を確保する。
-  // dispose 順序: webglHandle.dispose() は fitAddon.dispose() の前に呼ぶ (§3.2 参照)。
+  // WebGL renderer は「遅延生成 + LRU 上限」で管理する（#3 Sleep/Wake）。
+  // 従来は createRuntime で即 attach していたが、全タブ分の context が常駐して
+  // WebView2/Chromium の 16-context 上限を越え、context loss の嵐で固まっていた。
+  // 生成はアクティブ化時の wakeWebgl に委ね、直近で使ったタブだけが context を保持する。
   //
-  // v0.5 改善: xterm の WebglAddon は theme.background の rgba alpha を尊重しない
-  // (canvas が opaque で生成される) ため、透明度 < 1.0 のときは WebGL を無効化して
-  // Canvas renderer にフォールバックする。
-  // 1.0 → < 1.0 への切替: applySettings で webglHandle.dispose() を実行
-  // < 1.0 → 1.0 への切替: 再ロードはせず Canvas のままとする (app 再起動で WebGL が戻る)
-  let webglHandle: { dispose: () => void } | null =
-    lastTransparency >= 1.0 ? setupWebglRenderer(term, tabId) : null;
+  // webglDesired: WebGL を使いたいか（透明度 < 1.0 のときは alpha 非対応のため常に false）。
+  // xterm の WebglAddon は theme.background の rgba alpha を尊重しない (canvas が opaque)
+  // ため、透明時は WebGL を使わず DOM/Canvas renderer にフォールバックする。
+  let webglDesired = lastTransparency >= 1.0;
+  let webglHandle: WebglRendererHandle | null = null;
+
+  // §3.2 dispose 順序のため、WebGL の sleep/wake はローカルクロージャに集約する。
+  // wake: LRU に空きを作って WebGL を生成。sleep: WebGL を loseContext 込みで破棄。
+  function wakeWebglLocal(): void {
+    if (isDisposed || !webglDesired) return;
+    if (webglHandle) {
+      // 既に起きている: LRU を most-recently-used に更新するだけ
+      promoteWebglLru(webglLru, tabId);
+      return;
+    }
+    // 生成前に上限を確保する（同時ライブ context が一瞬でも MAX を越えないように）
+    const evicted = reserveWebglLru(webglLru, tabId, MAX_WEBGL_CONTEXTS);
+    for (const victim of evicted) runtimes.get(victim)?.runtime.sleepWebgl();
+    webglHandle = setupWebglRenderer(term, tabId);
+    webglLru.push(tabId);
+  }
+  function sleepWebglLocal(): void {
+    dropFromWebglLru(tabId);
+    if (!webglHandle) return; // 既に sleep 済 or 未生成
+    webglHandle.dispose(); // forceLoseWebglContext 込みで context を即解放 → DOM renderer
+    webglHandle = null;
+  }
 
   try {
     fitToConvergence(term, fitAddon);
@@ -544,6 +717,11 @@ export function createRuntime(
 
   const pendingInputs: string[] = [];
   let ptyHandle: PtyHandle | null = null;
+
+  // #4 フロー制御の状態: outstandingBytes = xterm に write 済みだが未 parse のバイト量。
+  // readPaused = Rust の read を pause 要求済みか。high/low watermark でヒステリシス制御する。
+  let outstandingBytes = 0;
+  let readPaused = false;
 
   // IME 合成ガード: 合成中 (中間文字列) は onData で drop する。
   // 詳細な race condition 対策と設計理由は attachImeCompositionGuard の docstring を参照。
@@ -751,6 +929,55 @@ export function createRuntime(
       }
     },
 
+    writeOutput(text: string) {
+      if (isDisposed) return;
+      // UTF-16 code unit 数を未 parse バイト量の近似として使う（厳密なバイト数は不要）。
+      const n = text.length;
+      outstandingBytes += n;
+      // term.write のコールバックは xterm が当該チャンクを parse し終えた時点で発火する。
+      // = UI スレッドが詰まると発火が遅れ、outstandingBytes が積み上がる → pause の契機。
+      term.write(text, () => {
+        outstandingBytes -= n;
+        if (readPaused && !nextPauseState(outstandingBytes, readPaused)) {
+          readPaused = false;
+          if (ptyHandle) void setReadPaused(ptyHandle.id, false).catch(() => {});
+        }
+      });
+      if (!readPaused && nextPauseState(outstandingBytes, readPaused)) {
+        readPaused = true;
+        if (ptyHandle) void setReadPaused(ptyHandle.id, true).catch(() => {});
+      }
+    },
+
+    wakeWebgl() {
+      wakeWebglLocal();
+    },
+
+    sleepWebgl() {
+      sleepWebglLocal();
+    },
+
+    clearGlyphCache() {
+      if (isDisposed) return;
+      try {
+        term.clearTextureAtlas();
+      } catch (e) {
+        console.warn('[terminalRegistry] clearTextureAtlas failed:', e);
+      }
+    },
+
+    reclaimPty() {
+      if (isDisposed) return;
+      // 旧 PTY を解放して Rust 側 sessions から remove させる。ptyHandle を null にして
+      // 以降の二重 kill（recyclePty / dispose 経由）を no-op 化し、未処理 rejection を防ぐ。
+      const h = ptyHandle;
+      ptyHandle = null;
+      // pause 状態もリセット（新 PTY spawn 時に stale な paused を持ち越さない）
+      readPaused = false;
+      outstandingBytes = 0;
+      if (h) void h.dispose().catch(() => {});
+    },
+
     applySettings(settings) {
       // Settings 変更を xterm.options に即時反映する。
       // dispose 済みの xterm に options を書き込むと例外になるため isDisposed ガードを入れる。
@@ -777,12 +1004,15 @@ export function createRuntime(
           background: computeBackground(targetAlpha),
         };
 
-        // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック
-        if (targetAlpha < 1.0 && webglHandle) {
-          webglHandle.dispose();
-          webglHandle = null;
+        // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック。
+        // #3: 透明化で sleep（context を loseContext で解放）、不透明化で webglDesired を戻す。
+        // 不透明化時の再生成は次回アクティブ化（wakeWebgl）に委ねる。
+        if (targetAlpha < 1.0) {
+          webglDesired = false;
+          sleepWebglLocal();
+        } else {
+          webglDesired = true;
         }
-        // < 1.0 → 1.0 で WebGL 再ロードはしない (app 再起動が必要)
       }
     },
 
@@ -820,6 +1050,8 @@ export function createRuntime(
       // WebGL addon を fitAddon より前に dispose する (Phase 3 Unit P-C1)
       // term.dispose() より先に WebGL context を解放することで WebView2 crash を防ぐ。
       // v0.5 改善: 透明度 < 1.0 のとき null になっている可能性
+      // #3: LRU からも除去する（webglHandle.dispose は forceLoseWebglContext 込みで context 解放）
+      dropFromWebglLru(tabId);
       webglHandle?.dispose();
       fitAddon.dispose();
       void ptyHandle?.dispose();  // fire-and-forget
@@ -932,6 +1164,16 @@ export function recyclePty(
  */
 export function getAllRuntimes(): TerminalRuntime[] {
   return Array.from(runtimes.values()).map((e) => e.runtime);
+}
+
+/**
+ * 全 runtime の WebGL グリフキャッシュ（TextureAtlas）をクリアする（#5）。
+ * truecolor 出力で無制限に増える (glyph,fg,bg) キャッシュを定期的にリセットして
+ * 長時間運用での JS ヒープ単調増加を抑える。App.tsx から一定間隔で呼ぶ。
+ * DOM renderer（sleep 中 / 透明）のタブでは no-op。
+ */
+export function clearAllTextureAtlases(): void {
+  for (const e of runtimes.values()) e.runtime.clearGlyphCache();
 }
 
 /**

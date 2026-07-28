@@ -51,16 +51,21 @@ function handlePtyEvent(
 ) {
   switch (e.type) {
     case 'data':
-      // 非アクティブタブでも継続してスクロールバックに蓄積する
-      runtime.term.write(e.text);
+      // 非アクティブタブでも継続してスクロールバックに蓄積する。
+      // #4: writeOutput 経由でフロー制御（未 parse 量が high watermark を超えたら read を pause）。
+      runtime.writeOutput(e.text);
       break;
     case 'exit':
       exitCodeRef.current = e.code ?? null;
       setTabStatus(tabId, 'crashed');
+      // #6: 自然終了した Rust セッションを即時解放する（残留・スレッドハンドルリーク防止）。
+      runtime.reclaimPty();
       break;
     case 'error':
       spawnErrorRef.current = e.message;
       setTabStatus(tabId, 'crashed');
+      // #6: エラー終了した Rust セッションを即時解放する。
+      runtime.reclaimPty();
       break;
   }
 }
@@ -258,11 +263,16 @@ export const TerminalPane = memo(function TerminalPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
-  // isActive 切替 [isActive]: rAF で fit + resizePty + term.focus
+  // isActive 切替 [isActive]: WebGL wake + rAF で fit + resizePty + term.focus
   useEffect(() => {
     if (!isActive) return;
     const runtime = runtimeRef.current;
     if (!runtime) return;
+
+    // #3: アクティブ化時に WebGL renderer を wake する（未生成なら生成、生成済みなら LRU 更新）。
+    // 非アクティブタブは #2 の画面外化で描画停止済みなので、WebGL context はアクティブ時だけ
+    // 保持すれば十分。これにより同時ライブ context を MAX_WEBGL_CONTEXTS 以下に抑える。
+    runtime.wakeWebgl();
 
     const rafId = requestAnimationFrame(() => {
       try { fitToConvergence(runtime.term, runtime.fitAddon); } catch (e) { console.warn(e); }

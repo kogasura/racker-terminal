@@ -42,7 +42,8 @@
     "resources": ["../LICENSES/*.txt", "../LICENSE"],
     "windows": {
       "nsis": {
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "./installer-hooks.nsh"
       }
     }
   },

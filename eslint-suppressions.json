@@ -32,19 +32,6 @@
   "src/components/TerminalPane.tsx": {
     "complexity": {
       "count": 1
-    },
-    "max-params": {
-      "count": 1
-    }
-  },
-  "src/lib/prStatus.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "src/lib/tabStatusOsc.ts": {
-    "complexity": {
-      "count": 2
     }
   },
   "src/lib/terminalRegistry.ts": {
@@ -53,9 +40,6 @@
     }
   },
   "src/store/appStore.ts": {
-    "complexity": {
-      "count": 5
-    },
     "max-lines-per-function": {
       "count": 1
     }

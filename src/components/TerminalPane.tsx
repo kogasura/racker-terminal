@@ -42,14 +42,17 @@ interface TerminalPaneProps {
   isActive: boolean;
 }
 
-function handlePtyEvent(
-  e: PtyEvent,
-  runtime: TerminalRuntime,
-  tabId: string,
-  setTabStatus: ReturnType<typeof useAppStore.getState>['setTabStatus'],
-  exitCodeRef: React.MutableRefObject<number | null>,
-  spawnErrorRef: React.MutableRefObject<string | null>,
-) {
+/** PTY イベントの処理に必要な、タブごとの依存をまとめたもの。 */
+interface PtyEventContext {
+  runtime: TerminalRuntime;
+  tabId: string;
+  setTabStatus: ReturnType<typeof useAppStore.getState>['setTabStatus'];
+  exitCodeRef: React.MutableRefObject<number | null>;
+  spawnErrorRef: React.MutableRefObject<string | null>;
+}
+
+function handlePtyEvent(e: PtyEvent, ctx: PtyEventContext) {
+  const { runtime, tabId, setTabStatus, exitCodeRef, spawnErrorRef } = ctx;
   switch (e.type) {
     case 'data':
       // 非アクティブタブでも継続してスクロールバックに蓄積する。
@@ -235,7 +238,7 @@ export const TerminalPane = memo(function TerminalPane({
     runtimeRef.current = runtime;
 
     runtime.setOnEvent((e) =>
-      handlePtyEvent(e, runtime, tabId, setTabStatus, exitCodeRef, spawnErrorRef),
+      handlePtyEvent(e, { runtime, tabId, setTabStatus, exitCodeRef, spawnErrorRef }),
     );
 
     if (tab.status === 'spawning') {

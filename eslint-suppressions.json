@@ -1,10 +1,61 @@
 {
+  "src/App.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/components/DragDropProvider.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/components/FavoriteDialog.tsx": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/components/GroupSection.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/components/SettingsDialog.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/components/TabItem.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/components/TerminalPane.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "src/lib/prStatus.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/tabStatusOsc.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
   "src/lib/terminalRegistry.ts": {
     "max-lines-per-function": {
       "count": 1
     }
   },
   "src/store/appStore.ts": {
+    "complexity": {
+      "count": 5
+    },
     "max-lines-per-function": {
       "count": 1
     }

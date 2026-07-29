@@ -59,223 +59,38 @@ export function parseEnvText(text: string): { env: Record<string, string>; error
   return { env, errors };
 }
 
-/** env オブジェクトを "KEY=VALUE" の行テキストに戻す。 */
-function envToText(env: Record<string, string> | undefined): string {
-  if (!env) return '';
-  return Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
-}
-
-/** 空文字（前後空白のみを含む）は undefined に落とす。 */
-function orUndefined(s: string): string | undefined {
-  return s.trim() || undefined;
-}
-
-/**
- * WSL 専用フィールドの初期状態を復元する。
- * 編集モードで既存の WSL お気に入りを開いたときは args から distro / dir を取り出す。
- */
-function initialWslState(f: Partial<Favorite>) {
-  const standard = isWslShell(f.shell) && isStandardWslArgs(f.args);
-  const parsed = parseWslArgs(f.args);
-  return {
-    wslDistro: standard ? parsed.distro : '',
-    wslCwd: standard ? parsed.dir : '',
-    // 既存 WSL お気に入りの args が標準形でない (`--` 等を含む) 場合のみ手動引数モードで開く。
-    wslManual: isWslShell(f.shell) && !isStandardWslArgs(f.args),
-  };
-}
-
-/** テキスト入力欄の初期値。 */
-function initialTextFields(f: Partial<Favorite>) {
-  return {
-    title: f.title ?? '',
-    shell: f.shell ?? '',
-    cwd: f.cwd ?? '',
-    argsText: f.args?.join('\n') ?? '',
-    envText: envToText(f.env),
-    defaultTabTitle: f.defaultTabTitle ?? '',
-  };
-}
-
-/** チェックボックスの初期値。 */
-function initialFlags(f: Partial<Favorite>) {
-  return {
-    launchClaude: f.launchClaude ?? false,
-    bypassPermissions: f.bypassPermissions ?? false,
-  };
-}
-
-/** 編集モードの初期値から、フォームの初期 state をまとめて作る。 */
-function initialFormState(initial: Favorite | undefined) {
-  const f: Partial<Favorite> = initial ?? {};
-  return { ...initialTextFields(f), ...initialFlags(f), ...initialWslState(f) };
-}
-
-/** ダイアログの見出しと説明文。 */
-function dialogTexts(mode: 'add' | 'edit') {
-  return mode === 'add'
-    ? {
-        title: 'お気に入りを追加',
-        description: 'shell・cwd・環境変数を指定して新しいお気に入りを登録します。',
-      }
-    : { title: 'お気に入りを編集', description: 'お気に入りの設定を編集します。' };
-}
-
-/**
- * args / cwd を決める。
- * - WSL かつ専用フィールド使用時は distro + 作業ディレクトリから args を組み立て、
- *   Windows 側 cwd は送らない (WSL の着地点は `--cd` が決めるため)。
- * - それ以外 (WSL 手動引数モード含む) は従来どおり args テキスト / cwd 欄を使う。
- */
-function resolveArgsAndCwd(p: {
-  isWsl: boolean;
-  wslManual: boolean;
-  wslDistro: string;
-  wslDistros: string[];
-  wslCwd: string;
-  argsText: string;
-  cwd: string;
-}): { args: string[]; cwd: string | undefined } {
-  if (p.isWsl && !p.wslManual) {
-    return {
-      args: buildWslArgs(p.wslDistro || p.wslDistros[0] || '', p.wslCwd),
-      cwd: undefined,
-    };
-  }
-  return { args: parseArgsText(p.argsText), cwd: orUndefined(p.cwd) };
-}
-
-/** 入力値から保存する Favorite を組み立てる。空の項目は undefined に落とす。 */
-function buildFavorite(p: {
-  title: string;
-  shell: string;
-  cwd: string | undefined;
-  args: string[];
-  env: Record<string, string>;
-  defaultTabTitle: string;
-  launchClaude: boolean;
-  bypassPermissions: boolean;
-}): Omit<Favorite, 'id'> {
-  return {
-    title: p.title.trim(),
-    shell: orUndefined(p.shell),
-    cwd: p.cwd,
-    args: p.args.length > 0 ? p.args : undefined,
-    env: Object.keys(p.env).length > 0 ? p.env : undefined,
-    defaultTabTitle: orUndefined(p.defaultTabTitle),
-    launchClaude: p.launchClaude || undefined,
-    // 権限バイパスは Claude 自動起動が前提。launchClaude OFF のときは保存しない。
-    bypassPermissions: (p.launchClaude && p.bypassPermissions) || undefined,
-  };
-}
-
-/** 実際に使われる distro。未選択ならインストール済みの先頭を既定として扱う。 */
-function pickDistro(wslDistro: string, wslDistros: string[]): string {
-  return wslDistro || wslDistros[0] || '';
-}
-
-/** distro の入力欄。インストール済みが検出できていれば select、なければ自由入力。 */
-function DistroInput({
-  distroOptions,
-  effectiveDistro,
-  wslDistro,
-  setWslDistro,
-}: {
-  distroOptions: string[];
-  effectiveDistro: string;
-  wslDistro: string;
-  setWslDistro: (v: string) => void;
-}) {
-  if (distroOptions.length === 0) {
-    return (
-      <input
-        className="dialog-input"
-        value={wslDistro}
-        onChange={(e) => setWslDistro(e.target.value)}
-        placeholder="(例: Ubuntu-22.04)"
-      />
-    );
-  }
-  return (
-    <select
-      className="dialog-input"
-      value={effectiveDistro}
-      onChange={(e) => setWslDistro(e.target.value)}
-    >
-      {distroOptions.map((d) => (
-        <option key={d} value={d}>
-          {d}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-/**
- * 簡易フォームへ戻す導線。
- * 「distro/--cd だけの標準形」のときだけ出す。`--` 等を含む手動コマンドを
- * 簡易フォームで黙って失わないため (レビュー C1)。
- */
-function BackToWslFormLink({
-  isWsl,
-  argsText,
-  onClick,
-}: {
-  isWsl: boolean;
-  argsText: string;
-  onClick: () => void;
-}) {
-  if (!isWsl || !isStandardWslArgs(parseArgsText(argsText))) return null;
-  return (
-    <>
-      <br />
-      <button type="button" className="dialog-link-btn" onClick={onClick}>
-        WSL 簡易フォームに戻す
-      </button>
-    </>
-  );
-}
-
-/** F-S3: env パースエラー表示。 */
-function EnvErrorMessage({ error }: { error: string | null }) {
-  if (error === null) return null;
-  return (
-    <div className="dialog-error" role="alert">
-      {error}
-    </div>
-  );
-}
-
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
   const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
   const templates = useMemo(() => buildProfileTemplates(wslDistros), [wslDistros]);
 
-  // 初期値の導出。useState の初期値としてしか使わないので毎レンダー作り直す必要はない。
-  const init = useMemo(() => initialFormState(initial), [initial]);
-
-  const [title, setTitle] = useState(init.title);
-  const [shell, setShell] = useState(init.shell);
-  const [cwd, setCwd] = useState(init.cwd);
-  const [argsText, setArgsText] = useState(init.argsText);
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [shell, setShell] = useState(initial?.shell ?? '');
+  const [cwd, setCwd] = useState(initial?.cwd ?? '');
+  const [argsText, setArgsText] = useState(initial?.args?.join('\n') ?? '');
 
   // WSL 専用フィールド: distro と作業ディレクトリ (Linux パス) を args の代わりに編集する。
-  const [wslDistro, setWslDistro] = useState(init.wslDistro);
-  const [wslCwd, setWslCwd] = useState(init.wslCwd);
-  const [wslManual, setWslManual] = useState(init.wslManual);
-
-  const [envText, setEnvText] = useState(init.envText);
-  const [defaultTabTitle, setDefaultTabTitle] = useState(init.defaultTabTitle);
-  const [launchClaude, setLaunchClaude] = useState(init.launchClaude);
-  const [bypassPermissions, setBypassPermissions] = useState(init.bypassPermissions);
+  // 編集モードで既存の WSL お気に入りを開いたときは args から distro / dir を復元する。
+  const initialWslStandard = isWslShell(initial?.shell) && isStandardWslArgs(initial?.args);
+  const initialWslParsed = parseWslArgs(initial?.args);
+  const [wslDistro, setWslDistro] = useState(initialWslStandard ? initialWslParsed.distro : '');
+  const [wslCwd, setWslCwd] = useState(initialWslStandard ? initialWslParsed.dir : '');
+  // 既存 WSL お気に入りの args が標準形でない (`--` 等を含む) 場合のみ手動引数モードで開く。
+  const [wslManual, setWslManual] = useState(
+    isWslShell(initial?.shell) && !isStandardWslArgs(initial?.args),
+  );
+  const [envText, setEnvText] = useState(
+    initial?.env
+      ? Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join('\n')
+      : '',
+  );
+  const [defaultTabTitle, setDefaultTabTitle] = useState(initial?.defaultTabTitle ?? '');
+  const [launchClaude, setLaunchClaude] = useState(initial?.launchClaude ?? false);
+  const [bypassPermissions, setBypassPermissions] = useState(initial?.bypassPermissions ?? false);
   // F-S3: env パースエラー表示用 state
   const [envError, setEnvError] = useState<string | null>(null);
 
   // 現在の shell が WSL かどうか。WSL のときは distro / 作業ディレクトリの専用フィールドを出す。
   const isWsl = isWslShell(shell);
-  const effectiveDistro = pickDistro(wslDistro, wslDistros);
-  const texts = dialogTexts(mode);
   // distro ドロップダウンの選択肢 (インストール済 distro + 現在値で未収載のもの)。
   const distroOptions = useMemo(() => {
     const set = [...wslDistros];
@@ -305,15 +120,19 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
     e.preventDefault();
     if (!title.trim()) return;  // title 必須
 
-    const { args, cwd: cwdOut } = resolveArgsAndCwd({
-      isWsl,
-      wslManual,
-      wslDistro,
-      wslDistros,
-      wslCwd,
-      argsText,
-      cwd,
-    });
+    // args / cwd の決定:
+    // - WSL かつ専用フィールド使用時は distro + 作業ディレクトリから args を組み立て、
+    //   Windows 側 cwd は送らない (WSL の着地点は `--cd` が決めるため)。
+    // - それ以外 (WSL 手動引数モード含む) は従来どおり args テキスト / cwd 欄を使う。
+    let args: string[];
+    let cwdOut: string | undefined;
+    if (isWsl && !wslManual) {
+      args = buildWslArgs(wslDistro || wslDistros[0] || '', wslCwd);
+      cwdOut = undefined;
+    } else {
+      args = parseArgsText(argsText);
+      cwdOut = cwd.trim() || undefined;
+    }
 
     // F-S3: env のパース（不正 KEY はエラーとして form を弾く）
     const { env, errors } = parseEnvText(envText);
@@ -324,18 +143,17 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
     }
     setEnvError(null);
 
-    onSubmit(
-      buildFavorite({
-        title,
-        shell,
-        cwd: cwdOut,
-        args,
-        env,
-        defaultTabTitle,
-        launchClaude,
-        bypassPermissions,
-      }),
-    );
+    onSubmit({
+      title: title.trim(),
+      shell: shell.trim() || undefined,
+      cwd: cwdOut,
+      args: args.length > 0 ? args : undefined,
+      env: Object.keys(env).length > 0 ? env : undefined,
+      defaultTabTitle: defaultTabTitle.trim() || undefined,
+      launchClaude: launchClaude || undefined,
+      // 権限バイパスは Claude 自動起動が前提。launchClaude OFF のときは保存しない。
+      bypassPermissions: (launchClaude && bypassPermissions) || undefined,
+    });
   }
 
   return (
@@ -344,11 +162,13 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="dialog-content">
           <Dialog.Title className="dialog-title">
-            {texts.title}
+            {mode === 'add' ? 'お気に入りを追加' : 'お気に入りを編集'}
           </Dialog.Title>
           {/* F-M5: a11y 対応 — Dialog.Description を追加 */}
           <Dialog.Description className="dialog-description">
-            {texts.description}
+            {mode === 'add'
+              ? 'shell・cwd・環境変数を指定して新しいお気に入りを登録します。'
+              : 'お気に入りの設定を編集します。'}
           </Dialog.Description>
 
           <form onSubmit={handleSubmit} className="dialog-form">
@@ -405,12 +225,24 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
               <>
                 <label className="dialog-field">
                   <span className="dialog-label">WSL ディストリビューション</span>
-                  <DistroInput
-                    distroOptions={distroOptions}
-                    effectiveDistro={effectiveDistro}
-                    wslDistro={wslDistro}
-                    setWslDistro={setWslDistro}
-                  />
+                  {distroOptions.length > 0 ? (
+                    <select
+                      className="dialog-input"
+                      value={wslDistro || wslDistros[0] || ''}
+                      onChange={(e) => setWslDistro(e.target.value)}
+                    >
+                      {distroOptions.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="dialog-input"
+                      value={wslDistro}
+                      onChange={(e) => setWslDistro(e.target.value)}
+                      placeholder="(例: Ubuntu-22.04)"
+                    />
+                  )}
                 </label>
 
                 <label className="dialog-field">
@@ -423,7 +255,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                   />
                   <small className="dialog-hint">
                     distro と作業ディレクトリを選ぶだけで、起動引数{' '}
-                    <code>-d {effectiveDistro || '<distro>'} --cd {wslCwd.trim() || '~'}</code>{' '}
+                    <code>-d {wslDistro || wslDistros[0] || '<distro>'} --cd {wslCwd.trim() || '~'}</code>{' '}
                     を自動構築します（<code>-d</code> / <code>--cd</code> の手書きは不要）。
                   </small>
                 </label>
@@ -434,7 +266,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                     className="dialog-link-btn"
                     onClick={() => {
                       // 手動モードへ: 現在の distro/dir を args テキストに展開してから切り替える
-                      setArgsText(buildWslArgs(effectiveDistro, wslCwd).join('\n'));
+                      setArgsText(buildWslArgs(wslDistro || wslDistros[0] || '', wslCwd).join('\n'));
                       setWslManual(true);
                     }}
                   >
@@ -474,17 +306,26 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                     <code>wsl.exe --cd ~</code> は、ここでは <code>--cd</code> と <code>~</code> の
                     2 行に分けて書きます。<br />
                     ❌ <code>--cd ~</code> と 1 行にまとめると、全体が 1 つの引数とみなされ正しく動きません。
-                    <BackToWslFormLink
-                      isWsl={isWsl}
-                      argsText={argsText}
-                      onClick={() => {
-                        // WSL フォームへ戻す: 現在の args から distro/dir を復元
-                        const { distro, dir } = parseWslArgs(parseArgsText(argsText));
-                        setWslDistro(distro);
-                        setWslCwd(dir);
-                        setWslManual(false);
-                      }}
-                    />
+                    {/* 簡易フォームへ戻す導線は「distro/--cd だけの標準形」のときだけ出す。
+                        `--` 等を含む手動コマンドを簡易フォームで黙って失わないため (レビュー C1)。 */}
+                    {isWsl && isStandardWslArgs(parseArgsText(argsText)) && (
+                      <>
+                        <br />
+                        <button
+                          type="button"
+                          className="dialog-link-btn"
+                          onClick={() => {
+                            // WSL フォームへ戻す: 現在の args から distro/dir を復元
+                            const { distro, dir } = parseWslArgs(parseArgsText(argsText));
+                            setWslDistro(distro);
+                            setWslCwd(dir);
+                            setWslManual(false);
+                          }}
+                        >
+                          WSL 簡易フォームに戻す
+                        </button>
+                      </>
+                    )}
                   </small>
                 </label>
               </>
@@ -509,7 +350,11 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 placeholder={"例:\nPATH=C:\\custom\\bin;%PATH%\nNODE_ENV=development"}
               />
               {/* F-S3: env パースエラー表示 */}
-              <EnvErrorMessage error={envError} />
+              {envError && (
+                <div className="dialog-error" role="alert">
+                  {envError}
+                </div>
+              )}
             </label>
 
             <label className="dialog-field">

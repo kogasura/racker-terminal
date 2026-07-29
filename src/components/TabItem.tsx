@@ -66,36 +66,6 @@ interface TabItemProps {
   variant?: TabItemVariant;
 }
 
-/**
- * 作業ディレクトリのブランチに対応する PR バッジ。クリックでブラウザを開く。
- * PR 未作成・状態が取れない場合は何も描画しない。
- */
-function TabPrBadge({ tab }: { tab: Tab }) {
-  const pr = {
-    branch: tab.prBranch ?? '',
-    number: tab.prNumber,
-    state: tab.prState,
-    isDraft: tab.prIsDraft,
-  };
-  const kind = prBadgeKind(pr);
-  if (kind === null || tab.prNumber === undefined) return null;
-
-  return (
-    <button
-      type="button"
-      className={`tab-item__pr tab-item__pr--${kind}`}
-      title={prTooltip(pr)}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (tab.prUrl !== undefined) void openUrl(tab.prUrl);
-      }}
-    >
-      #{tab.prNumber}
-    </button>
-  );
-}
-
 export const TabItem = memo(function TabItem({
   tabId,
   isActive,
@@ -123,6 +93,14 @@ export const TabItem = memo(function TabItem({
   });
 
   if (!tab) return null;
+
+  // PR バッジの区分（未作成・取得できない場合は null で非表示）
+  const prKind = prBadgeKind({
+    branch: tab.prBranch ?? '',
+    number: tab.prNumber,
+    state: tab.prState,
+    isDraft: tab.prIsDraft,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -171,7 +149,26 @@ export const TabItem = memo(function TabItem({
             className="tab-item__title"
           />
 
-          <TabPrBadge tab={tab} />
+          {/* 作業ディレクトリのブランチに対応する PR。クリックでブラウザを開く */}
+          {prKind !== null && tab.prNumber !== undefined && (
+            <button
+              type="button"
+              className={`tab-item__pr tab-item__pr--${prKind}`}
+              title={prTooltip({
+                branch: tab.prBranch ?? '',
+                number: tab.prNumber,
+                state: tab.prState,
+                isDraft: tab.prIsDraft,
+              })}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tab.prUrl !== undefined) void openUrl(tab.prUrl);
+              }}
+            >
+              #{tab.prNumber}
+            </button>
+          )}
 
           <button
             type="button"

@@ -37,11 +37,10 @@ export interface TabStatusPayload {
  * 未知のキーは無視する。値が空 (`status=`) の場合は「解除」の意味なので
  * undefined ではなく空文字として保持し、呼び出し側が状態のクリアと判断できるようにする。
  */
-/**
- * エスケープを考慮して `;` で分割する。`\;` は区切りではなくリテラルの `;`、
- * `\\` はリテラルの `\` になる。
- */
-function splitEscaped(data: string): string[] {
+export function parseTabStatusOsc(data: string): TabStatusPayload {
+  const out: TabStatusPayload = {};
+
+  // エスケープを考慮して `;` で分割する。`\;` は区切りではない。
   const parts: string[] = [];
   let current = '';
   let escaped = false;
@@ -49,34 +48,31 @@ function splitEscaped(data: string): string[] {
     if (escaped) {
       current += ch;
       escaped = false;
-    } else if (ch === '\\') {
+      continue;
+    }
+    if (ch === '\\') {
       escaped = true;
-    } else if (ch === ';') {
+      continue;
+    }
+    if (ch === ';') {
       parts.push(current);
       current = '';
-    } else {
-      current += ch;
+      continue;
     }
+    current += ch;
   }
   parts.push(current);
-  return parts;
-}
 
-/** ペイロードのキー → TabStatusPayload のフィールド。未知のキーは対応表に無いので無視される。 */
-const KEY_TO_FIELD: Record<string, keyof TabStatusPayload> = {
-  indicator: 'indicator',
-  status: 'status',
-  'status-color': 'statusColor',
-};
-
-export function parseTabStatusOsc(data: string): TabStatusPayload {
-  const out: TabStatusPayload = {};
-  for (const part of splitEscaped(data)) {
+  for (const part of parts) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
-    const field = KEY_TO_FIELD[part.slice(0, eq)];
-    if (field !== undefined) out[field] = part.slice(eq + 1);
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1);
+    if (key === 'indicator') out.indicator = value;
+    else if (key === 'status') out.status = value;
+    else if (key === 'status-color') out.statusColor = value;
   }
+
   return out;
 }
 
@@ -115,13 +111,20 @@ const LABEL_TO_STATE: [RegExp, AgentState][] = [
  * 状態を更新しない（勝手に消さない）。
  */
 export function agentStateFromTabStatus(payload: TabStatusPayload): AgentState | undefined {
-  // 空文字は対応表のキーに無いので、未指定と同じく「色からは決まらない」に倒れる。
-  const byColor = INDICATOR_TO_STATE[(payload.indicator ?? '').trim().toLowerCase()];
-  if (byColor !== undefined) return byColor;
+  const indicator = payload.indicator?.trim().toLowerCase();
+  if (indicator !== undefined && indicator.length > 0) {
+    const byColor = INDICATOR_TO_STATE[indicator];
+    if (byColor !== undefined) return byColor;
+  }
 
-  const label = (payload.status ?? '').trim();
-  if (label.length === 0) return undefined;
-  return LABEL_TO_STATE.find(([pattern]) => pattern.test(label))?.[1];
+  const label = payload.status?.trim();
+  if (label !== undefined && label.length > 0) {
+    for (const [pattern, state] of LABEL_TO_STATE) {
+      if (pattern.test(label)) return state;
+    }
+  }
+
+  return undefined;
 }
 
 /**

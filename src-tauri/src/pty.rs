@@ -329,104 +329,39 @@ struct ReaderThreads {
     read_pause: ReadPause,
 }
 
-/// シェルを解決する。未指定なら nushell (nu) を PATH から探す。
-fn resolve_shell(shell: Option<String>) -> Result<std::path::PathBuf, PtyError> {
-    if let Some(s) = shell {
-        return Ok(std::path::PathBuf::from(s));
-    }
-    which::which("nu").map_err(|_| {
-        PtyError::ShellNotFound(
-            "nushell (nu) が見つかりません。PATH を確認してください。".to_string(),
-        )
-    })
-}
-
-/// 作業ディレクトリを解決する。未指定ならホーム、取れなければカレント。
-fn resolve_cwd(cwd: Option<String>) -> std::path::PathBuf {
-    match cwd {
-        Some(c) => std::path::PathBuf::from(c),
-        None => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(".")),
-    }
-}
-
-/// shell 起動引数と env をコマンドへ適用する。
-fn apply_args_and_env(
-    cmd: &mut CommandBuilder,
-    args: Option<Vec<String>>,
-    env: Option<HashMap<String, String>>,
-) {
-    // shell 起動引数を追加（空文字列要素はスキップ）
-    for a in args.unwrap_or_default() {
-        if !a.is_empty() {
-            cmd.arg(a);
-        }
-    }
-
-    // env をユーザー指定値で merge（shell の継承環境に上書きする形）
-    for (key, value) in env.unwrap_or_default() {
-        // 空キーは弾く（防御的コード）
-        if !key.is_empty() {
-            cmd.env(key, value);
-        }
-    }
-}
-
-/// #4 フロー制御: フロント側が high watermark に達したら pause 要求が来る。
-/// paused の間は read を止めて PTY の OS バッファを埋め、子プロセスに背圧をかける。
-/// MAX_READ_PAUSE を超えたら安全弁として強制再開する（resume 消失時のハング防止）。
-fn wait_while_paused(read_pause: &ReadPause, stop_flag: &AtomicBool) {
-    let (plock, pcvar) = &**read_pause;
-    let mut paused = plock.lock();
-    if !*paused {
-        return;
-    }
-    let start = Instant::now();
-    while *paused && !stop_flag.load(Ordering::Relaxed) && start.elapsed() < MAX_READ_PAUSE {
-        pcvar.wait_for(&mut paused, std::time::Duration::from_millis(200));
-    }
-}
-
-/// 読み取った bytes を raw_buf へ追記し、必要なら flush スレッドを起床させる。
-fn append_read_bytes(state: &SharedFlushState, bytes: &[u8], read_count: u32) {
-    let (lock, cvar) = &**state;
-    let mut s = lock.lock();
-    s.raw_buf.extend_from_slice(bytes);
-
-    // back-pressure: raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄する。
-    // `yes` / `find /` 等の暴走出力による OOM を防ぐ。
-    // drain 直後は pending と raw_buf が非連続になり、UTF-8 検証で
-    // 数バイト分が U+FFFD になる場合がある（許容）。
-    if s.raw_buf.len() > RAW_BUF_LIMIT_BYTES {
-        let drain_len = s.raw_buf.len() / 2;
-        s.raw_buf.drain(0..drain_len);
-        s.raw_buf.extend_from_slice(b"\r\n[output truncated]\r\n");
-        dbg_log!("[pty-read] back-pressure triggered: drained {drain_len} bytes");
-    }
-
-    // tiny read 即 flush ショートパス:
-    // n < TINY_READ_THRESHOLD かつ前回 flush から TINY_READ_MIN_INTERVAL_MS 以上経過
-    // → flush スレッドを即時起床（DSR-CPR 応答等の遅延を回避）
-    // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
-    let tiny =
-        bytes.len() < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
-    if read_count <= 5 {
-        dbg_log!("[pty-read] tiny={tiny} n={}", bytes.len());
-    }
-    drop(s);
-    if tiny {
-        cvar.notify_one();
-    }
-    // burst 時の notify は省略 — 16ms 以内に wait_timeout が起きる
-}
-
-/// blocking read のみ担当。UTF-8 検証は行わず raw bytes を raw_buf に追記する。
-fn spawn_read_thread(
+// TODO: read / flush スレッドの生成をそれぞれ別関数に切り出す。
+// 複雑度チェック導入時点での既存違反として一時的に許容している。
+//   too_many_lines:       186/100
+//   cognitive_complexity: read スレッドの closure 10/8、flush スレッドの closure 13/8
+//                         （lint 属性は字句スコープなので内側の closure にも効く）
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+fn spawn_reader_threads(
     mut reader: Box<dyn Read + Send>,
-    read_state: SharedFlushState,
-    read_stop: Arc<AtomicBool>,
-    read_pause: ReadPause,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+    channel: Channel<PtyEvent>,
+    stop_flag: Arc<AtomicBool>,
+) -> ReaderThreads {
+    // read / flush スレッド間共有状態
+    let flush_state = Arc::new((
+        Mutex::new(FlushState {
+            raw_buf: Vec::with_capacity(8192),
+            pending: Vec::new(),
+            last_flush: Instant::now(),
+            eof: false,
+            error: None,
+            exit_code: None,
+        }),
+        Condvar::new(),
+    ));
+
+    // #4 フロー制御: read スレッドの pause 制御（false = 稼働中）
+    let read_pause: ReadPause = Arc::new((Mutex::new(false), Condvar::new()));
+
+    // ── read スレッド ──────────────────────────────────────────────────────
+    // blocking read のみ担当。UTF-8 検証は行わず raw bytes を raw_buf に追記する。
+    let read_state = Arc::clone(&flush_state);
+    let read_stop = Arc::clone(&stop_flag);
+    let read_pause_reader = Arc::clone(&read_pause);
+    let read_handle = std::thread::spawn(move || {
         let mut read_buf = [0u8; 4096];
         let mut read_count: u32 = 0;
         dbg_log!("[pty-read] reader loop entered");
@@ -437,7 +372,22 @@ fn spawn_read_thread(
                 break;
             }
 
-            wait_while_paused(&read_pause, &read_stop);
+            // #4 フロー制御: フロント側が high watermark に達したら pause 要求が来る。
+            // paused の間は read を止めて PTY の OS バッファを埋め、子プロセスに背圧をかける。
+            // MAX_READ_PAUSE を超えたら安全弁として強制再開する（resume 消失時のハング防止）。
+            {
+                let (plock, pcvar) = &*read_pause_reader;
+                let mut paused = plock.lock();
+                if *paused {
+                    let start = Instant::now();
+                    while *paused
+                        && !read_stop.load(Ordering::Relaxed)
+                        && start.elapsed() < MAX_READ_PAUSE
+                    {
+                        pcvar.wait_for(&mut paused, std::time::Duration::from_millis(200));
+                    }
+                }
+            }
             if read_stop.load(Ordering::Relaxed) {
                 dbg_log!("[pty-read] stop_flag set after pause, exit");
                 break;
@@ -461,7 +411,36 @@ fn spawn_read_thread(
                             &read_buf[..n.min(30)]
                         );
                     }
-                    append_read_bytes(&read_state, &read_buf[..n], read_count);
+
+                    let (lock, cvar) = &*read_state;
+                    let mut s = lock.lock();
+                    s.raw_buf.extend_from_slice(&read_buf[..n]);
+
+                    // back-pressure: raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄する。
+                    // `yes` / `find /` 等の暴走出力による OOM を防ぐ。
+                    // drain 直後は pending と raw_buf が非連続になり、UTF-8 検証で
+                    // 数バイト分が U+FFFD になる場合がある（許容）。
+                    if s.raw_buf.len() > RAW_BUF_LIMIT_BYTES {
+                        let drain_len = s.raw_buf.len() / 2;
+                        s.raw_buf.drain(0..drain_len);
+                        s.raw_buf.extend_from_slice(b"\r\n[output truncated]\r\n");
+                        dbg_log!("[pty-read] back-pressure triggered: drained {drain_len} bytes");
+                    }
+
+                    // tiny read 即 flush ショートパス:
+                    // n < TINY_READ_THRESHOLD かつ前回 flush から TINY_READ_MIN_INTERVAL_MS 以上経過
+                    // → flush スレッドを即時起床（DSR-CPR 応答等の遅延を回避）
+                    // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
+                    let tiny =
+                        n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
+                    if read_count <= 5 {
+                        dbg_log!("[pty-read] tiny={tiny} n={n}");
+                    }
+                    drop(s);
+                    if tiny {
+                        cvar.notify_one();
+                    }
+                    // burst 時の notify は省略 — 16ms 以内に wait_timeout が起きる
                 }
                 Err(e) => {
                     dbg_log!("[pty-read] read error: {e}");
@@ -474,75 +453,15 @@ fn spawn_read_thread(
             }
         }
         dbg_log!("[pty-read] reader thread exit");
-    })
-}
+    });
 
-/// 持ち越し pending を lossy で吐き出す（データロス防止）。
-fn drain_pending(state: &SharedFlushState, channel: &Channel<PtyEvent>) {
-    let (lock, _) = &**state;
-    let mut s = lock.lock();
-    let remain = std::mem::take(&mut s.pending);
-    drop(s);
-    if !remain.is_empty() {
-        let text = String::from_utf8_lossy(&remain).into_owned();
-        let _ = channel.send(PtyEvent::Data { text });
-    }
-}
-
-/// stop_flag=true で起床したときの後始末。
-/// pending + raw を lossy で吐き（UTF-8 境界検証を省略して確実に吐き切る）、
-/// 残留 error があればそれを、無ければ Exit を送る。
-fn send_shutdown_events(
-    channel: &Channel<PtyEvent>,
-    pending: Vec<u8>,
-    raw: Vec<u8>,
-    pending_error: Option<String>,
-    exit_code: Option<i32>,
-) {
-    let mut combined = pending;
-    combined.extend_from_slice(&raw);
-    if !combined.is_empty() {
-        let text = String::from_utf8_lossy(&combined).into_owned();
-        let _ = channel.send(PtyEvent::Data { text });
-    }
-
-    if let Some(msg) = pending_error {
-        dbg_log!("[pty-flush] stop_flag set, sending pending error: {msg}");
-        let _ = channel.send(PtyEvent::Error { message: msg });
-    } else {
-        // shutdown 経由でも Exit を送って Frontend に終了を通知
-        // child watcher が検出した実 exit code を優先（kill 経由の場合は None）
-        dbg_log!("[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}");
-        let _ = channel.send(PtyEvent::Exit { code: exit_code });
-    }
-}
-
-/// Data イベントを送る。送信に失敗したら false（＝ flush ループを抜ける）。
-fn send_data_event(channel: &Channel<PtyEvent>, valid_bytes: Vec<u8>) -> bool {
-    if valid_bytes.is_empty() {
-        return true;
-    }
-    let text = match String::from_utf8(valid_bytes) {
-        Ok(s) => s,
-        Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
-    };
-    dbg_log!("[pty-flush] sending data len={}", text.len());
-    if channel.send(PtyEvent::Data { text }).is_err() {
-        dbg_log!("[pty-flush] channel send failed, exit");
-        return false;
-    }
-    true
-}
-
-/// Condvar.wait_timeout(16ms) で待機し、起床したら raw_buf を drain して
-/// UTF-8 検証 → channel.send を行う。
-/// read スレッドがブロッキングで止まっていても独立して動作する。
-fn spawn_flush_thread(
-    flush_state: SharedFlushState,
-    channel: Channel<PtyEvent>,
-    flush_stop: Arc<AtomicBool>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+    // ── flush スレッド ─────────────────────────────────────────────────────
+    // Condvar.wait_timeout(16ms) で待機し、起床したら raw_buf を drain して
+    // UTF-8 検証 → channel.send を行う。
+    // read スレッドがブロッキングで止まっていても独立して動作する。
+    let flush_state_clone = Arc::clone(&flush_state);
+    let flush_stop = Arc::clone(&stop_flag);
+    let flush_handle = std::thread::spawn(move || {
         let timeout = std::time::Duration::from_millis(16);
         dbg_log!("[pty-flush] flush loop entered");
 
@@ -553,7 +472,7 @@ fn spawn_flush_thread(
             }
 
             // wait_timeout(16ms) で待機。notify または timeout で起床。
-            let (lock, cvar) = &*flush_state;
+            let (lock, cvar) = &*flush_state_clone;
             let mut s = lock.lock();
             let _ = cvar.wait_for(&mut s, timeout);
 
@@ -566,7 +485,26 @@ fn spawn_flush_thread(
                 let exit_code = s.exit_code.take();
                 drop(s);
 
-                send_shutdown_events(&channel, pending, raw, pending_error, exit_code);
+                // pending + raw を lossy で吐く（UTF-8 境界検証を省略して確実に吐き切る）
+                let mut combined = pending;
+                combined.extend_from_slice(&raw);
+                if !combined.is_empty() {
+                    let text = String::from_utf8_lossy(&combined).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
+
+                // 残留 error があれば送信
+                if let Some(msg) = pending_error {
+                    dbg_log!("[pty-flush] stop_flag set, sending pending error: {msg}");
+                    let _ = channel.send(PtyEvent::Error { message: msg });
+                } else {
+                    // shutdown 経由でも Exit を送って Frontend に終了を通知
+                    // child watcher が検出した実 exit code を優先（kill 経由の場合は None）
+                    dbg_log!(
+                        "[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}"
+                    );
+                    let _ = channel.send(PtyEvent::Exit { code: exit_code });
+                }
                 break;
             }
 
@@ -595,14 +533,30 @@ fn spawn_flush_thread(
             s.last_flush = Instant::now();
             drop(s);
 
-            if !send_data_event(&channel, valid_bytes) {
-                break;
+            // Data イベント送信
+            if !valid_bytes.is_empty() {
+                let text = match String::from_utf8(valid_bytes) {
+                    Ok(s) => s,
+                    Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+                };
+                dbg_log!("[pty-flush] sending data len={}", text.len());
+                if channel.send(PtyEvent::Data { text }).is_err() {
+                    dbg_log!("[pty-flush] channel send failed, exit");
+                    break;
+                }
             }
 
             // エラー送信
             if let Some(msg) = error {
                 // error 送信前に、持ち越し pending を lossy で吐き出す（データロス防止）
-                drain_pending(&flush_state, &channel);
+                let (lock, _) = &*flush_state_clone;
+                let mut s = lock.lock();
+                let remain = std::mem::take(&mut s.pending);
+                drop(s);
+                if !remain.is_empty() {
+                    let text = String::from_utf8_lossy(&remain).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
                 dbg_log!("[pty-flush] sending error: {msg}");
                 let _ = channel.send(PtyEvent::Error { message: msg });
                 break;
@@ -611,43 +565,20 @@ fn spawn_flush_thread(
             // EOF: 残余 pending を lossy で吐いて Exit 送信して終了
             if eof {
                 dbg_log!("[pty-flush] EOF, sending Exit");
-                drain_pending(&flush_state, &channel);
+                let (lock, _) = &*flush_state_clone;
+                let mut s = lock.lock();
+                let remain = std::mem::take(&mut s.pending);
+                drop(s);
+                if !remain.is_empty() {
+                    let text = String::from_utf8_lossy(&remain).into_owned();
+                    let _ = channel.send(PtyEvent::Data { text });
+                }
                 let _ = channel.send(PtyEvent::Exit { code: None });
                 break;
             }
         }
         dbg_log!("[pty-flush] flush thread exit");
-    })
-}
-
-fn spawn_reader_threads(
-    reader: Box<dyn Read + Send>,
-    channel: Channel<PtyEvent>,
-    stop_flag: Arc<AtomicBool>,
-) -> ReaderThreads {
-    // read / flush スレッド間共有状態
-    let flush_state = Arc::new((
-        Mutex::new(FlushState {
-            raw_buf: Vec::with_capacity(8192),
-            pending: Vec::new(),
-            last_flush: Instant::now(),
-            eof: false,
-            error: None,
-            exit_code: None,
-        }),
-        Condvar::new(),
-    ));
-
-    // #4 フロー制御: read スレッドの pause 制御（false = 稼働中）
-    let read_pause: ReadPause = Arc::new((Mutex::new(false), Condvar::new()));
-
-    let read_handle = spawn_read_thread(
-        reader,
-        Arc::clone(&flush_state),
-        Arc::clone(&stop_flag),
-        Arc::clone(&read_pause),
-    );
-    let flush_handle = spawn_flush_thread(Arc::clone(&flush_state), channel, stop_flag);
+    });
 
     ReaderThreads {
         read_handle,
@@ -768,7 +699,9 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
-    #[allow(clippy::too_many_arguments)]
+    // TODO: shell / cwd / env の解決を切り出して分岐を減らす。
+    // 複雑度チェック導入時点での既存違反 (9/8) として一時的に許容している。
+    #[allow(clippy::too_many_arguments, clippy::cognitive_complexity)]
     pub fn spawn(
         &self,
         shell: Option<String>,
@@ -785,10 +718,24 @@ impl PtyManager {
 
         dbg_log!("[pty] spawn begin: cols={cols} rows={rows}");
 
-        let shell_path = resolve_shell(shell)?;
+        // シェル解決
+        let shell_path = if let Some(s) = shell {
+            std::path::PathBuf::from(s)
+        } else {
+            which::which("nu").map_err(|_| {
+                PtyError::ShellNotFound(
+                    "nushell (nu) が見つかりません。PATH を確認してください。".to_string(),
+                )
+            })?
+        };
         dbg_log!("[pty] shell resolved: {:?}", shell_path);
 
-        let cwd_path = resolve_cwd(cwd);
+        // cwd 解決
+        let cwd_path = if let Some(c) = cwd {
+            std::path::PathBuf::from(c)
+        } else {
+            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
+        };
 
         // PTY サイズ
         let pty_size = PtySize {
@@ -809,7 +756,24 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(&shell_path);
         cmd.cwd(&cwd_path);
 
-        apply_args_and_env(&mut cmd, args, env);
+        // shell 起動引数を追加（空文字列要素はスキップ）
+        if let Some(args_vec) = args {
+            for a in args_vec {
+                if !a.is_empty() {
+                    cmd.arg(a);
+                }
+            }
+        }
+
+        // env をユーザー指定値で merge（shell の継承環境に上書きする形）
+        if let Some(env_map) = env {
+            for (key, value) in env_map {
+                // 空キーは弾く（防御的コード）
+                if !key.is_empty() {
+                    cmd.env(key, value);
+                }
+            }
+        }
 
         // TERM / COLORTERM は env 適用後に強制上書きして xterm 互換性を保護する
         // （ユーザーが env で上書きしても racker-terminal 側で正しい値に戻す）

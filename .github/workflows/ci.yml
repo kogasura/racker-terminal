@@ -1,0 +1,70 @@
+$ cat /tmp/claude-0/-home-user-racker-terminal/54a657e1-705e-5cc4-9ed3-5b1b994b792b/scratchpad/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (tsc + eslint + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # tsc && vite build
+      - run: npm run build
+
+      - run: npm run lint:ts
+
+      - run: npm run test:run
+
+  rust:
+    name: Rust (fmt + clippy + test)
+    # racker-terminal は Windows 専用アプリ（wsl.exe / PowerShell / cmd 前提）なので、
+    # 実際のターゲットである windows ランナーで lint する。
+    # ubuntu だと Tauri の GTK/WebKit 依存を別途入れる必要があり、かつ
+    # Windows 固有の依存の問題を取りこぼす。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # tauri::generate_context! が tauri.conf.json の frontendDist (../dist) を
+      # コンパイル時に読むため、clippy / test の前にフロントをビルドしておく。
+      - run: npm ci
+      - run: npm run build
+
+      # toolchain と rustfmt / clippy コンポーネントは rust-toolchain.toml が担保する
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test

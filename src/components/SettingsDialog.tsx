@@ -28,6 +28,41 @@ function clamp(val: number, min: number, max: number, fallback: number): number 
   return Math.min(max, Math.max(min, val));
 }
 
+/** 数値系フィールドの差分。F-M2: clamp してから比較する。 */
+function numericSettingsPatch(draft: Settings, settings: Settings): Partial<Settings> {
+  const patch: Partial<Settings> = {};
+
+  const fontSize = clamp(draft.fontSize, FONT_MIN, FONT_MAX, 14);
+  if (fontSize !== settings.fontSize) patch.fontSize = fontSize;
+
+  const scrollback = clamp(draft.scrollback, SCROLLBACK_MIN, SCROLLBACK_MAX, 1000);
+  if (scrollback !== settings.scrollback) patch.scrollback = scrollback;
+
+  const transparency = clamp(draft.transparency ?? 1.0, TRANSPARENCY_MIN, TRANSPARENCY_MAX, 1.0);
+  if (transparency !== (settings.transparency ?? 1.0)) patch.transparency = transparency;
+
+  return patch;
+}
+
+/**
+ * 入力中の draft と現在の settings を比べ、変更のあったフィールドだけの patch を作る。
+ *
+ * F-S3 案B: patch ベースで diff のみ updateSettings に渡すことで lost update を解消する。
+ */
+export function buildSettingsPatch(draft: Settings, settings: Settings): Partial<Settings> {
+  const patch = numericSettingsPatch(draft, settings);
+
+  if (draft.fontFamily !== settings.fontFamily) patch.fontFamily = draft.fontFamily;
+
+  // 未設定 (undefined) は有効扱いなので、比較も「false かどうか」で揃える
+  const notificationsEnabled = draft.notificationsEnabled !== false;
+  if (notificationsEnabled !== (settings.notificationsEnabled !== false)) {
+    patch.notificationsEnabled = notificationsEnabled;
+  }
+
+  return patch;
+}
+
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -67,33 +102,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
 
-    // F-S3 案B: patch ベースで diff のみ updateSettings に渡す（lost update 解消）
-    // F-M2: 各フィールドを clamp してから比較する
-    const patch: Partial<Settings> = {};
-
-    const sanitizedFontSize = clamp(draft.fontSize, FONT_MIN, FONT_MAX, 14);
-    if (sanitizedFontSize !== settings.fontSize) patch.fontSize = sanitizedFontSize;
-
-    if (draft.fontFamily !== settings.fontFamily) patch.fontFamily = draft.fontFamily;
-
-    const sanitizedScrollback = clamp(draft.scrollback, SCROLLBACK_MIN, SCROLLBACK_MAX, 1000);
-    if (sanitizedScrollback !== settings.scrollback) patch.scrollback = sanitizedScrollback;
-
-    const sanitizedTransparency = clamp(
-      draft.transparency ?? 1.0,
-      TRANSPARENCY_MIN,
-      TRANSPARENCY_MAX,
-      1.0,
-    );
-    if (sanitizedTransparency !== (settings.transparency ?? 1.0)) {
-      patch.transparency = sanitizedTransparency;
-    }
-
-    // 未設定 (undefined) は有効扱いなので、比較も「false かどうか」で揃える
-    const nextNotifications = draft.notificationsEnabled !== false;
-    if (nextNotifications !== (settings.notificationsEnabled !== false)) {
-      patch.notificationsEnabled = nextNotifications;
-    }
+    const patch = buildSettingsPatch(draft, settings);
 
     if (Object.keys(patch).length > 0) {
       updateSettings({ ...settings, ...patch });

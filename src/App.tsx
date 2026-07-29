@@ -12,7 +12,7 @@ import {
 } from './lib/claudeSessions';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
 import { getPrStatus, groupTabsByCwd } from './lib/prStatus';
-import { getTabDisplayTitle, type AgentState } from './types';
+import { getTabDisplayTitle, type AgentState, type Tab, type Settings } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { DragDropProvider } from './components/DragDropProvider';
@@ -25,6 +25,50 @@ import './styles/variables.css';
 import './styles/title-bar.css';
 import './styles/dropdown-menu.css';
 import './styles/update-dialog.css';
+
+/** 通知判定に必要な store の断片。 */
+interface NotifyState {
+  tabs: Record<string, Tab>;
+  settings: Settings;
+  activeTabId: string | null;
+}
+
+/**
+ * agentState が変わったタブについて、必要なら通知を出す。
+ * prevStates は呼び出し側が持つ「直前の状態」の控えで、ここで最新値に更新する。
+ */
+function notifyChangedTabs(
+  state: NotifyState,
+  prevStates: Map<string, AgentState | undefined>,
+): void {
+  for (const [id, tab] of Object.entries(state.tabs)) {
+    const prev = prevStates.get(id);
+    if (prev === tab.agentState) continue;
+    prevStates.set(id, tab.agentState);
+
+    // 設定は通知の直前に読む。effect を張り直さずに ON/OFF を反映するため。
+    if (state.settings.notificationsEnabled === false) continue;
+
+    const kind = shouldNotify(prev, tab.agentState, id === state.activeTabId);
+    if (kind !== null) {
+      void notifyAgentState(kind, getTabDisplayTitle(tab), tab.waitingFor);
+    }
+  }
+}
+
+/**
+ * 閉じられたタブを控えから外す。
+ * タブ ID が再利用されることはないが、長時間の運用で Map が単調増加するのを防ぐ。
+ */
+function pruneClosedTabs(
+  prevStates: Map<string, AgentState | undefined>,
+  tabs: Record<string, Tab>,
+): void {
+  if (prevStates.size <= Object.keys(tabs).length) return;
+  for (const id of prevStates.keys()) {
+    if (!(id in tabs)) prevStates.delete(id);
+  }
+}
 
 function App() {
   const { isDragging } = useFileDropToTerminal();
@@ -207,27 +251,8 @@ function App() {
         return;
       }
 
-      for (const [id, tab] of Object.entries(state.tabs)) {
-        const prev = prevStates.get(id);
-        if (prev === tab.agentState) continue;
-        prevStates.set(id, tab.agentState);
-
-        // 設定は通知の直前に読む。effect を張り直さずに ON/OFF を反映するため。
-        if (state.settings.notificationsEnabled === false) continue;
-
-        const kind = shouldNotify(prev, tab.agentState, id === state.activeTabId);
-        if (kind !== null) {
-          void notifyAgentState(kind, getTabDisplayTitle(tab), tab.waitingFor);
-        }
-      }
-
-      // 閉じられたタブを控えから外す（タブ ID が再利用されることはないが、
-      // 長時間の運用で Map が単調増加するのを防ぐ）
-      if (prevStates.size > Object.keys(state.tabs).length) {
-        for (const id of prevStates.keys()) {
-          if (!(id in state.tabs)) prevStates.delete(id);
-        }
-      }
+      notifyChangedTabs(state, prevStates);
+      pruneClosedTabs(prevStates, state.tabs);
     });
     return unsub;
   }, []);

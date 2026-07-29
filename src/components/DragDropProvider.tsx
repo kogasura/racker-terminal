@@ -23,6 +23,49 @@ import {
 import { getTabDisplayTitle, type AgentState, type TabStatus } from '../types';
 import { statusDotClassName } from './TabItem';
 
+/** B1: グループ自体の並び替え。 */
+function dropGroup(groupId: string, overIdStr: string): void {
+  // F-M1: header (auto-expand 専用) は並び替え対象外
+  // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
+  if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
+
+  // F-M1: 'group-{id}' (droppable) でも生 groupId でもターゲット解決可能にする
+  const overGroupId = overIdStr.startsWith(GROUP_DROPPABLE_PREFIX)
+    ? overIdStr.slice(GROUP_DROPPABLE_PREFIX.length)
+    : overIdStr;
+
+  const toIdx = useAppStore.getState().groups.findIndex((g) => g.id === overGroupId);
+  if (toIdx === -1) return;
+  useAppStore.getState().moveGroup(groupId, toIdx);
+}
+
+/** B2: お気に入りの並び替え。 */
+function dropFavorite(favId: string, overFavId: string): void {
+  const toIdx = useAppStore.getState().favorites.findIndex((f) => f.id === overFavId);
+  if (toIdx === -1) return;
+  useAppStore.getState().moveFavorite(favId, toIdx);
+}
+
+/** タブの D&D。グループ間移動と、新規グループとしての drop (B4b) を扱う。 */
+function dropTab(active: DragEndEvent['active'], overIdStr: string): void {
+  const activeTabId = active.id as string;
+  const fromGroupId = active.data.current?.groupId as string | undefined;
+  if (!fromGroupId) return;
+
+  // B4b: 新規グループとして drop
+  if (overIdStr === DROP_AS_NEW_GROUP_ID) {
+    // F-M3: max suffix + 1 で連番崩壊を防ぐ
+    const newTitle = nextNewGroupTitle(useAppStore.getState().groups);
+    const newGroupId = useAppStore.getState().createGroup(newTitle);
+    useAppStore.getState().moveTab(activeTabId, newGroupId, 0);
+    return;
+  }
+
+  const target = resolveDropTarget(overIdStr, useAppStore.getState());
+  if (!target) return;
+  useAppStore.getState().moveTab(activeTabId, target.toGroupId, target.toIndex);
+}
+
 /** ドラッグプレビュー用に必要な最小タブ情報 */
 interface TabPreviewData {
   id: string;
@@ -146,55 +189,14 @@ export const DragDropProvider = memo(function DragDropProvider({
 
     // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
     const activeKind = active.data.current?.kind as DragKind | undefined;
+    const overIdStr = over.id as string;
 
     if (activeKind === DRAG_KIND.GROUP) {
-      // B1: グループ自体の並び替え
-      const overIdStr = over.id as string;
-
-      // F-M1: header (auto-expand 専用) は並び替え対象外
-      // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
-      if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
-
-      // F-M1: 'group-{id}' (droppable) でも生 groupId でもターゲット解決可能にする
-      const overGroupId = overIdStr.startsWith(GROUP_DROPPABLE_PREFIX)
-        ? overIdStr.slice(GROUP_DROPPABLE_PREFIX.length)
-        : overIdStr;
-
-      const groupId = active.id as string;
-      const groups = useAppStore.getState().groups;
-      const toIdx = groups.findIndex((g) => g.id === overGroupId);
-      if (toIdx === -1) return;
-      useAppStore.getState().moveGroup(groupId, toIdx);
-
+      dropGroup(active.id as string, overIdStr);
     } else if (activeKind === DRAG_KIND.FAVORITE) {
-      // B2: お気に入りの並び替え
-      const favId = active.id as string;
-      const overFavId = over.id as string;
-      const favorites = useAppStore.getState().favorites;
-      const toIdx = favorites.findIndex((f) => f.id === overFavId);
-      if (toIdx === -1) return;
-      useAppStore.getState().moveFavorite(favId, toIdx);
-
+      dropFavorite(active.id as string, overIdStr);
     } else {
-      // tab の D&D
-      const activeTabId = active.id as string;
-      const fromGroupId = active.data.current?.groupId as string | undefined;
-      if (!fromGroupId) return;
-
-      const overIdStr = over.id as string;
-
-      // B4b: 新規グループとして drop
-      if (over.id === DROP_AS_NEW_GROUP_ID) {
-        // F-M3: max suffix + 1 で連番崩壊を防ぐ
-        const newTitle = nextNewGroupTitle(useAppStore.getState().groups);
-        const newGroupId = useAppStore.getState().createGroup(newTitle);
-        useAppStore.getState().moveTab(activeTabId, newGroupId, 0);
-        return;
-      }
-
-      const target = resolveDropTarget(overIdStr, useAppStore.getState());
-      if (!target) return;
-      useAppStore.getState().moveTab(activeTabId, target.toGroupId, target.toIndex);
+      dropTab(active, overIdStr);
     }
   }
 

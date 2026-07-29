@@ -7,10 +7,36 @@ import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
 import { GROUP_DROPPABLE_PREFIX, DRAG_KIND } from '../lib/dndResolve';
-import { AGENT_STATE_LABEL, dominantAgentState } from '../types';
+import { AGENT_STATE_LABEL, dominantAgentState, type AgentState } from '../types';
 
 interface GroupSectionProps {
   groupId: string;
+}
+
+/** グループ行の className。選択中と drop ホバーで見た目を変える。 */
+function groupHeaderClassName(isActive: boolean, isOver: boolean): string {
+  return (
+    'group-header' +
+    (isActive ? ' group-header--active' : '') +
+    (isOver ? ' group-header--drop-hover' : '')
+  );
+}
+
+/**
+ * 配下タブの代表エージェント状態のインジケータ。
+ *
+ * 'idle' と未検出は描画しない（動きのないグループを装飾しない）。
+ * herdr の "A blocked agent makes its pane, tab, and workspace look blocked" 相当。
+ */
+function GroupAgentIndicator({ agentState }: { agentState: AgentState | undefined }) {
+  if (agentState === undefined || agentState === 'idle') return null;
+  return (
+    <span
+      className={`group-header__agent group-header__agent--${agentState}`}
+      title={AGENT_STATE_LABEL[agentState]}
+      aria-label={`${AGENT_STATE_LABEL[agentState]}のタブがあります`}
+    />
+  );
 }
 
 /**
@@ -78,8 +104,6 @@ export const GroupSection = memo(function GroupSection({
   if (!groupView) return null;
 
   const { title, tabCount, agentState, isActive } = groupView;
-  // 'idle' と未検出は出さない（動きのないグループを装飾しない）
-  const showAgentIndicator = agentState !== undefined && agentState !== 'idle';
 
   // グループ削除可能条件: タブが空 + グループが 2 個以上
   const canDeleteGroup = tabCount === 0 && canDelete;
@@ -120,11 +144,7 @@ export const GroupSection = memo(function GroupSection({
           {/* setRowDropRef: タブのグループ間移動を受け付ける drop ターゲット */}
           <div
             ref={setRowDropRef}
-            className={
-              'group-header' +
-              (isActive ? ' group-header--active' : '') +
-              (isOver ? ' group-header--drop-hover' : '')
-            }
+            className={groupHeaderClassName(isActive, isOver)}
             role="button"
             tabIndex={0}
             aria-current={isActive ? 'true' : undefined}
@@ -152,15 +172,7 @@ export const GroupSection = memo(function GroupSection({
               ⠿
             </span>
 
-            {/* 配下タブの代表エージェント状態
-                (herdr の "A blocked agent makes its pane, tab, and workspace look blocked" 相当) */}
-            {showAgentIndicator && (
-              <span
-                className={`group-header__agent group-header__agent--${agentState}`}
-                title={AGENT_STATE_LABEL[agentState]}
-                aria-label={`${AGENT_STATE_LABEL[agentState]}のタブがあります`}
-              />
-            )}
+            <GroupAgentIndicator agentState={agentState} />
 
             <InlineEdit
               id={groupId}

@@ -174,9 +174,7 @@ impl PtySession {
         writer
             .write_all(data.as_bytes())
             .map_err(|e| PtyError::Write(e.to_string()))?;
-        writer
-            .flush()
-            .map_err(|e| PtyError::Write(e.to_string()))?;
+        writer.flush().map_err(|e| PtyError::Write(e.to_string()))?;
         Ok(())
     }
 
@@ -427,7 +425,8 @@ fn spawn_reader_threads(
                     // n < TINY_READ_THRESHOLD かつ前回 flush から TINY_READ_MIN_INTERVAL_MS 以上経過
                     // → flush スレッドを即時起床（DSR-CPR 応答等の遅延を回避）
                     // burst 時は flush の 16ms タイマーに任せて notify syscall 回数を削減
-                    let tiny = n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
+                    let tiny =
+                        n < TINY_READ_THRESHOLD && s.last_flush.elapsed() >= TINY_READ_MIN_INTERVAL;
                     if read_count <= 5 {
                         dbg_log!("[pty-read] tiny={tiny} n={n}");
                     }
@@ -495,7 +494,9 @@ fn spawn_reader_threads(
                 } else {
                     // shutdown 経由でも Exit を送って Frontend に終了を通知
                     // child watcher が検出した実 exit code を優先（kill 経由の場合は None）
-                    dbg_log!("[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}");
+                    dbg_log!(
+                        "[pty-flush] stop_flag set after wake, sending Exit code={exit_code:?}"
+                    );
                     let _ = channel.send(PtyEvent::Exit { code: exit_code });
                 }
                 break;
@@ -862,9 +863,9 @@ impl PtyManager {
         // sessions から remove して Arc を取得（他に参照がなければ Drop が走る）
         let session = {
             let mut sessions = self.sessions.write();
-            sessions.remove(id).ok_or_else(|| PtyError::SessionNotFound {
-                id: id.to_string(),
-            })?
+            sessions
+                .remove(id)
+                .ok_or_else(|| PtyError::SessionNotFound { id: id.to_string() })?
         };
         session.kill();
         Ok(())
@@ -891,11 +892,7 @@ pub fn pty_spawn(
 }
 
 #[tauri::command]
-pub fn pty_write(
-    state: tauri::State<PtyManager>,
-    id: String,
-    data: String,
-) -> Result<(), String> {
+pub fn pty_write(state: tauri::State<PtyManager>, id: String, data: String) -> Result<(), String> {
     state.write(&id, &data).map_err(|e| e.to_string())
 }
 

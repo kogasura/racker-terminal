@@ -172,7 +172,10 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         let s = &sessions[0];
         assert_eq!(s.pid, Some(61716));
-        assert_eq!(s.session_id.as_deref(), Some("5b4197e0-8a0a-4098-9eff-b08d08019585"));
+        assert_eq!(
+            s.session_id.as_deref(),
+            Some("5b4197e0-8a0a-4098-9eff-b08d08019585")
+        );
         assert_eq!(s.cwd.as_deref(), Some(r"C:\Users\me\dev\racker-terminal"));
         assert_eq!(s.status.as_deref(), Some("waiting"));
         assert_eq!(s.waiting_for.as_deref(), Some("input needed"));

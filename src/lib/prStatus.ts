@@ -22,6 +22,13 @@ export interface PrInfo {
 /** バッジの見た目を決める区分。 */
 export type PrBadgeKind = 'draft' | 'open' | 'merged' | 'closed';
 
+/** `state` 文字列 → バッジ区分。未知の値は対応表に無いので null になる。 */
+const STATE_TO_KIND: Record<string, PrBadgeKind> = {
+  OPEN: 'open',
+  MERGED: 'merged',
+  CLOSED: 'closed',
+};
+
 /**
  * PR の状態からバッジの区分を決める。
  *
@@ -29,18 +36,9 @@ export type PrBadgeKind = 'draft' | 'open' | 'merged' | 'closed';
  * PR 番号が無い（ブランチはあるが PR 未作成）場合は null を返し、何も表示しない。
  */
 export function prBadgeKind(pr: PrInfo | null | undefined): PrBadgeKind | null {
-  if (pr === null || pr === undefined || pr.number === undefined) return null;
+  if (pr?.number === undefined) return null;
   if (pr.isDraft === true && pr.state === 'OPEN') return 'draft';
-  switch (pr.state) {
-    case 'OPEN':
-      return 'open';
-    case 'MERGED':
-      return 'merged';
-    case 'CLOSED':
-      return 'closed';
-    default:
-      return null;
-  }
+  return STATE_TO_KIND[pr.state ?? ''] ?? null;
 }
 
 /** バッジの tooltip 文言。ブランチ名まで出して、どのブランチの PR か分かるようにする。 */

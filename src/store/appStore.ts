@@ -157,6 +157,191 @@ export function pathBasename(path: string): string {
   return last;
 }
 
+/** createTab が受け取るオプション。 */
+type CreateTabOptions = Partial<
+  Pick<
+    Tab,
+    | 'userTitle'
+    | 'shell'
+    | 'cwd'
+    | 'env'
+    | 'args'
+    | 'launchClaude'
+    | 'claudeSessionId'
+    | 'bypassPermissions'
+  >
+> & { title?: string };
+
+/** タブに載せる PR 関連フィールドを PrInfo から作る。 */
+function prFields(pr: PrInfoValue | null) {
+  return {
+    prNumber: pr?.number,
+    prState: pr?.state,
+    prUrl: pr?.url,
+    prIsDraft: pr?.isDraft,
+    prBranch: pr?.branch,
+  };
+}
+
+/** タブの PR 関連フィールドが next と一致するか。 */
+function hasSamePrFields(tab: Tab, next: ReturnType<typeof prFields>): boolean {
+  return (
+    tab.prNumber === next.prNumber &&
+    tab.prState === next.prState &&
+    tab.prUrl === next.prUrl &&
+    tab.prIsDraft === next.prIsDraft &&
+    tab.prBranch === next.prBranch
+  );
+}
+
+/** タブの claude セッション関連フィールドが、これから入れる値と一致するか。 */
+function hasSameClaudeSession(
+  tab: Tab,
+  session: ClaudeSessionInfo,
+  nextAgentState: AgentState | undefined,
+  nextSessionId: string | undefined,
+): boolean {
+  return (
+    tab.agentState === nextAgentState &&
+    tab.agentStateFromSession === true &&
+    tab.claudeSessionId === nextSessionId &&
+    tab.waitingFor === session.waitingFor &&
+    tab.claudeStatus === session.status
+  );
+}
+
+/**
+ * セッション情報 1 件をタブへ反映した結果を返す。
+ * 変更が無ければ元の tab をそのまま返すので、呼び出し側は参照比較で変更有無を判定できる。
+ */
+function tabWithClaudeSession(
+  tab: Tab,
+  session: ClaudeSessionInfo | undefined,
+  isActive: boolean,
+): Tab {
+  if (session === undefined) {
+    // セッションが見つからない = claude が終了した / 検出できない。
+    // 画面パターン判定へフォールバックできるようフラグを落とす。
+    if (tab.agentStateFromSession !== true) return tab;
+    return {
+      ...tab,
+      agentStateFromSession: false,
+      waitingFor: undefined,
+      claudeStatus: undefined,
+    };
+  }
+
+  const nextAgentState = nextAgentStateFromSession(tab.agentState, session.status, isActive);
+  // 手動起動タブでも resume できるよう、未設定なら検出した ID を採用する。
+  // すでに ID を持つタブ（racker が --session-id で起動した）は上書きしない。
+  const nextSessionId = tab.claudeSessionId ?? session.sessionId;
+
+  if (hasSameClaudeSession(tab, session, nextAgentState, nextSessionId)) return tab;
+
+  return {
+    ...tab,
+    agentState: nextAgentState,
+    agentStateFromSession: true,
+    claudeSessionId: nextSessionId,
+    waitingFor: session.waitingFor,
+    claudeStatus: session.status,
+  };
+}
+
+/**
+ * 新規タブの所属グループを解決する。
+ *   1. 指定されかつ存在 → そのグループを使う
+ *   2. groups が空 → Default グループを自動作成
+ *   3. 未指定 or 不正:
+ *      - アクティブタブが存在し、その所属グループが現存 → そのグループに追加
+ *        (favorite / Ctrl+T / 既定タブ起動など、現在の作業文脈を維持する目的)
+ *      - そうでなければ groups[0] にフォールバック
+ */
+function resolveTabGroup(
+  state: Pick<AppState, 'groups' | 'tabs' | 'activeTabId'>,
+  groupId: string | undefined,
+): { groupId: string; groups: Group[] } {
+  if (groupId !== undefined && state.groups.some((g) => g.id === groupId)) {
+    return { groupId, groups: state.groups };
+  }
+
+  if (state.groups.length === 0) {
+    const newGroupId = newId();
+    return {
+      groupId: newGroupId,
+      groups: [{ id: newGroupId, title: 'Default', collapsed: false, tabIds: [] }],
+    };
+  }
+
+  // activeTabId は string | null。Truthy 判定ではなく null 比較で意図を明示する
+  // (将来空文字列が入る可能性に対する防御は state.tabs[id] が undefined を返すことで担保される)
+  const activeTab = state.activeTabId !== null ? state.tabs[state.activeTabId] : undefined;
+  if (activeTab !== undefined && state.groups.some((g) => g.id === activeTab.groupId)) {
+    return { groupId: activeTab.groupId, groups: state.groups };
+  }
+  return { groupId: state.groups[0].id, groups: state.groups };
+}
+
+/** 新規タブのオブジェクトを組み立てる。 */
+function buildTab(tabId: string, groupId: string, opts?: CreateTabOptions): Tab {
+  const o = opts ?? {};
+  return {
+    id: tabId,
+    groupId,
+    // o.title は後方互換のために受け付け、userTitle にセットする
+    userTitle: o.userTitle ?? o.title,
+    shell: o.shell,
+    cwd: o.cwd,
+    args: o.args ? [...o.args] : undefined,
+    env: o.env ? { ...o.env } : undefined,
+    launchClaude: o.launchClaude,
+    claudeSessionId: o.claudeSessionId,
+    bypassPermissions: o.bypassPermissions,
+    status: 'spawning',
+  };
+}
+
+/**
+ * 復元した group.tabIds を整える。
+ * - state.tabs に存在しない ID を除去
+ * - 重複 tabId を除去（最初に現れた group に属させる）
+ */
+function sanitizeGroupTabIds(groups: Group[], validTabIds: Set<string>): Group[] {
+  const seen = new Set<string>();
+  return groups.map((g) => ({
+    ...g,
+    tabIds: g.tabIds.filter((id) => {
+      if (!validTabIds.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }),
+  }));
+}
+
+/**
+ * 復元直後のアクティブ選択を決める。
+ *
+ * activeTabId / activeGroupId は persist 対象外なので復元直後は null になる。
+ * 横タブバーは activeGroupId のタブを並べるため、未選択のままだと再起動後に
+ * タブが 1 つも表示されない。タブを持つ最初のグループの先頭タブを選ぶ。
+ */
+function initialSelection(groups: Group[]): {
+  activeGroupId: string | null;
+  activeTabId: string | null;
+  lastActiveTabByGroup: Record<string, string>;
+} {
+  const first = groups.find((g) => g.tabIds.length > 0) ?? groups[0] ?? null;
+  if (first === null) {
+    return { activeGroupId: null, activeTabId: null, lastActiveTabByGroup: {} };
+  }
+  const activeTabId = first.tabIds[0] ?? null;
+  return {
+    activeGroupId: first.id,
+    activeTabId,
+    lastActiveTabByGroup: activeTabId !== null ? { [first.id]: activeTabId } : {},
+  };
+}
+
 interface AppActions {
   /**
    * tabId を active に設定する（直接更新経路）。
@@ -635,25 +820,13 @@ export const useAppStore = create<Store>()(
     set((state) => {
       let changed = false;
       const tabs = { ...state.tabs };
+      // tab に依存しないのでループの外で 1 回だけ作る
+      const next = prFields(pr);
 
       for (const id of tabIds) {
         const tab = state.tabs[id];
         if (!tab) continue;
-
-        const next = {
-          prNumber: pr?.number,
-          prState: pr?.state,
-          prUrl: pr?.url,
-          prIsDraft: pr?.isDraft,
-          prBranch: pr?.branch,
-        };
-        const isSame =
-          tab.prNumber === next.prNumber &&
-          tab.prState === next.prState &&
-          tab.prUrl === next.prUrl &&
-          tab.prIsDraft === next.prIsDraft &&
-          tab.prBranch === next.prBranch;
-        if (isSame) continue;
+        if (hasSamePrFields(tab, next)) continue;
 
         tabs[id] = { ...tab, ...next };
         changed = true;
@@ -702,55 +875,10 @@ export const useAppStore = create<Store>()(
       const tabs: Record<string, Tab> = {};
 
       for (const [id, tab] of Object.entries(state.tabs)) {
-        const session = matches.get(id);
-
-        if (session === undefined) {
-          // セッションが見つからない = claude が終了した / 検出できない。
-          // 画面パターン判定へフォールバックできるようフラグを落とす。
-          if (tab.agentStateFromSession === true) {
-            tabs[id] = {
-              ...tab,
-              agentStateFromSession: false,
-              waitingFor: undefined,
-              claudeStatus: undefined,
-            };
-            changed = true;
-          } else {
-            tabs[id] = tab;
-          }
-          continue;
-        }
-
-        const nextAgentState = nextAgentStateFromSession(
-          tab.agentState,
-          session.status,
-          id === state.activeTabId,
-        );
-        // 手動起動タブでも resume できるよう、未設定なら検出した ID を採用する。
-        // すでに ID を持つタブ（racker が --session-id で起動した）は上書きしない。
-        const nextSessionId = tab.claudeSessionId ?? session.sessionId;
-
-        const isSame =
-          tab.agentState === nextAgentState &&
-          tab.agentStateFromSession === true &&
-          tab.claudeSessionId === nextSessionId &&
-          tab.waitingFor === session.waitingFor &&
-          tab.claudeStatus === session.status;
-
-        if (isSame) {
-          tabs[id] = tab;
-          continue;
-        }
-
-        tabs[id] = {
-          ...tab,
-          agentState: nextAgentState,
-          agentStateFromSession: true,
-          claudeSessionId: nextSessionId,
-          waitingFor: session.waitingFor,
-          claudeStatus: session.status,
-        };
-        changed = true;
+        // 変更が無ければ元の参照が返るので、それで変更有無を判定する
+        const next = tabWithClaudeSession(tab, matches.get(id), id === state.activeTabId);
+        tabs[id] = next;
+        if (next !== tab) changed = true;
       }
 
       // 何も変わっていなければ参照ごと据え置く（毎秒の再レンダーを防ぐ）
@@ -772,52 +900,8 @@ export const useAppStore = create<Store>()(
   createTab: (groupId, opts) => {
     const tabId = newId();
     set((state) => {
-      // groupId の解決:
-      //   1. 指定されかつ存在 → そのグループを使う
-      //   2. groups が空 → Default グループを自動作成
-      //   3. 未指定 or 不正:
-      //      - アクティブタブが存在し、その所属グループが現存 → そのグループに追加
-      //        (favorite / Ctrl+T / 既定タブ起動など、現在の作業文脈を維持する目的)
-      //      - そうでなければ groups[0] にフォールバック
-      const existsGroup =
-        groupId !== undefined && state.groups.some((g) => g.id === groupId);
-
-      let resolvedGroupId: string;
-      let newGroups = state.groups;
-
-      if (existsGroup) {
-        // groupId は undefined でないことが確定している
-        resolvedGroupId = groupId as string;
-      } else if (state.groups.length === 0) {
-        // グループが 1 つもない場合は Default グループを自動作成
-        const newGroupId = newId();
-        newGroups = [{ id: newGroupId, title: 'Default', collapsed: false, tabIds: [] }];
-        resolvedGroupId = newGroupId;
-      } else {
-        // 未指定 or 不正: アクティブタブのグループ → groups[0] の順でフォールバック
-        // activeTabId は string | null。Truthy 判定ではなく null 比較で意図を明示する
-        // (将来空文字列が入る可能性に対する防御は state.tabs[id] が undefined を返すことで担保される)
-        const activeTab =
-          state.activeTabId !== null ? state.tabs[state.activeTabId] : undefined;
-        const activeGroupExists =
-          activeTab !== undefined && state.groups.some((g) => g.id === activeTab.groupId);
-        resolvedGroupId = activeGroupExists ? activeTab!.groupId : state.groups[0].id;
-      }
-
-      const tab: Tab = {
-        id: tabId,
-        groupId: resolvedGroupId,
-        // opts.title は後方互換のために受け付け、userTitle にセットする
-        userTitle: opts?.userTitle ?? opts?.title,
-        shell: opts?.shell,
-        cwd: opts?.cwd,
-        args: opts?.args ? [...opts.args] : undefined,
-        env: opts?.env ? { ...opts.env } : undefined,
-        launchClaude: opts?.launchClaude,
-        claudeSessionId: opts?.claudeSessionId,
-        bypassPermissions: opts?.bypassPermissions,
-        status: 'spawning',
-      };
+      const { groupId: resolvedGroupId, groups: newGroups } = resolveTabGroup(state, groupId);
+      const tab = buildTab(tabId, resolvedGroupId, opts);
 
       const updatedGroups = newGroups.map((g) =>
         g.id === resolvedGroupId
@@ -1309,32 +1393,21 @@ export const useAppStore = create<Store>()(
         const state = persistedState as Record<string, any>;
 
         // v0 → v1: tab.title → tab.userTitle に変換
-        if (version < 1) {
-          if (state?.tabs) {
-            for (const id of Object.keys(state.tabs)) {
-              const tab = state.tabs[id];
-              if (tab.title !== undefined && tab.userTitle === undefined) {
-                tab.userTitle = tab.title;
-                delete tab.title;
-              }
+        if (version < 1 && state?.tabs) {
+          for (const id of Object.keys(state.tabs)) {
+            const tab = state.tabs[id];
+            if (tab.title !== undefined && tab.userTitle === undefined) {
+              tab.userTitle = tab.title;
+              delete tab.title;
             }
           }
         }
 
-        // v1 → v2: settings.defaultFavoriteId は optional で追加のみ。データ変換不要
-        if (version < 2) {
-          // データ変換不要 (defaultFavoriteId は undefined のままで OK)
-        }
-
-        // v2 → v3: Tab.args / Favorite.args を追加 (optional なので undefined のままで OK)
-        if (version < 3) {
-          // データ変換不要 (args は optional で既存データに含まれなくても正常動作する)
-        }
-
-        // v3 → v4: Tab.launchClaude / Tab.claudeSessionId / Favorite.launchClaude を追加
-        if (version < 4) {
-          // データ変換不要 (いずれも optional で既存データに含まれなくても正常動作する)
-        }
+        // v1 → v4 は optional フィールドの追加のみでデータ変換が不要なため、分岐を持たない。
+        //   v1 → v2: settings.defaultFavoriteId
+        //   v2 → v3: Tab.args / Favorite.args
+        //   v3 → v4: Tab.launchClaude / Tab.claudeSessionId / Favorite.launchClaude
+        // いずれも既存データに含まれなくても undefined のままで正常動作する。
 
         return state;
       },
@@ -1369,50 +1442,25 @@ export const useAppStore = create<Store>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return;
 
-        // 1. group.tabIds から state.tabs に存在しない ID を除去
-        const validTabIds = new Set(Object.keys(state.tabs));
-        state.groups = state.groups.map((g) => ({
-          ...g,
-          tabIds: g.tabIds.filter((id) => validTabIds.has(id)),
-        }));
+        // 1. group.tabIds から state.tabs に存在しない ID と重複を除去
+        state.groups = sanitizeGroupTabIds(state.groups, new Set(Object.keys(state.tabs)));
 
-        // 2. 重複 tabId を除去 (最初に現れた group に属させる)
-        const seen = new Set<string>();
-        state.groups = state.groups.map((g) => ({
-          ...g,
-          tabIds: g.tabIds.filter((id) => {
-            if (seen.has(id)) return false;
-            seen.add(id);
-            return true;
-          }),
-        }));
-
-        // 3. 孤立 tab (どの group の tabIds にも参照されていない) を削除
+        // 2. 孤立 tab (どの group の tabIds にも参照されていない) を落としつつ、
+        //    status/ptyId をリセットする (一括代入で性能改善)。
+        //    oscTitle は partialize 対象外なので保存されないが、念のためクリア不要 (型上も存在しないはず)
         const referenced = new Set(state.groups.flatMap((g) => g.tabIds));
-        for (const id of Object.keys(state.tabs)) {
-          if (!referenced.has(id)) delete state.tabs[id];
-        }
-
-        // 4. status/ptyId をリセット (一括代入で性能改善)
-        // oscTitle は partialize 対象外なので保存されないが、念のためクリア不要 (型上も存在しないはず)
         const newTabs: Record<string, Tab> = {};
         for (const [id, t] of Object.entries(state.tabs)) {
+          if (!referenced.has(id)) continue;
           newTabs[id] = { ...t, status: 'spawning', ptyId: undefined };
         }
         state.tabs = newTabs;
 
-        // 5. アクティブ選択を張り直す。
-        //    activeTabId / activeGroupId は persist 対象外なので復元直後は null になる。
-        //    横タブバーは activeGroupId のタブを並べるため、未選択のままだと再起動後に
-        //    タブが 1 つも表示されない。タブを持つ最初のグループの先頭タブを選ぶ。
-        const firstGroupWithTabs =
-          state.groups.find((g) => g.tabIds.length > 0) ?? state.groups[0];
-        state.activeGroupId = firstGroupWithTabs?.id ?? null;
-        state.activeTabId = firstGroupWithTabs?.tabIds[0] ?? null;
-        state.lastActiveTabByGroup =
-          state.activeGroupId !== null && state.activeTabId !== null
-            ? { [state.activeGroupId]: state.activeTabId }
-            : {};
+        // 3. アクティブ選択を張り直す
+        const selection = initialSelection(state.groups);
+        state.activeGroupId = selection.activeGroupId;
+        state.activeTabId = selection.activeTabId;
+        state.lastActiveTabByGroup = selection.lastActiveTabByGroup;
 
         // ランタイム状態は復元しない
         state.editingId = null;

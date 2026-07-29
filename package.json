@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "lint:ts": "eslint .",
+    "lint:ts:prune": "eslint . --prune-suppressions",
     "fmt:rs": "cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "fmt:rs:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "lint:rs": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",

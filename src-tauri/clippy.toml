@@ -11,8 +11,8 @@
 # 関数の行数。既定値と同じ 100。
 too-many-lines-threshold = 100
 
-# 認知的複雑度。既定は 25 だが、現状の最大が 13 なので 15 に締めている。
-cognitive-complexity-threshold = 15
+# 認知的複雑度。既定は 25 だが厳しめに 8 で運用する。
+cognitive-complexity-threshold = 8
 
 # 引数の数。既定値と同じ 7。TS 側の max-params は 5 だが、Rust は
 # self や設定構造体の受け渡しで増えやすいため既定のままにしている。

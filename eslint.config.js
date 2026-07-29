@@ -35,7 +35,7 @@ export default [
       'react-hooks/exhaustive-deps': 'warn',
 
       // 循環的複雑度。分岐が増えすぎた関数を検出する。本設定の主指標。
-      complexity: ['error', { max: 15 }],
+      complexity: ['error', { max: 8 }],
 
       // ネストの深さ。複雑度に現れにくい「読みにくさ」を拾う。
       'max-depth': ['error', 4],

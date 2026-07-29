@@ -23,6 +23,7 @@ npm run fmt:rs        # Rust の整形を適用
 npm run fmt:rs:check  # 整形の差分チェックのみ（CI と同じ）
 npm run lint:rs       # clippy（警告をエラー扱い）
 npm run lint:ts       # ESLint（関数の長さ・複雑度）
+npm run lint:ts:prune # 解消済みの抑制を eslint-suppressions.json から削除
 ```
 
 `npm run lint:rs` は `tauri::generate_context!` が `tauri.conf.json` の
@@ -36,13 +37,17 @@ npm run lint:ts       # ESLint（関数の長さ・複雑度）
 | clippy の閾値 | `src-tauri/clippy.toml` |
 | clippy の lint 有効化 | `src-tauri/Cargo.toml` の `[lints.clippy]` |
 | ESLint | `eslint.config.js` |
+| ESLint の既存違反ベースライン | `eslint-suppressions.json` |
+
+`clippy.toml` を編集しても cargo のフィンガープリントは更新されないため、閾値を変えた
+直後は `touch src-tauri/src/*.rs` するか `cargo clean` しないと結果がキャッシュされたままになる。
 
 ### 関数の長さ・複雑度
 
 | 指標 | Rust | TypeScript |
 |---|---|---|
 | 関数の行数 | 100 (`too_many_lines`) | 150 (`max-lines-per-function`、`.ts` のみ) |
-| 複雑度 | 15 (`cognitive_complexity`) | 15 (`complexity`) |
+| 複雑度 | 8 (`cognitive_complexity`) | 8 (`complexity`) |
 | 引数の数 | 7 (`too_many_arguments`) | 5 (`max-params`) |
 | ネストの深さ | — | 4 (`max-depth`) |
 
@@ -53,23 +58,43 @@ npm run lint:ts       # ESLint（関数の長さ・複雑度）
 ESLint は複雑度の歯止めに目的を絞っており、typescript-eslint の recommended などの
 一般的なスタイル / 型安全ルールセットは入れていない。必要になったら段階的に足す。
 
-### 既存箇所を許容する場合
+### 既存違反の扱い
 
-閾値を超える既存コードは、理由コメントを添えて抑制する。
+抑制の仕組みは Rust と TypeScript で異なる。
+
+**Rust** — 理由コメントを添えた `#[allow(...)]` を書く。
 
 ```rust
 // TODO: read / flush スレッドの生成をそれぞれ別関数に切り出す。
-#[allow(clippy::too_many_lines)]
+// 複雑度チェック導入時点での既存違反として一時的に許容している。
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 fn spawn_reader_threads(...)
 ```
 
-```ts
-// TODO: キーバインド判定をテーブル駆動に置き換える。
-// eslint-disable-next-line complexity
-const handler = (e: KeyboardEvent): boolean => {
+lint 属性は字句スコープなので、関数に付けた `allow` は内側の closure にも効く。
+
+**TypeScript** — `eslint-suppressions.json` に記録する（ESLint 9.24+ の一括抑制機能）。
+インラインの `eslint-disable` コメントは使わない。20 箇所近くをコメントで埋めると
+コードが読みにくくなるうえ、解消しても消し忘れが残るため。
+
+```
+npx eslint . --suppress-all   # 現在の違反をベースラインとして記録（初回のみ）
+npm run lint:ts:prune         # 解消済みの分を削除（違反を直したら実行してコミット）
 ```
 
-新規コードで安易に抑制を足さないこと。抑制には必ず解消方針を書く。
+このファイルは「解消すべき箇所の一覧」でもある。**新規の違反は抑制されない**ので、
+既存分を許容しつつ新しく複雑な関数が増えるのは防げる。解消済みの抑制が残っていると
+`npm run lint:ts` は失敗する（意図的な設定。ベースラインを正確に保つため）。
+
+新規コードで安易に抑制を足さないこと。Rust 側の抑制には必ず解消方針を書く。
+
+### テストの扱い
+
+テストは分岐網羅のために意図的に長く・分岐が多くなるため、複雑度チェックの対象外にしている。
+
+- TypeScript: `eslint.config.js` の `ignores` で `*.test.ts` / `*.test.tsx` を除外
+- Rust: `#[cfg(test)] mod tests` の先頭に `#![allow(clippy::cognitive_complexity)]` を置く
+  （`assert_eq!` は展開すると `if/else` になるため、アサーションを並べただけでも複雑度が嵩む）
 
 ## ビルド手順
 

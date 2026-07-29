@@ -59,9 +59,6 @@ export function parseEnvText(text: string): { env: Record<string, string>; error
   return { env, errors };
 }
 
-// TODO: フォーム状態とバリデーションを custom hook に切り出す。
-// 複雑度チェック導入時点での既存違反 (42/15) として一時的に許容している。
-// eslint-disable-next-line complexity
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
   const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
   const templates = useMemo(() => buildProfileTemplates(wslDistros), [wslDistros]);

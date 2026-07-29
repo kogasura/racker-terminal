@@ -477,9 +477,6 @@ type Store = AppState & AppActions;
 
 export const useAppStore = create<Store>()(
   persist(
-    // TODO: slice ごとにファイル分割する（groups / tabs / favorites / settings）。
-    // 複雑度チェック導入時点での既存違反 (638/150 行) として一時的に許容している。
-    // eslint-disable-next-line max-lines-per-function
     (set, get) => ({
   groups: [],
   tabs: {},
@@ -774,9 +771,6 @@ export const useAppStore = create<Store>()(
 
   createTab: (groupId, opts) => {
     const tabId = newId();
-    // TODO: groupId の解決ロジックを別関数に切り出す。
-    // 複雑度チェック導入時点での既存違反 (19/15) として一時的に許容している。
-    // eslint-disable-next-line complexity
     set((state) => {
       // groupId の解決:
       //   1. 指定されかつ存在 → そのグループを使う

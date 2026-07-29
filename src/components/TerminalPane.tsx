@@ -42,9 +42,6 @@ interface TerminalPaneProps {
   isActive: boolean;
 }
 
-// TODO: 引数を 1 つの context オブジェクトにまとめる。
-// 複雑度チェック導入時点での既存違反 (6/5 引数) として一時的に許容している。
-// eslint-disable-next-line max-params
 function handlePtyEvent(
   e: PtyEvent,
   runtime: TerminalRuntime,
@@ -359,9 +356,6 @@ export const TerminalPane = memo(function TerminalPane({
     const runtime = runtimeRef.current;
     if (!runtime) return;
 
-    // TODO: キーバインド判定をテーブル駆動に置き換える。
-    // 複雑度チェック導入時点での既存違反 (29/15) として一時的に許容している。
-    // eslint-disable-next-line complexity
     const handler = (e: KeyboardEvent): boolean => {
       if (e.type !== 'keydown') return true;
       if (!e.ctrlKey) return true;

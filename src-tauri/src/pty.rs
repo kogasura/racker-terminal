@@ -330,8 +330,11 @@ struct ReaderThreads {
 }
 
 // TODO: read / flush スレッドの生成をそれぞれ別関数に切り出す。
-// 複雑度チェック導入時点での既存違反 (186/100) として一時的に許容している。
-#[allow(clippy::too_many_lines)]
+// 複雑度チェック導入時点での既存違反として一時的に許容している。
+//   too_many_lines:       186/100
+//   cognitive_complexity: read スレッドの closure 10/8、flush スレッドの closure 13/8
+//                         （lint 属性は字句スコープなので内側の closure にも効く）
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 fn spawn_reader_threads(
     mut reader: Box<dyn Read + Send>,
     channel: Channel<PtyEvent>,
@@ -696,7 +699,9 @@ pub struct PtyManager {
 }
 
 impl PtyManager {
-    #[allow(clippy::too_many_arguments)]
+    // TODO: shell / cwd / env の解決を切り出して分岐を減らす。
+    // 複雑度チェック導入時点での既存違反 (9/8) として一時的に許容している。
+    #[allow(clippy::too_many_arguments, clippy::cognitive_complexity)]
     pub fn spawn(
         &self,
         shell: Option<String>,

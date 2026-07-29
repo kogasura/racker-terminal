@@ -1,5 +1,3 @@
-$ cat /tmp/claude-0/-home-user-racker-terminal/54a657e1-705e-5cc4-9ed3-5b1b994b792b/scratchpad/ci.yml
-
 name: CI
 
 on:

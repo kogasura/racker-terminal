@@ -37,3 +37,39 @@ body,
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ErrorBoundary: 描画に失敗したときだけ出る開発者向け画面。
+   白画面のままだと release ビルドで原因を追えないため、内容をそのまま出す。 */
+.error-boundary {
+  padding: 16px 20px;
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e6e6e6;
+  background: #1e1e1e;
+  height: 100vh;
+  overflow: auto;
+}
+.error-boundary__title { margin: 0 0 4px; font-size: 15px; color: #ff8080; }
+.error-boundary__lead { margin: 0 0 12px; color: #b0b0b0; }
+.error-boundary__actions { display: flex; gap: 8px; margin-bottom: 16px; }
+.error-boundary__actions button {
+  padding: 4px 12px;
+  font: inherit;
+  color: #e6e6e6;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.error-boundary__actions button:hover { background: #3d3d3d; }
+.error-boundary__section { margin: 14px 0 4px; font-size: 12px; color: #8ab4f8; }
+.error-boundary__pre {
+  margin: 0;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+}

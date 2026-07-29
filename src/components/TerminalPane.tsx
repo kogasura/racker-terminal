@@ -351,6 +351,34 @@ const CTRL_KEY_BINDINGS: KeyBinding[] = [
   },
 ];
 
+/**
+ * Ctrl 系キーバインドのディスパッチ本体。
+ *
+ * attachCustomKeyEventHandler に渡す実体。戻り値は
+ * false → xterm が通常処理しない、true → 通常処理を継続。
+ * テスト容易性のため export する。
+ */
+export function handleCtrlKey(e: KeyboardEvent, runtime: TerminalRuntime): boolean {
+  if (e.type !== 'keydown') return true;
+  if (!e.ctrlKey) return true;
+
+  // IME 合成中の keydown は無視する（タブ切替・タブ閉じの暴発防止）
+  // - e.isComposing: 標準仕様（Chromium 含む大部分のブラウザで対応）
+  // - e.keyCode === 229: 古い仕様の保険（一部 IME で isComposing が立たないケース）
+  // e.preventDefault() は isComposing チェック後に置くことで IME 確定（Enter/Tab）を阻害しない
+  if (e.isComposing || e.keyCode === 229) return true;
+
+  // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
+  if (useAppStore.getState().contextMenuOpen) return true;
+
+  const codeIs: CodeIs = (code, key) =>
+    e.code === code || (e.code === '' && e.key.toLowerCase() === key);
+
+  const binding = CTRL_KEY_BINDINGS.find((b) => b.match(e, codeIs));
+  if (binding === undefined) return true;
+  return binding.run(e, runtime);
+}
+
 export const TerminalPane = memo(function TerminalPane({
   tabId,
   tab,
@@ -514,28 +542,7 @@ export const TerminalPane = memo(function TerminalPane({
     const runtime = runtimeRef.current;
     if (!runtime) return;
 
-    const handler = (e: KeyboardEvent): boolean => {
-      if (e.type !== 'keydown') return true;
-      if (!e.ctrlKey) return true;
-
-      // IME 合成中の keydown は無視する（タブ切替・タブ閉じの暴発防止）
-      // - e.isComposing: 標準仕様（Chromium 含む大部分のブラウザで対応）
-      // - e.keyCode === 229: 古い仕様の保険（一部 IME で isComposing が立たないケース）
-      // e.preventDefault() は isComposing チェック後に置くことで IME 確定（Enter/Tab）を阻害しない
-      if (e.isComposing || e.keyCode === 229) return true;
-
-      // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
-      if (useAppStore.getState().contextMenuOpen) return true;
-
-      const codeIs: CodeIs = (code, key) =>
-        e.code === code || (e.code === '' && e.key.toLowerCase() === key);
-
-      const binding = CTRL_KEY_BINDINGS.find((b) => b.match(e, codeIs));
-      if (binding === undefined) return true;
-      return binding.run(e, runtime);
-    };
-
-    runtime.term.attachCustomKeyEventHandler(handler);
+    runtime.term.attachCustomKeyEventHandler((e) => handleCtrlKey(e, runtime));
     return () => {
       // xterm はハンドラ解除 API がないため、no-op ハンドラで上書きする
       runtime.term.attachCustomKeyEventHandler(() => true);

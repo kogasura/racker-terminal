@@ -23,8 +23,9 @@ import {
 import { getTabDisplayTitle, type AgentState, type TabStatus } from '../types';
 import { statusDotClassName } from './TabItem';
 
-/** B1: グループ自体の並び替え。 */
-function dropGroup(groupId: string, overIdStr: string): void {
+/** B1: グループ自体の並び替え。
+ * テスト容易性のため export する。 */
+export function dropGroup(groupId: string, overIdStr: string): void {
   // F-M1: header (auto-expand 専用) は並び替え対象外
   // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
   if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
@@ -39,15 +40,17 @@ function dropGroup(groupId: string, overIdStr: string): void {
   useAppStore.getState().moveGroup(groupId, toIdx);
 }
 
-/** B2: お気に入りの並び替え。 */
-function dropFavorite(favId: string, overFavId: string): void {
+/** B2: お気に入りの並び替え。
+ * テスト容易性のため export する。 */
+export function dropFavorite(favId: string, overFavId: string): void {
   const toIdx = useAppStore.getState().favorites.findIndex((f) => f.id === overFavId);
   if (toIdx === -1) return;
   useAppStore.getState().moveFavorite(favId, toIdx);
 }
 
-/** タブの D&D。グループ間移動と、新規グループとしての drop (B4b) を扱う。 */
-function dropTab(active: DragEndEvent['active'], overIdStr: string): void {
+/** タブの D&D。グループ間移動と、新規グループとしての drop (B4b) を扱う。
+ * テスト容易性のため export する。 */
+export function dropTab(active: DragEndEvent['active'], overIdStr: string): void {
   const activeTabId = active.id as string;
   const fromGroupId = active.data.current?.groupId as string | undefined;
   if (!fromGroupId) return;

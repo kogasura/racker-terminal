@@ -88,6 +88,20 @@ npm run lint:ts:prune         # 解消済みの分を削除（違反を直した
 
 新規コードで安易に抑制を足さないこと。Rust 側の抑制には必ず解消方針を書く。
 
+### PTY 統合テスト
+
+`src-tauri/src/pty.rs` の `pty_integration_tests` は実際に PTY を起動して
+read / flush スレッドの協調動作を検証する。**既定では実行されない**ので、
+PTY 周りを触ったときは明示的に走らせること。
+
+```
+cd src-tauri && cargo test -- --ignored
+```
+
+`#[ignore]` にしてあるのは、Windows (ConPTY) では `PtySession::Drop` の
+スレッド join が返らず、テストプロセスがハングして CI を止めてしまうため。
+Linux では問題なく通る。この join が返らない件自体は本体側の課題。
+
 ### テストの扱い
 
 テストは分岐網羅のために意図的に長く・分岐が多くなるため、複雑度チェックの対象外にしている。

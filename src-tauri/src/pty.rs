@@ -1129,3 +1129,158 @@ mod tests {
         assert_eq!(added[1].as_str(), "~");
     }
 }
+
+// ─── PTY 統合テスト ──────────────────────────────────────────────────────────
+//
+// read / flush スレッドの協調動作を実 PTY で検証する。
+// 純粋関数のテストでは spawn → 出力 → kill の一連の流れを担保できないため、
+// Channel を直接生成して PtyManager をエンドツーエンドで動かす。
+//
+// ⚠️ 全て #[ignore] にしてある。実行するには明示的に指定すること:
+//     cargo test -- --ignored
+//
+// 理由: Windows (ConPTY) では PtySession::Drop のスレッド join が返らず、
+// テストプロセスがハングする。CI (windows ランナー) を止めてしまうため
+// 既定では走らせない。Linux では問題なく通る。
+// この join が返らない件自体は本体側の課題として別途追う。
+#[cfg(test)]
+mod pty_integration_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use tauri::ipc::InvokeResponseBody;
+
+    /// テスト用シェル。どちらも `echo <文字列>` が使える。
+    fn test_shell() -> String {
+        if cfg!(windows) {
+            "cmd.exe".to_string()
+        } else {
+            "/bin/sh".to_string()
+        }
+    }
+
+    /// PtyEvent を受け取って JSON 文字列で流す Channel と、その受信側を作る。
+    fn probe_channel() -> (Channel<PtyEvent>, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel::<String>();
+        let tx = Mutex::new(tx);
+        let channel = Channel::new(move |body: InvokeResponseBody| {
+            if let InvokeResponseBody::Json(s) = body {
+                let _ = tx.lock().send(s);
+            }
+            Ok(())
+        });
+        (channel, rx)
+    }
+
+    /// deadline まで受信し続け、`needle` を含む出力が来たら true。
+    fn wait_for(rx: &mpsc::Receiver<String>, needle: &str, secs: u64) -> (bool, String) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(secs);
+        let mut seen = String::new();
+        while Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(msg) => {
+                    seen.push_str(&msg);
+                    if seen.contains(needle) {
+                        return (true, seen);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        (false, seen)
+    }
+
+    /// spawn → write → 出力受信 → kill が一通り動くこと。
+    /// read スレッドと flush スレッドが実際に協調して Data イベントを届けられるかを見る。
+    #[test]
+    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
+    fn spawn_write_read_kill_roundtrip() {
+        let (channel, rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        mgr.write(&id, "echo racker_probe_marker\r\n")
+            .expect("write できること");
+
+        let (found, seen) = wait_for(&rx, "racker_probe_marker", 15);
+        assert!(
+            found,
+            "echo の出力が Data イベントで届かない。受信内容: {seen}"
+        );
+
+        mgr.kill(&id).expect("kill できること");
+    }
+
+    /// 子プロセスが自然終了したときに Exit イベントが届くこと。
+    /// flush スレッドの EOF / shutdown 経路を通す。
+    #[test]
+    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
+    fn exit_event_is_delivered_on_shell_exit() {
+        let (channel, rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        mgr.write(&id, "exit\r\n").expect("write できること");
+
+        let (found, seen) = wait_for(&rx, "\"type\":\"exit\"", 15);
+        assert!(
+            found,
+            "シェル終了後に Exit イベントが届かない。受信内容: {seen}"
+        );
+    }
+
+    /// マルチバイト出力が UTF-8 境界で壊れないこと。
+    /// flush スレッドの split_at_utf8_boundary / pending 持ち越しを通す。
+    #[test]
+    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
+    fn multibyte_output_is_not_corrupted() {
+        let (channel, rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        mgr.write(&id, "echo 日本語テスト文字列\r\n")
+            .expect("write できること");
+
+        let (found, seen) = wait_for(&rx, "日本語テスト文字列", 15);
+        assert!(found, "マルチバイト出力が復元できない。受信内容: {seen}");
+        assert!(
+            !seen.contains('\u{FFFD}'),
+            "置換文字 U+FFFD が混入している（UTF-8 境界処理の破綻）: {seen}"
+        );
+
+        mgr.kill(&id).expect("kill できること");
+    }
+
+    /// pause / resume を往復してもデータが失われず、read スレッドが復帰すること。
+    /// #4 フロー制御（wait_while_paused）の経路を通す。
+    #[test]
+    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
+    fn read_pause_and_resume_does_not_lose_output() {
+        let (channel, rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        mgr.set_read_paused(&id, true).expect("pause できること");
+        mgr.write(&id, "echo after_pause_marker\r\n")
+            .expect("write できること");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        mgr.set_read_paused(&id, false).expect("resume できること");
+
+        let (found, seen) = wait_for(&rx, "after_pause_marker", 15);
+        assert!(found, "resume 後に出力が届かない。受信内容: {seen}");
+
+        mgr.kill(&id).expect("kill できること");
+    }
+}

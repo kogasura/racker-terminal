@@ -132,6 +132,11 @@ pub fn list_claude_sessions(distros: Vec<String>) -> Vec<ClaudeSession> {
 
 #[cfg(test)]
 mod tests {
+    // assert_eq! は展開すると if/else になるため、アサーションを並べただけの
+    // テストでも認知的複雑度が嵩む。テストは分岐網羅のために意図的に分岐が
+    // 多くなるので、TS 側で test を対象外にしているのと揃えて許容する。
+    #![allow(clippy::cognitive_complexity)]
+
     use super::*;
     use std::io::Write;
 

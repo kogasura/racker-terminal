@@ -15,6 +15,13 @@ edition = "2021"
 name = "racker_terminal_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[lints.clippy]
+# 関数の長さ・複雑度チェック。閾値は clippy.toml 側で設定している。
+# どちらも既定では allow なので、ここで warn に上げて有効化する
+# （CI では -D warnings によりエラー扱いになる）。
+too_many_lines = "warn"      # pedantic
+cognitive_complexity = "warn" # nursery
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

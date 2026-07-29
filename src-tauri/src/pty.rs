@@ -329,6 +329,9 @@ struct ReaderThreads {
     read_pause: ReadPause,
 }
 
+// TODO: read / flush スレッドの生成をそれぞれ別関数に切り出す。
+// 複雑度チェック導入時点での既存違反 (186/100) として一時的に許容している。
+#[allow(clippy::too_many_lines)]
 fn spawn_reader_threads(
     mut reader: Box<dyn Read + Send>,
     channel: Channel<PtyEvent>,

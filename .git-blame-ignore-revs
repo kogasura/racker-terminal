@@ -4,5 +4,5 @@
 # ローカルでも効かせる場合:
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
 
-# style: cargo fmt --all を適用
-82cebd3d64e94762231bd25b8e5fc9296f2ff674
+# ci: rustfmt / clippy を仕組みとして導入 (#67) — cargo fmt 一括適用を含む
+f93b191b43b326f50615d428fb2412a893d3ae83

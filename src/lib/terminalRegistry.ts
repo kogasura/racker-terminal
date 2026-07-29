@@ -614,6 +614,9 @@ export function nextPauseState(
  * TerminalPane からは createRuntime() 経由で呼ぶ。
  * テスト容易性のためモジュール外から import できる形で公開する。
  */
+// TODO: addon の初期化 / イベント配線 / リサイズ処理を分割する。
+// 複雑度チェック導入時点での既存違反 (341/150 行) として一時的に許容している。
+// eslint-disable-next-line max-lines-per-function
 export function createRuntime(
   divEl: HTMLDivElement,
   settings: Settings,

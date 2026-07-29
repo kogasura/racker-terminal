@@ -1,0 +1,19 @@
+# 関数の長さ・複雑度の閾値。
+#
+# 有効化は Cargo.toml の [lints.clippy] 側で行っている
+# （too_many_lines は pedantic、cognitive_complexity は nursery のため、
+#  どちらも既定では allow になっている）。
+#
+# 注意: clippy.toml の変更は cargo のフィンガープリントを更新しないので、
+# 閾値をいじった直後は `touch src/*.rs` するか cargo clean しないと
+# 結果がキャッシュされたままになる。
+
+# 関数の行数。既定値と同じ 100。
+too-many-lines-threshold = 100
+
+# 認知的複雑度。既定は 25 だが、現状の最大が 13 なので 15 に締めている。
+cognitive-complexity-threshold = 15
+
+# 引数の数。既定値と同じ 7。TS 側の max-params は 5 だが、Rust は
+# self や設定構造体の受け渡しで増えやすいため既定のままにしている。
+too-many-arguments-threshold = 7

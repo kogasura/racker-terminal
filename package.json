@@ -10,6 +10,9 @@
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run",
+    "fmt:rs": "cargo fmt --manifest-path src-tauri/Cargo.toml --all",
+    "fmt:rs:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+    "lint:rs": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "release:manifest": "node scripts/generate-update-manifest.mjs",
     "release": "node scripts/release.mjs"
   },

@@ -1,0 +1,8 @@
+# rustfmt 設定。stable のオプションのみを使う（nightly 限定オプションは無視されるため）。
+#
+# newline_style は既定の "Auto"（既存の改行コードを維持）のままにしてある。
+# Windows 環境や GitHub Actions の windows ランナーは core.autocrlf=true で
+# チェックアウトするため、"Unix" に固定すると working tree が CRLF になった
+# 途端に `cargo fmt --check` が落ちる。
+edition = "2021"
+max_width = 100

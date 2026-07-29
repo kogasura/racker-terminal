@@ -11,14 +11,21 @@ use std::process::Command;
 ///
 /// テスト容易性のため pub にする。
 pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
-    let bytes = if bytes.starts_with(&[0xFF, 0xFE]) { &bytes[2..] } else { bytes };
+    let bytes = if bytes.starts_with(&[0xFF, 0xFE]) {
+        &bytes[2..]
+    } else {
+        bytes
+    };
     let utf16: Vec<u16> = bytes
         .chunks_exact(2)
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .collect();
     let text = String::from_utf16_lossy(&utf16);
     text.lines()
-        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\0').to_string())
+        .map(|l| {
+            l.trim_matches(|c: char| c.is_whitespace() || c == '\0')
+                .to_string()
+        })
         .filter(|l| !l.is_empty())
         .filter(|l| !l.starts_with("docker-desktop"))
         .collect()
@@ -31,10 +38,10 @@ pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
 #[tauri::command]
 pub fn list_wsl_distros() -> Vec<String> {
     let Ok(output) = Command::new("wsl.exe").args(["--list", "--quiet"]).output() else {
-        return vec![];   // wsl.exe が無い / 実行失敗 → 空
+        return vec![]; // wsl.exe が無い / 実行失敗 → 空
     };
     if !output.status.success() {
-        return vec![];   // 異常終了 → 空
+        return vec![]; // 異常終了 → 空
     }
     parse_wsl_list_output(&output.stdout)
 }
@@ -44,7 +51,7 @@ mod tests {
     use super::*;
 
     fn utf16le(s: &str) -> Vec<u8> {
-        let mut buf = vec![0xFF, 0xFE];   // BOM
+        let mut buf = vec![0xFF, 0xFE]; // BOM
         for u in s.encode_utf16() {
             buf.push((u & 0xFF) as u8);
             buf.push((u >> 8) as u8);

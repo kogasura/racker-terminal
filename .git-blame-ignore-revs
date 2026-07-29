@@ -1,0 +1,8 @@
+# git blame から除外するリビジョン（整形のみのコミット）。
+#
+# GitHub の blame ビューは自動でこのファイルを参照する。
+# ローカルでも効かせる場合:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: cargo fmt --all を適用
+82cebd3d64e94762231bd25b8e5fc9296f2ff674

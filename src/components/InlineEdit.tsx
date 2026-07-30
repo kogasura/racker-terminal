@@ -47,6 +47,10 @@ export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) 
         skipBlurRef.current = false;
       };
     }
+    // 編集中でないときは後始末するものが無い。
+    // useEffect は「cleanup を返す」か「何も返さない」かのどちらかに揃える必要があり、
+    // 分岐によって返したり返さなかったりすると読み手が cleanup の有無を追えなくなる。
+    return undefined;
   // title は編集開始時の初期値として参照するため、isEditing が true になった瞬間のみ適用する
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing]);

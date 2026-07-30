@@ -125,7 +125,6 @@ struct PtySessionArgs {
 }
 
 pub struct PtySession {
-    #[allow(dead_code)]
     pub id: String,
     writer: Mutex<Box<dyn Write + Send>>,
     // Fix 3: Option に変更して Drop 時に take → drop で PTY を閉じ、
@@ -143,6 +142,9 @@ pub struct PtySession {
     /// #4 フロー制御: read スレッドの pause/resume 制御。kill/Drop 時に notify して
     /// pause 中の read スレッドを起こし stop_flag チェックへ誘導する。
     read_pause: ReadPause,
+    /// 後始末を reaper スレッドへ委譲済みか。
+    /// kill() → Arc drop → Drop の順で 2 回呼ばれるため、1 回だけ投げるようにする。
+    reaped: AtomicBool,
 }
 
 impl PtySession {
@@ -158,6 +160,7 @@ impl PtySession {
             watch_handle: Mutex::new(Some(args.watch_handle)),
             flush_state: args.flush_state,
             read_pause: args.read_pause,
+            reaped: AtomicBool::new(false),
         }
     }
 
@@ -199,11 +202,8 @@ impl PtySession {
         Ok(())
     }
 
-    /// セッションを終了する。
-    /// 注: PtyManager::kill 経由では sessions.remove で Arc を取得 → kill() 呼び出し →
-    ///     スコープ抜けで Arc drop → Drop が再度走る。kill() で child を take 済みのため
-    ///     Drop 内の child kill+wait はスキップされる (idempotent)。
-    pub fn kill(&self) {
+    /// 各スレッドへ停止を伝える。**ブロックしない処理だけ**をここに置く。
+    fn signal_stop(&self) {
         self.stop_flag.store(true, Ordering::Relaxed);
 
         // flush スレッドを即時起床させる（wait_timeout(16ms) で待機中のものを解放）
@@ -212,67 +212,78 @@ impl PtySession {
 
         // #4: pause 中の read スレッドを起床させて stop_flag チェックへ誘導する
         self.read_pause.1.notify_one();
+    }
 
-        // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
-        if let Some(mut child) = self.child.lock().take() {
-            let _ = child.kill();
-            let _ = child.wait();
+    /// ブロックしうる後始末を専用スレッドへ委譲する。
+    ///
+    /// ここで行う 3 つの処理は、いずれも **Windows (ConPTY) では返らないことがある**:
+    ///
+    /// 1. `child.wait()` — ConPTY 配下の子プロセスがハングしていると kill 後も返らない
+    /// 2. `master` の drop — `ClosePseudoConsole` が出力パイプの排出を待つ
+    /// 3. reader/flush/watch の `join()` — 上記 2 が返らない限り reader も抜けられない
+    ///
+    /// これを呼び出し元スレッドで行うと、Tauri command はメインスレッド
+    /// (= Windows のメッセージループ) で実行されるため、UI ごと固まって
+    /// 「応答なし」→ 強制終了になる (WER: AppHang XProcB1 / OpenConsole.exe)。
+    /// 後始末が返るかどうかに関わらず UI を巻き込まないよう、必ず別スレッドへ逃がす。
+    ///
+    /// スレッドは session ごとに一時的に 1 本だけ。正常時は数 ms で終了して回収される。
+    fn reap(&self) {
+        // kill() → Arc drop → Drop の順で 2 回来るので、投げるのは 1 回だけにする
+        if self.reaped.swap(true, Ordering::SeqCst) {
+            return;
         }
+
+        let id = self.id.clone();
+        let child = Arc::clone(&self.child);
+        let master = Arc::clone(&self.master);
+        let handles = [
+            self.reader_handle.lock().take(),
+            self.flush_handle.lock().take(),
+            self.watch_handle.lock().take(),
+        ];
+
+        std::thread::spawn(move || {
+            // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
+            if let Some(mut child) = child.lock().take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+
+            // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
+            drop(master.lock().take());
+
+            // (2.10) detached thread リーク対策として join 自体は維持する。
+            // 呼び出し元ではなくこのスレッドで待つので、返らなくても UI には影響しない。
+            for handle in handles.into_iter().flatten() {
+                let _ = handle.join();
+            }
+            dbg_log!("[pty-reap] session {id} reaped");
+        });
+    }
+
+    /// セッションを終了する。
+    /// 停止フラグを立てて後始末を別スレッドへ渡すだけなので、**即座に返る**。
+    pub fn kill(&self) {
+        self.signal_stop();
+        self.reap();
     }
 }
 
 impl Drop for PtySession {
-    // Drop の所要時間について:
-    // - reader/flush/watch スレッド単体は数 ms で抜ける (master drop で EOF / stop_flag check)
-    // - ただし Drop 全体は child.wait() の所要時間に支配される (Windows ConPTY 配下で
-    //   子プロセスがハング状態の場合、kill 後でも数百 ms〜数秒返らないことがある)
-    // - watch スレッドの 100ms ポーリング sleep が乗っている場合、stop_flag セット後の
-    //   join で最大 100ms 待たされる
+    // Drop は停止フラグを立てて後始末を reaper スレッドへ渡すだけなので、常に即座に返る。
+    // ブロックしうる処理 (child.wait / master drop / join) を Drop に置いてはいけない:
+    // Arc<PtySession> の最後の参照が切れる場所は Tauri command のスレッド、すなわち
+    // メインスレッドであり、そこで固まると UI ごと応答不能になる。詳細は reap() を参照。
     //
     // race 条件:
-    // - watch スレッドが child.lock() を保持して try_wait を呼ぶ間、Drop の child.kill+wait は
-    //   競合する。watch は try_wait 後すぐ lock を手放すため、Drop は概ね watch loop の
+    // - watch スレッドが child.lock() を保持して try_wait を呼ぶ間、reaper の child.kill+wait は
+    //   競合する。watch は try_wait 後すぐ lock を手放すため、reaper は概ね watch loop の
     //   次イテレーション (or break) を待ってから kill+wait に入る。実害はない (watch は
     //   child=None を観測して break する経路がある)。
     fn drop(&mut self) {
-        // stop_flag をセット
-        self.stop_flag.store(true, Ordering::Relaxed);
-
-        // flush スレッドを即時起床させる（wait_timeout(16ms) で待機中のものを解放）
-        // これにより stop_flag チェックが即座に走り、flush スレッドが終了できる
-        let (_, cvar) = &*self.flush_state;
-        cvar.notify_one();
-
-        // #4: pause 中の read スレッドを起床させて stop_flag チェックへ誘導する
-        // （pause 待機中でも Drop の join が最大 MAX_READ_PAUSE 待たされないようにする）
-        self.read_pause.1.notify_one();
-
-        // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
-        if let Some(mut child) = self.child.lock().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-
-        // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
-        drop(self.master.lock().take());
-
-        // (2.10) detached thread リーク対策:
-        // 従来は `std::thread::spawn(move || h.join())` のように background thread に投げていたが、
-        // その background thread 自体が join されないため 1000 タブ open/close で 3000 スレッドが
-        // 積み上がるリークが発生していた。
-        // reader/flush/watch は stop_flag=true + master drop (EOF) の後、数 ms 以内に抜ける設計
-        // なので、Drop で直接 join() を呼んで attached に統一する。
-        // 万一 reader が blocking read で止まっても、master drop により EOF が返る経路で解放される
-        // (Unit D+E の child watcher fix で確認済み)。
-        if let Some(h) = self.reader_handle.lock().take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.flush_handle.lock().take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.watch_handle.lock().take() {
-            let _ = h.join();
-        }
+        self.signal_stop();
+        self.reap();
     }
 }
 
@@ -517,6 +528,24 @@ fn send_shutdown_events(
     }
 }
 
+/// 停止時の共通処理。溜まっている raw + pending を吐き、Error か Exit を送る。
+///
+/// flush ループには停止を検出する箇所が「待機前」と「起床後」の 2 つあり、
+/// **どちらから抜けても** ここを通す必要がある。待機前のチェックで素通りして
+/// break すると、child watcher が exit を検出した直後にちょうどループ先頭へ来た
+/// ときだけ Exit イベントが失われ、フロント側でタブが終了扱いにならない。
+fn drain_and_shutdown(state: &SharedFlushState, channel: &Channel<PtyEvent>) {
+    let (lock, _) = &**state;
+    let mut s = lock.lock();
+    let raw = std::mem::take(&mut s.raw_buf);
+    let pending = std::mem::take(&mut s.pending);
+    let pending_error = s.error.take();
+    let exit_code = s.exit_code.take();
+    drop(s);
+
+    send_shutdown_events(channel, pending, raw, pending_error, exit_code);
+}
+
 /// Data イベントを送る。送信に失敗したら false（＝ flush ループを抜ける）。
 fn send_data_event(channel: &Channel<PtyEvent>, valid_bytes: Vec<u8>) -> bool {
     if valid_bytes.is_empty() {
@@ -549,6 +578,7 @@ fn spawn_flush_thread(
         loop {
             if flush_stop.load(Ordering::Relaxed) {
                 dbg_log!("[pty-flush] stop_flag set, exit");
+                drain_and_shutdown(&flush_state, &channel);
                 break;
             }
 
@@ -560,13 +590,8 @@ fn spawn_flush_thread(
             // stop_flag を再確認（wake 後）
             if flush_stop.load(Ordering::Relaxed) {
                 // drain: stop_flag=true でも、溜まっている raw + pending を可能な限り吐き出す
-                let raw = std::mem::take(&mut s.raw_buf);
-                let pending = std::mem::take(&mut s.pending);
-                let pending_error = s.error.take();
-                let exit_code = s.exit_code.take();
                 drop(s);
-
-                send_shutdown_events(&channel, pending, raw, pending_error, exit_code);
+                drain_and_shutdown(&flush_state, &channel);
                 break;
             }
 
@@ -917,8 +942,19 @@ impl PtyManager {
 }
 
 // ─── Tauri commands ──────────────────────────────────────────────────────────
+//
+// すべて `#[tauri::command(async)]` にしてある。**この (async) は必須**。
+//
+// Tauri v2 では async の付かない command は**メインスレッド**で実行される。
+// メインスレッドは Windows のメッセージループそのものなので、そこで PTY の
+// 生成・破棄・書き込みのようにブロックしうる処理を行うと、その間ウィンドウが
+// 一切描画も入力受付もできなくなり、数秒続けば OS に「応答なし」と判定されて
+// 強制終了される (WER: AppHang XProcB1 / OpenConsole.exe)。
+//
+// `(async)` を付けると同期関数のまま async_runtime のワーカースレッドで実行される。
+// State<'_, PtyManager> もそのまま使えるので、シグネチャは変えなくてよい。
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 pub fn pty_spawn(
     state: tauri::State<PtyManager>,
@@ -935,12 +971,12 @@ pub fn pty_spawn(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_write(state: tauri::State<PtyManager>, id: String, data: String) -> Result<(), String> {
     state.write(&id, &data).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_resize(
     state: tauri::State<PtyManager>,
     id: String,
@@ -950,12 +986,12 @@ pub fn pty_resize(
     state.resize(&id, cols, rows).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_kill(state: tauri::State<PtyManager>, id: String) -> Result<(), String> {
     state.kill(&id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_set_read_paused(
     state: tauri::State<PtyManager>,
     id: String,
@@ -1136,13 +1172,20 @@ mod tests {
 // 純粋関数のテストでは spawn → 出力 → kill の一連の流れを担保できないため、
 // Channel を直接生成して PtyManager をエンドツーエンドで動かす。
 //
-// ⚠️ 全て #[ignore] にしてある。実行するには明示的に指定すること:
-//     cargo test -- --ignored
+// これらは以前 #[ignore] にしてあった。Windows でテストプロセスがハングしたためだが、
+// 原因は 2 つあり、どちらも解消したので既定で走らせている:
 //
-// 理由: Windows (ConPTY) では PtySession::Drop のスレッド join が返らず、
-// テストプロセスがハングする。CI (windows ランナー) を止めてしまうため
-// 既定では走らせない。Linux では問題なく通る。
-// この join が返らない件自体は本体側の課題として別途追う。
+//   1. PtySession::Drop がスレッドの join を呼び出し元スレッドで行っていた。
+//      ConPTY では join が返らないことがあり、テストプロセスごと止まっていた。
+//      → 後始末は reaper スレッドへ委譲するようにした (PtySession::reap 参照)。
+//      これは製品コードでも同じ問題を起こしていた: Tauri command はメインスレッドで
+//      実行されるため、タブを閉じるたびに UI が固まるリスクを抱えていた。
+//
+//   2. ConPTY の DSR-CPR (`ESC[6n`) に誰も応答しないため、シェルが入力を処理せず
+//      echo が返ってこなかった。テストがハングしているように見えていた本体。
+//      → answer_dsr() で応答を返すようにした。
+//
+// この 2 つは実際に本番のフリーズを検出できる経路なので、CI で常時走らせる価値が高い。
 #[cfg(test)]
 mod pty_integration_tests {
     use super::*;
@@ -1190,10 +1233,17 @@ mod pty_integration_tests {
         (false, seen)
     }
 
+    /// ConPTY は起動直後にカーソル位置問い合わせ (DSR-CPR = `ESC[6n`) を出し、
+    /// **応答が返るまでシェルへの入力が処理されない**。実アプリでは xterm が
+    /// 自動で応答するが、テストには端末がいないので自分で返してやる必要がある。
+    /// これを送らないと、以降の write が一切エコーされない。
+    fn answer_dsr(mgr: &PtyManager, id: &str) {
+        let _ = mgr.write(id, "\x1b[1;1R");
+    }
+
     /// spawn → write → 出力受信 → kill が一通り動くこと。
     /// read スレッドと flush スレッドが実際に協調して Data イベントを届けられるかを見る。
     #[test]
-    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
     fn spawn_write_read_kill_roundtrip() {
         let (channel, rx) = probe_channel();
         let mgr = PtyManager::default();
@@ -1202,6 +1252,7 @@ mod pty_integration_tests {
             .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
             .expect("spawn できること");
 
+        answer_dsr(&mgr, &id);
         mgr.write(&id, "echo racker_probe_marker\r\n")
             .expect("write できること");
 
@@ -1214,10 +1265,40 @@ mod pty_integration_tests {
         mgr.kill(&id).expect("kill できること");
     }
 
+    /// `kill()` が呼び出し元スレッドをブロックせずに返ること。
+    ///
+    /// **この 1 件は他のテストと性質が違う。番人として置いてある。**
+    /// Tauri の command はメインスレッド (= Windows のメッセージループ) で実行される
+    /// ため、ここが返らなくなるとタブを閉じるたびにウィンドウが固まり、数秒続けば
+    /// OS に「応答なし」と判定されて強制終了される。実際 v1.8.0 まではそうなっていた
+    /// (WER: AppHang XProcB1 / OpenConsole.exe)。
+    ///
+    /// 後始末そのもの (child.wait / master drop / join) は ConPTY 相手だと数秒かかる
+    /// ことがあり、それ自体は避けられない。避けるべきは**呼び出し元で待つこと**なので、
+    /// 所要時間だけを検証する。
+    #[test]
+    fn kill_does_not_block_the_caller() {
+        let (channel, _rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        let started = Instant::now();
+        mgr.kill(&id).expect("kill できること");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "kill() が {elapsed:?} ブロックした。後始末を reaper スレッドへ逃がさずに \
+             呼び出し元で待つと、メインスレッドが止まり UI ごとフリーズする"
+        );
+    }
+
     /// 子プロセスが自然終了したときに Exit イベントが届くこと。
     /// flush スレッドの EOF / shutdown 経路を通す。
     #[test]
-    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
     fn exit_event_is_delivered_on_shell_exit() {
         let (channel, rx) = probe_channel();
         let mgr = PtyManager::default();
@@ -1226,6 +1307,7 @@ mod pty_integration_tests {
             .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
             .expect("spawn できること");
 
+        answer_dsr(&mgr, &id);
         mgr.write(&id, "exit\r\n").expect("write できること");
 
         let (found, seen) = wait_for(&rx, "\"type\":\"exit\"", 15);
@@ -1238,7 +1320,6 @@ mod pty_integration_tests {
     /// マルチバイト出力が UTF-8 境界で壊れないこと。
     /// flush スレッドの split_at_utf8_boundary / pending 持ち越しを通す。
     #[test]
-    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
     fn multibyte_output_is_not_corrupted() {
         let (channel, rx) = probe_channel();
         let mgr = PtyManager::default();
@@ -1247,6 +1328,7 @@ mod pty_integration_tests {
             .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
             .expect("spawn できること");
 
+        answer_dsr(&mgr, &id);
         mgr.write(&id, "echo 日本語テスト文字列\r\n")
             .expect("write できること");
 
@@ -1263,7 +1345,6 @@ mod pty_integration_tests {
     /// pause / resume を往復してもデータが失われず、read スレッドが復帰すること。
     /// #4 フロー制御（wait_while_paused）の経路を通す。
     #[test]
-    #[ignore = "Windows では Drop のスレッド join が返らずハングする。cargo test -- --ignored で実行"]
     fn read_pause_and_resume_does_not_lose_output() {
         let (channel, rx) = probe_channel();
         let mgr = PtyManager::default();
@@ -1272,6 +1353,7 @@ mod pty_integration_tests {
             .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
             .expect("spawn できること");
 
+        answer_dsr(&mgr, &id);
         mgr.set_read_paused(&id, true).expect("pause できること");
         mgr.write(&id, "echo after_pause_marker\r\n")
             .expect("write できること");

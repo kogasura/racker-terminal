@@ -35,7 +35,10 @@ pub fn extract_dir_arg(argv: &[String]) -> Option<String> {
 /// 起動時、自インスタンスの argv からフォルダパスを取り出して返す Tauri command。
 /// Explorer から「Racker Terminal で開く」で起動された場合は対象フォルダを返す。
 /// 通常起動（引数なし）や該当ディレクトリが無い場合は `None`。
-#[tauri::command]
+///
+/// `(async)` を付けてメインスレッド外で実行する。argv を読むだけに見えるが、
+/// `is_dir()` は UNC パス（`\\server\share`）が渡されると応答待ちでブロックしうる。
+#[tauri::command(async)]
 pub fn get_launch_path() -> Option<String> {
     let argv: Vec<String> = std::env::args().collect();
     extract_dir_arg(&argv)

@@ -35,7 +35,10 @@ pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
 /// - `wsl.exe --list --quiet` を実行 (UTF-16LE 出力を `parse_wsl_list_output` でデコード)
 /// - WSL 未インストール / 実行失敗時は **空 vec を返す** (エラーにしない)
 /// - `docker-desktop` / `docker-desktop-data` は除外
-#[tauri::command]
+///
+/// `(async)` は必須。これが無いとメインスレッドで実行され、`wsl.exe` の起動
+/// （WSL が停止中だと数秒かかる）の間ウィンドウが固まる。
+#[tauri::command(async)]
 pub fn list_wsl_distros() -> Vec<String> {
     let Ok(output) = Command::new("wsl.exe").args(["--list", "--quiet"]).output() else {
         return vec![]; // wsl.exe が無い / 実行失敗 → 空

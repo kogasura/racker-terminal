@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { prBadgeKind, prTooltip, isWindowsPath, groupTabsByCwd } from './prStatus';
+import { prBadgeKind, prTooltip, isWindowsPath, groupTabsByCwd,
+  shouldPollPr,
+} from './prStatus';
 
 describe('prBadgeKind', () => {
   it('1: OPEN は open', () => {
@@ -87,5 +89,30 @@ describe('groupTabsByCwd', () => {
 
   it('14: 対象が無ければ空', () => {
     expect(groupTabsByCwd([{ id: 't1', cwd: '/home/me' }]).size).toBe(0);
+  });
+});
+
+describe('shouldPollPr', () => {
+  // PR バッジは見た目だけの情報で通知には使わない。ウィンドウを見ていない間に
+  // 更新しても誰も気付かず、git / gh のプロセス起動とネットワーク往復だけが残る。
+  // （実測: 90 秒あたり git 2 回 + gh 3 回）
+
+  it('前面にあるときは引く', () => {
+    expect(shouldPollPr(true, true)).toBe(true);
+  });
+
+  it('裏に回っている間は引かない', () => {
+    expect(shouldPollPr(false, true)).toBe(false);
+  });
+
+  it('未取得のうちはフォーカスによらず引く（初回のバッジを出すため）', () => {
+    // 起動直後はフォーカスイベントが届く前に最初の tick が走ることがある。
+    // ここで引かないと、フォーカスが変化するまでバッジが出ないままになる。
+    expect(shouldPollPr(false, false)).toBe(true);
+  });
+
+  it('初回を引いた後は、裏にいる限り引かない', () => {
+    expect(shouldPollPr(false, false)).toBe(true);
+    expect(shouldPollPr(false, true)).toBe(false);
   });
 });

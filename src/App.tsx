@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useAppStore } from './store/appStore';
 import { getAllRuntimes, clearAllTextureAtlases, getRuntimeScreen } from './lib/terminalRegistry';
 import { saveScrollback, pruneScrollback } from './lib/scrollback';
@@ -12,7 +13,7 @@ import {
   shouldPollWsl,
 } from './lib/claudeSessions';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
-import { getPrStatus, groupTabsByCwd } from './lib/prStatus';
+import { getPrStatus, groupTabsByCwd, shouldPollPr } from './lib/prStatus';
 import { getTabDisplayTitle, type AgentState, type Tab, type Settings } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
@@ -209,10 +210,17 @@ function App() {
     let cancelled = false;
     // 前回の実行が終わるまで次を出さない。gh が遅いときに要求が積み上がるのを防ぐ。
     let running = false;
+    // ウィンドウが前面にあるか。裏に回っている間は引かない（shouldPollPr 参照）。
+    // 初期値 true は「フォーカスイベントが来る前でも 1 回目は引く」ため。
+    let focused = true;
+    let hasEverPolled = false;
+    let unlistenFocus: (() => void) | null = null;
 
     const tick = async () => {
       if (running) return;
+      if (!shouldPollPr(focused, hasEverPolled)) return;
       running = true;
+      hasEverPolled = true;
       try {
         const tabList = Object.values(useAppStore.getState().tabs);
         for (const [cwd, tabIds] of groupTabsByCwd(tabList)) {
@@ -226,11 +234,32 @@ function App() {
       }
     };
 
+    // フォーカスの変化を追う。裏に回っている間は引かず、戻ってきた時点で
+    // すぐ引き直す（次の 30 秒を待たずにバッジを最新にするため）。
+    void (async () => {
+      try {
+        const win = getCurrentWebviewWindow();
+        const fn = await win.onFocusChanged(({ payload }) => {
+          const wasFocused = focused;
+          focused = payload;
+          if (!wasFocused && focused) void tick();
+        });
+        if (cancelled) fn();
+        else unlistenFocus = fn;
+      } catch (e) {
+        // フォーカスを追えない環境では、従来どおり常に引く方へ倒す
+        // （バッジが更新されないより、余分に引くほうがまし）
+        console.warn('[App] onFocusChanged failed, PR polling stays always-on:', e);
+        focused = true;
+      }
+    })();
+
     void tick();
     const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
+      unlistenFocus?.();
     };
   }, []);
 

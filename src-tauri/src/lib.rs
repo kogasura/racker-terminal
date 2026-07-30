@@ -45,6 +45,20 @@ pub fn run() {
             scrollback::delete_scrollback,
             scrollback::prune_scrollback,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // 終了時、進行中の PTY 後始末が捌けるのを少しだけ待つ。
+            //
+            // 後始末は別スレッドで走らせている（メインスレッドを止めないため）。
+            // 捌けたものは ConPTY のホストプロセスまで畳んでくれるので、その分だけ
+            // 終了が綺麗になる。成功する後始末は実測 60〜250ms 程度で終わる。
+            //
+            // 上限を 500ms と短くしているのは、ConPTY の ClosePseudoConsole が
+            // 返ってこないケースがあるため。待ち切れなかったぶんはプロセス終了時に
+            // OS が回収するので、ここで粘る意味はない。
+            if matches!(event, tauri::RunEvent::Exit) {
+                pty::wait_for_reapers(std::time::Duration::from_millis(500));
+            }
+        });
 }

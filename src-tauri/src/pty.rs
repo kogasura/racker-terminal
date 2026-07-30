@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -41,6 +41,37 @@ const RAW_BUF_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 /// フロント側の resume(ack) が失われても、この時間を超えたら read を強制再開して
 /// ターミナルが恒久ハングするのを防ぐ安全弁。
 const MAX_READ_PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
+
+// ─── reaper の在庫カウンタ ───────────────────────────────────────────────────
+//
+// 後始末 (PtySession::reap) は別スレッドで走るため、プロセスがその完了前に終了すると
+// ConPTY のホストプロセス (OpenConsole.exe) が**孤児として残る**。
+// 実際、これまでフリーズ→強制終了を繰り返した結果、親の死んだ OpenConsole.exe が
+// 数十個単位で積み上がっていた。
+//
+// そこで在庫数を数えておき、終了時に「上限つきで」捌けるのを待てるようにする。
+// 上限を設けるのは、待ち自体が無制限になるとフリーズを別の場所に作り直すことになるため。
+
+/// 実行中の reaper スレッド数。
+static REAPS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// 進行中の後始末が捌けるのを待つ。`timeout` を過ぎたら諦めて戻る (戻り値 `false`)。
+///
+/// **待ち切れないことは普通に起こる。** ConPTY の `ClosePseudoConsole` は、
+/// 起動直後のセッションを閉じたときなど、条件によっては返ってこない。
+/// そのため呼び出し側は短い上限を渡し、`false` でも先へ進むこと。
+/// 戻らなかった後始末はプロセス終了時に OS が回収する。
+pub fn wait_for_reapers(timeout: std::time::Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while REAPS_IN_FLIGHT.load(Ordering::SeqCst) > 0 {
+        if Instant::now() >= deadline {
+            dbg_log!("[pty-reap] wait_for_reapers timed out");
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
+}
 
 // ─── IPC イベント ───────────────────────────────────────────────────────────
 
@@ -126,7 +157,9 @@ struct PtySessionArgs {
 
 pub struct PtySession {
     pub id: String,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// PTY の入力パイプ。**後始末で master より先に閉じる必要がある**ため Option。
+    /// ConPTY は入力側が開いたままだと ClosePseudoConsole が返らない (reap 参照)。
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
     // Fix 3: Option に変更して Drop 時に take → drop で PTY を閉じ、
     //        reader thread の blocking read を EOF で解放できるようにする
     // exit-hang fix: watcher スレッドと共有するため Arc に変更
@@ -151,7 +184,7 @@ impl PtySession {
     fn new(args: PtySessionArgs) -> Self {
         Self {
             id: args.id,
-            writer: Mutex::new(args.writer),
+            writer: Mutex::new(Some(args.writer)),
             master: args.master,
             child: args.child,
             stop_flag: args.stop_flag,
@@ -173,7 +206,12 @@ impl PtySession {
     }
 
     pub fn write_data(&self, data: &str) -> Result<(), PtyError> {
-        let mut writer = self.writer.lock();
+        let mut guard = self.writer.lock();
+        // 後始末が始まっていると writer は take 済み。閉じかけのセッションへの
+        // 書き込みはエラーにする（フロント側は close 済みタブとして扱う）。
+        let writer = guard
+            .as_mut()
+            .ok_or_else(|| PtyError::Write("session is closing".to_string()))?;
         writer
             .write_all(data.as_bytes())
             .map_err(|e| PtyError::Write(e.to_string()))?;
@@ -237,28 +275,47 @@ impl PtySession {
         let id = self.id.clone();
         let child = Arc::clone(&self.child);
         let master = Arc::clone(&self.master);
+        // 入力パイプ。master より先に閉じる必要があるので、ここで取り上げておく。
+        let writer = self.writer.lock().take();
         let handles = [
             self.reader_handle.lock().take(),
             self.flush_handle.lock().take(),
             self.watch_handle.lock().take(),
         ];
 
+        // spawn する前に増やす。spawn 後だと、終了処理が wait_for_reapers に入った時点で
+        // まだ 0 に見えてしまい、待たずに素通りする隙間ができる。
+        REAPS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+
         std::thread::spawn(move || {
+            let t = Instant::now();
+
+            // ── 順序が重要。ここを入れ替えると後始末が返らなくなる ──────────────
+            //
+            // ① 入力パイプを閉じる
+            // ② PTY を閉じる (ClosePseudoConsole)
+            // ③ 子プロセスを終了させる
+            //
+            // v1.8.1 までは ③ → ② の順だった。先に子を kill してしまうと
+            // ClosePseudoConsole が**永久に返らない**。これが「Windows では Drop の
+            // join が返らない」と言われていたものの正体で、ConPTY のホストプロセス
+            // (OpenConsole.exe) が孤児として残る原因でもあった。
+            drop(writer);
+            drop(master.lock().take());
+
             // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
             if let Some(mut child) = child.lock().take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
 
-            // Fix 3: master を drop して PTY を閉じ、reader の blocking read を EOF で解放する
-            drop(master.lock().take());
-
             // (2.10) detached thread リーク対策として join 自体は維持する。
             // 呼び出し元ではなくこのスレッドで待つので、返らなくても UI には影響しない。
             for handle in handles.into_iter().flatten() {
                 let _ = handle.join();
             }
-            dbg_log!("[pty-reap] session {id} reaped");
+            dbg_log!("[pty-reap] session {id} reaped in {:?}", t.elapsed());
+            REAPS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
         });
     }
 
@@ -442,17 +499,18 @@ fn spawn_read_thread(
         let mut read_count: u32 = 0;
         dbg_log!("[pty-read] reader loop entered");
 
+        // ⚠️ このループは stop_flag では抜けない。**EOF かエラーでのみ抜ける。**
+        //
+        // ConPTY の `ClosePseudoConsole` は「出力パイプが読み切られる」まで返らない。
+        // 停止要求が来た時点で読むのをやめると、後始末の master drop がそこで永久に
+        // 待たされ、セッションの後始末が完了しなくなる（ConPTY ホストの OpenConsole.exe が
+        // 孤児として残る）。そのため停止時も EOF が来るまで読み続けて、パイプを排出する。
+        //
+        // 停止時に EOF が来る仕組み: 後始末 (PtySession::reap) が master を drop するため、
+        // 読み切った時点で read() が Ok(0) を返してこのループが終わる。
+        // stop_flag は「pause を打ち切って読み続けさせる」ためだけに使う。
         loop {
-            if read_stop.load(Ordering::Relaxed) {
-                dbg_log!("[pty-read] stop_flag set, exit");
-                break;
-            }
-
             wait_while_paused(&read_pause, &read_stop);
-            if read_stop.load(Ordering::Relaxed) {
-                dbg_log!("[pty-read] stop_flag set after pause, exit");
-                break;
-            }
 
             match reader.read(&mut read_buf) {
                 Ok(0) => {
@@ -1241,6 +1299,19 @@ mod pty_integration_tests {
         let _ = mgr.write(id, "\x1b[1;1R");
     }
 
+    /// 後始末が捌けるのを待つ。**テストの最後に呼ぶこと。**
+    ///
+    /// 後始末は別スレッドで走るので、待たずにテストプロセスが終了すると
+    /// ConPTY のホストプロセス (OpenConsole.exe) が孤児として残り、
+    /// `cargo test` を回すたびにマシンへ積み上がっていく。
+    ///
+    /// **完了は assert しない。** ConPTY の ClosePseudoConsole は、起動直後の
+    /// セッションを閉じたときなど返ってこないことがあり、そこは racker 側では
+    /// どうにもできない。ここでの待ちは「捌けるぶんは捌かせる」ための best-effort。
+    fn settle() {
+        let _ = wait_for_reapers(std::time::Duration::from_secs(3));
+    }
+
     /// spawn → write → 出力受信 → kill が一通り動くこと。
     /// read スレッドと flush スレッドが実際に協調して Data イベントを届けられるかを見る。
     #[test]
@@ -1263,6 +1334,7 @@ mod pty_integration_tests {
         );
 
         mgr.kill(&id).expect("kill できること");
+        settle();
     }
 
     /// `kill()` が呼び出し元スレッドをブロックせずに返ること。
@@ -1294,6 +1366,10 @@ mod pty_integration_tests {
             "kill() が {elapsed:?} ブロックした。後始末を reaper スレッドへ逃がさずに \
              呼び出し元で待つと、メインスレッドが止まり UI ごとフリーズする"
         );
+
+        // 呼び出し元は待たないが、後始末そのものは最後まで走り切る必要がある。
+        // ここで待たずに終わると ConPTY のホストが孤児として残る。
+        settle();
     }
 
     /// タブの開閉を繰り返してもフロント側の呼び出しが詰まらないこと。
@@ -1325,6 +1401,8 @@ mod pty_integration_tests {
             "spawn/kill を {ROUNDS} 回繰り返すのに {elapsed:?} かかった (上限 {budget:?})。\
              後始末が呼び出し元をブロックしている疑いがある"
         );
+
+        settle();
     }
 
     /// 子プロセスが自然終了したときに Exit イベントが届くこと。
@@ -1342,6 +1420,8 @@ mod pty_integration_tests {
         mgr.write(&id, "exit\r\n").expect("write できること");
 
         let (found, seen) = wait_for(&rx, "\"type\":\"exit\"", 15);
+        drop(mgr); // シェルは自然終了しているが、セッションの後始末は Drop 経由で走る
+        settle();
         assert!(
             found,
             "シェル終了後に Exit イベントが届かない。受信内容: {seen}"
@@ -1371,6 +1451,7 @@ mod pty_integration_tests {
         );
 
         mgr.kill(&id).expect("kill できること");
+        settle();
     }
 
     /// pause / resume を往復してもデータが失われず、read スレッドが復帰すること。
@@ -1395,5 +1476,6 @@ mod pty_integration_tests {
         assert!(found, "resume 後に出力が届かない。受信内容: {seen}");
 
         mgr.kill(&id).expect("kill できること");
+        settle();
     }
 }

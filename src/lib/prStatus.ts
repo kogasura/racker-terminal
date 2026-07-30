@@ -85,6 +85,28 @@ export function groupTabsByCwd(
 }
 
 /**
+ * この tick で PR 状態を引くべきかを決める純関数。
+ *
+ * PR バッジは**見た目だけの情報**で、通知には使わない。ウィンドウを見ていない
+ * 間に更新しても誰も気付かず、`git` と `gh` のプロセス起動とネットワーク往復
+ * だけが残る。実測では 90 秒あたり git 2 回 + gh 3 回が走っていた。
+ * ノート PC では、その都度ネットワークを起こすのは無視できない。
+ *
+ * そこでウィンドウが前面にある間だけ引く。裏に回っている間は止め、
+ * 戻ってきた時点で引き直すので、見るときには最新になっている。
+ *
+ * @param isFocused - ウィンドウが前面にあるか
+ * @param hasEverPolled - 一度でも取得したことがあるか
+ *
+ * 起動直後はフォーカスが確定していないことがあるため、未取得のうちは
+ * フォーカス状態によらず 1 回は引く（初回のバッジが出ないのを防ぐ）。
+ */
+export function shouldPollPr(isFocused: boolean, hasEverPolled: boolean): boolean {
+  if (!hasEverPolled) return true;
+  return isFocused;
+}
+
+/**
  * 作業ディレクトリの PR 状態を取得する。
  *
  * `git` や `gh` が無い環境、未認証、リポジトリでない場合はすべて null を返す。

@@ -1394,6 +1394,11 @@ mod pty_integration_tests {
     }
 
     /// deadline まで受信し続け、`needle` を含む出力が来たら true。
+    ///
+    /// 実出力を待つ箇所では 30 秒と長めに取っている。これは「30 秒かかってよい」
+    /// という意味ではなく、**混雑したマシンでも誤検知しない**ための上限。
+    /// 正常時は数十 ms で返るので、伸ばしても通常のテスト時間には影響しない。
+    /// (実測: CPU を埋めた状態だと実プロセスの echo 往復が秒単位まで伸びる)
     fn wait_for(rx: &mpsc::Receiver<String>, needle: &str, secs: u64) -> (bool, String) {
         let deadline = Instant::now() + std::time::Duration::from_secs(secs);
         let mut seen = String::new();
@@ -1448,7 +1453,7 @@ mod pty_integration_tests {
         mgr.write(&id, "echo racker_probe_marker\r\n")
             .expect("write できること");
 
-        let (found, seen) = wait_for(&rx, "racker_probe_marker", 15);
+        let (found, seen) = wait_for(&rx, "racker_probe_marker", 30);
         assert!(
             found,
             "echo の出力が Data イベントで届かない。受信内容: {seen}"
@@ -1466,8 +1471,13 @@ mod pty_integration_tests {
     /// 再開は read スレッドからの notify で拾う設計なので、それが効いているかを見る。
     ///
     /// この経路が壊れると省電力と引き換えに体感がはっきり悪くなるため、
-    /// 遅延そのものを測って上限を課している。
+    /// 遅延を測って確かめる。
     /// （notify を外して実際に約 1.05 秒へ悪化することを確認済み）
+    ///
+    /// **絶対値ではなく「アクティブ時との差」で判定する。** 実プロセスの
+    /// echo 往復はマシンの負荷でぶれるため、絶対値の閾値だと混雑時に誤検知する。
+    /// 負荷は両方の測定に等しく乗るので、差を見れば load に左右されずに
+    /// 「タイマー待ちに引きずられたか」だけを判別できる。
     #[test]
     fn output_is_prompt_even_after_going_idle() {
         let (channel, rx) = probe_channel();
@@ -1480,21 +1490,38 @@ mod pty_integration_tests {
         answer_dsr(&mgr, &id);
         // 起動直後の出力を捨てて、静かな状態にする
         let _ = wait_for(&rx, "___never___", 2);
+        while rx.try_recv().is_ok() {}
 
-        // flush スレッドがアイドル判定に入るまで待つ
+        /// echo を 1 往復させて所要時間を返す
+        fn echo_latency(
+            mgr: &PtyManager,
+            id: &str,
+            rx: &mpsc::Receiver<String>,
+            marker: &str,
+        ) -> std::time::Duration {
+            let started = Instant::now();
+            mgr.write(id, &format!("echo {marker}\r\n"))
+                .expect("write できること");
+            let (found, seen) = wait_for(rx, marker, 30);
+            assert!(found, "{marker} の出力が届かない。受信内容: {seen}");
+            started.elapsed()
+        }
+
+        // 1) アクティブ状態（直前まで出力があった）での往復時間。これが基準。
+        let active = echo_latency(&mgr, &id, &rx, "active_marker");
+        while rx.try_recv().is_ok() {}
+
+        // 2) flush スレッドがアイドル判定に入るまで待ってから、同じことをする
         std::thread::sleep(FLUSH_IDLE_AFTER + std::time::Duration::from_millis(300));
-        while rx.try_recv().is_ok() {} // 残っていれば捨てる
+        while rx.try_recv().is_ok() {}
+        let idle = echo_latency(&mgr, &id, &rx, "idle_wake_marker");
 
-        let started = Instant::now();
-        mgr.write(&id, "echo idle_wake_marker\r\n")
-            .expect("write できること");
-        let (found, seen) = wait_for(&rx, "idle_wake_marker", 10);
-        let latency = started.elapsed();
-
-        assert!(found, "アイドル後の出力が届かない。受信内容: {seen}");
+        // notify が効いていれば両者はほぼ同じ。効いていなければアイドル側だけ
+        // タイマー待ち(FLUSH_IDLE_INTERVAL) のぶん遅れる。
+        let allowed = active + FLUSH_IDLE_INTERVAL / 2;
         assert!(
-            latency < std::time::Duration::from_millis(600),
-            "アイドル後の初回出力に {latency:?} かかった。\
+            idle < allowed,
+            "アイドル後の初回出力が遅い: idle={idle:?} / active={active:?} (許容 {allowed:?})。\
              read スレッドからの notify が効かず、flush のタイマー待ち\
              ({FLUSH_IDLE_INTERVAL:?}) に引きずられている疑いがある"
         );
@@ -1547,24 +1574,29 @@ mod pty_integration_tests {
     #[test]
     fn repeated_open_close_does_not_pile_up() {
         const ROUNDS: usize = 10;
-        // 1 回あたり 500ms も呼び出し元を止めるようだと、実使用では体感で固まる。
-        let budget = std::time::Duration::from_millis(500) * ROUNDS as u32;
+        // **kill の所要時間だけを積算する。**
+        // ループ全体を測ると spawn（実プロセスの起動）が混ざり、マシンの負荷で
+        // 大きくぶれる。ここで見たいのは「後始末が呼び出し元を待たせないか」だけ
+        // なので、spawn の時間は測定対象から外す。
+        let budget = std::time::Duration::from_millis(200) * ROUNDS as u32;
 
         let mgr = PtyManager::default();
-        let started = Instant::now();
+        let mut total_kill = std::time::Duration::ZERO;
 
         for _ in 0..ROUNDS {
             let (channel, _rx) = probe_channel();
             let id = mgr
                 .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
                 .expect("spawn できること");
+
+            let started = Instant::now();
             mgr.kill(&id).expect("kill できること");
+            total_kill += started.elapsed();
         }
 
-        let elapsed = started.elapsed();
         assert!(
-            elapsed < budget,
-            "spawn/kill を {ROUNDS} 回繰り返すのに {elapsed:?} かかった (上限 {budget:?})。\
+            total_kill < budget,
+            "kill を {ROUNDS} 回で合計 {total_kill:?} かかった (上限 {budget:?})。\
              後始末が呼び出し元をブロックしている疑いがある"
         );
 
@@ -1585,7 +1617,7 @@ mod pty_integration_tests {
         answer_dsr(&mgr, &id);
         mgr.write(&id, "exit\r\n").expect("write できること");
 
-        let (found, seen) = wait_for(&rx, "\"type\":\"exit\"", 15);
+        let (found, seen) = wait_for(&rx, "\"type\":\"exit\"", 30);
         drop(mgr); // シェルは自然終了しているが、セッションの後始末は Drop 経由で走る
         settle();
         assert!(
@@ -1609,7 +1641,7 @@ mod pty_integration_tests {
         mgr.write(&id, "echo 日本語テスト文字列\r\n")
             .expect("write できること");
 
-        let (found, seen) = wait_for(&rx, "日本語テスト文字列", 15);
+        let (found, seen) = wait_for(&rx, "日本語テスト文字列", 30);
         assert!(found, "マルチバイト出力が復元できない。受信内容: {seen}");
         assert!(
             !seen.contains('\u{FFFD}'),
@@ -1638,7 +1670,7 @@ mod pty_integration_tests {
         std::thread::sleep(std::time::Duration::from_millis(300));
         mgr.set_read_paused(&id, false).expect("resume できること");
 
-        let (found, seen) = wait_for(&rx, "after_pause_marker", 15);
+        let (found, seen) = wait_for(&rx, "after_pause_marker", 30);
         assert!(found, "resume 後に出力が届かない。受信内容: {seen}");
 
         mgr.kill(&id).expect("kill できること");

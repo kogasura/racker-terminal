@@ -127,13 +127,6 @@ export function nextAgentStateFromSession(
 }
 
 /**
- * WSL タブが使っている distro を集める。
- *
- * `list_claude_sessions` に渡す distro を、実際に開いているものだけに絞るために使う。
- * `\\wsl.localhost\` へのアクセスは停止中の WSL を起動させてしまうため、
- * 使っていない distro を渡すとポーリングのたびに WSL が起きてしまう。
- */
-/**
  * WSL 側を見に行く頻度（Windows 側の何回に 1 回か）。
  *
  * Windows 側はローカルのファイル読み取りなので安いが、WSL 側は
@@ -156,6 +149,13 @@ export function shouldPollWsl(tickCount: number, everyN: number = WSL_POLL_EVERY
   return tickCount % everyN === 0;
 }
 
+/**
+ * WSL タブが使っている distro を集める。
+ *
+ * `list_claude_sessions` に渡す distro を、実際に開いているものだけに絞るために使う。
+ * `\\wsl.localhost\` へのアクセスは停止中の WSL を起動させてしまうため、
+ * 使っていない distro を渡すとポーリングのたびに WSL が起きてしまう。
+ */
 export function collectWslDistros(tabs: { args?: string[] }[]): string[] {
   const found = new Set<string>();
   for (const tab of tabs) {

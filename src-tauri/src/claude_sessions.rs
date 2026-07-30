@@ -110,7 +110,12 @@ fn wsl_session_dirs(distro: &str) -> Vec<PathBuf> {
 /// 使っていない distro まで走査すると、ポーリングのたびに WSL を起こすことになる。
 ///
 /// 読み取りに失敗した環境は黙って飛ばし、取れたぶんだけを返す。
-#[tauri::command]
+///
+/// `(async)` は必須。これが無いとメインスレッドで実行される。この関数は
+/// `\\wsl.localhost\` (9P 経由のネットワークファイルシステム) を走査するため、
+/// WSL が停止中・応答不良のときは `read_dir` が数秒返らない。2 秒ごとに
+/// 呼ばれるので、メインスレッドで動かすとウィンドウが慢性的に固まる。
+#[tauri::command(async)]
 pub fn list_claude_sessions(distros: Vec<String>) -> Vec<ClaudeSession> {
     let mut out = vec![];
 

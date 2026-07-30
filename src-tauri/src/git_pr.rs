@@ -83,7 +83,10 @@ fn pr_for_branch(cwd: &Path, branch: &str) -> Option<GhPrView> {
 /// git リポジトリでない場合は `None`。リポジトリだが PR が無い場合は
 /// ブランチ名だけが入った `PrInfo` を返す（「PR 未作成」と「リポジトリ外」を
 /// 呼び出し側が区別できるようにするため）。
-#[tauri::command]
+///
+/// `(async)` は必須。これが無いとメインスレッドで実行され、`gh` のネットワーク
+/// 往復（数百 ms〜数秒）の間ウィンドウが固まる。30 秒ごとに cwd の数だけ呼ばれる。
+#[tauri::command(async)]
 pub fn get_pr_status(cwd: String) -> Option<PrInfo> {
     let path = Path::new(&cwd);
     if !path.is_dir() {

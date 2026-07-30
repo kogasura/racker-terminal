@@ -67,7 +67,11 @@ fn scrollback_path(app: &AppHandle, tab_id: &str) -> Option<PathBuf> {
 ///
 /// 失敗しても false を返すだけでエラーにしない。scrollback の保存は
 /// 付加機能であり、失敗がターミナルの動作に影響してはいけない。
-#[tauri::command]
+///
+/// この先の command はすべて `(async)` を付けてある。これが無いと
+/// メインスレッドで実行され、ファイル I/O の間ウィンドウが固まる
+/// (保存は 30 秒ごとに全タブぶん走る)。
+#[tauri::command(async)]
 pub fn save_scrollback(app: AppHandle, tab_id: String, content: String) -> bool {
     let Some(path) = scrollback_path(&app, &tab_id) else {
         return false;
@@ -76,14 +80,14 @@ pub fn save_scrollback(app: AppHandle, tab_id: String, content: String) -> bool 
 }
 
 /// 保存された画面内容を読み出す。無い / 読めない場合は None。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_scrollback(app: AppHandle, tab_id: String) -> Option<String> {
     let path = scrollback_path(&app, &tab_id)?;
     fs::read_to_string(path).ok()
 }
 
 /// タブを閉じたときに保存内容を捨てる。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_scrollback(app: AppHandle, tab_id: String) -> bool {
     let Some(path) = scrollback_path(&app, &tab_id) else {
         return false;
@@ -95,7 +99,7 @@ pub fn delete_scrollback(app: AppHandle, tab_id: String) -> bool {
 ///
 /// クラッシュ等で `delete_scrollback` を呼べなかったぶんが残り続けるため、
 /// 起動時に一度まとめて片付ける。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn prune_scrollback(app: AppHandle, keep_tab_ids: Vec<String>) -> u32 {
     let Some(dir) = scrollback_dir(&app) else {
         return 0;

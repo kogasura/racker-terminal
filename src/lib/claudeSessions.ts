@@ -133,6 +133,29 @@ export function nextAgentStateFromSession(
  * `\\wsl.localhost\` へのアクセスは停止中の WSL を起動させてしまうため、
  * 使っていない distro を渡すとポーリングのたびに WSL が起きてしまう。
  */
+/**
+ * WSL 側を見に行く頻度（Windows 側の何回に 1 回か）。
+ *
+ * Windows 側はローカルのファイル読み取りなので安いが、WSL 側は
+ * `\\wsl.localhost\` = 9P 越しのネットワークファイルシステムで、
+ * **停止した WSL を起こしてしまう**。2 秒ごとに触ると WSL は永久に眠れず、
+ * ノート PC ではそのぶんバッテリーを食う。
+ *
+ * Claude の状態表示が数秒遅れても実用上は困らないので、WSL 側だけ間引く。
+ */
+export const WSL_POLL_EVERY_N_TICKS = 5;
+
+/**
+ * この tick で WSL 側も見に行くかを決める純関数。
+ *
+ * 初回 (tick 0) は必ず見る。起動直後に WSL の Claude セッションを
+ * 取りこぼすと、再開対象の特定が最初の 1 回ぶん遅れるため。
+ */
+export function shouldPollWsl(tickCount: number, everyN: number = WSL_POLL_EVERY_N_TICKS): boolean {
+  if (everyN <= 1) return true;
+  return tickCount % everyN === 0;
+}
+
 export function collectWslDistros(tabs: { args?: string[] }[]): string[] {
   const found = new Set<string>();
   for (const tab of tabs) {

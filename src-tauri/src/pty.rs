@@ -42,6 +42,38 @@ const RAW_BUF_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 /// ターミナルが恒久ハングするのを防ぐ安全弁。
 const MAX_READ_PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
 
+// ─── flush スレッドの待ち時間 ────────────────────────────────────────────────
+//
+// flush スレッドは Condvar のタイムアウトで定期的に起きる。この間隔がそのまま
+// **アイドル時の消費電力**になる。出力が流れていない間も起き続けると、
+// タブ 1 つにつき毎秒 62.5 回 CPU を起こすことになり、8 タブで毎秒 500 回。
+// ノート PC では CPU が深い休止状態に入れず、何もしていないのにバッテリーを食う。
+//
+// そこで「出力が流れている間」と「止まっている間」で待ち時間を変える。
+// 出力再開の検知はタイマーではなく read スレッドからの notify で行うので、
+// アイドル側を伸ばしても表示は遅れない (append_read_bytes 参照)。
+
+/// 出力が流れている間の待ち時間。バーストを 1 回の IPC にまとめるための窓。
+const FLUSH_ACTIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+
+/// 最後に出力を見てからこの時間が過ぎたら、アイドルとみなして待ちを伸ばす。
+/// 短すぎるとバーストの合間で頻繁にモードが切り替わる。
+const FLUSH_IDLE_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// アイドル時の待ち時間。
+///
+/// 出力が来たら notify で即座に起こされるので、この値は表示の遅延にはならない。
+/// 無期限にしないのは、notify を取りこぼした場合でも必ず復帰させるため
+/// (stop_flag のチェックもこの周期で回る)。
+const FLUSH_IDLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// child watcher が子プロセスの終了を確認する間隔。
+///
+/// これもアイドル時に効いてくる (タブ 1 つにつき毎秒 10 回 → 500ms なら 2 回)。
+/// 伸ばすと「シェルが終了してからタブに反映されるまで」が延びるが、
+/// これは人が知覚できる速さの話ではないので 500ms で十分。
+const CHILD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
 // ─── reaper の在庫カウンタ ───────────────────────────────────────────────────
 //
 // 後始末 (PtySession::reap) は別スレッドで走るため、プロセスがその完了前に終了すると
@@ -458,6 +490,12 @@ fn wait_while_paused(read_pause: &ReadPause, stop_flag: &AtomicBool) {
 fn append_read_bytes(state: &SharedFlushState, bytes: &[u8], read_count: u32) {
     let (lock, cvar) = &**state;
     let mut s = lock.lock();
+
+    // 追記前に空だったか。空 → 非空 の変化は「出力が再開した」ことを意味する。
+    // アイドル中の flush スレッドは最大 1 秒眠っているので、ここで起こさないと
+    // 最初の 1 文字の表示が最大 1 秒遅れる。
+    let was_empty = s.raw_buf.is_empty();
+
     s.raw_buf.extend_from_slice(bytes);
 
     // back-pressure: raw_buf が RAW_BUF_LIMIT_BYTES を超えたら古い半分を破棄する。
@@ -481,7 +519,9 @@ fn append_read_bytes(state: &SharedFlushState, bytes: &[u8], read_count: u32) {
         dbg_log!("[pty-read] tiny={tiny} n={}", bytes.len());
     }
     drop(s);
-    if tiny {
+    // was_empty: アイドルで眠っている flush スレッドを起こす（上記参照）。
+    // tiny: 従来どおり、小さな読み取りは待たずに吐く（DSR-CPR 応答等）。
+    if tiny || was_empty {
         cvar.notify_one();
     }
     // burst 時の notify は省略 — 16ms 以内に wait_timeout が起きる
@@ -544,6 +584,19 @@ fn spawn_read_thread(
         }
         dbg_log!("[pty-read] reader thread exit");
     })
+}
+
+/// flush スレッドが次に起きるまでの待ち時間を決める純関数。
+///
+/// `since_last_data` は最後に出力を処理してからの経過時間。
+/// 出力が流れている間は短く（バーストをまとめる）、止まっていれば長く
+/// （CPU を起こさない）。
+fn flush_wait_interval(since_last_data: std::time::Duration) -> std::time::Duration {
+    if since_last_data >= FLUSH_IDLE_AFTER {
+        FLUSH_IDLE_INTERVAL
+    } else {
+        FLUSH_ACTIVE_INTERVAL
+    }
 }
 
 /// 持ち越し pending を lossy で吐き出す（データロス防止）。
@@ -630,8 +683,9 @@ fn spawn_flush_thread(
     flush_stop: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let timeout = std::time::Duration::from_millis(16);
         dbg_log!("[pty-flush] flush loop entered");
+        // 最後に出力を処理した時刻。これを基準に待ち時間を切り替える。
+        let mut last_data = Instant::now();
 
         loop {
             if flush_stop.load(Ordering::Relaxed) {
@@ -640,7 +694,11 @@ fn spawn_flush_thread(
                 break;
             }
 
-            // wait_timeout(16ms) で待機。notify または timeout で起床。
+            // 出力が流れている間は 16ms でバーストをまとめ、止まっている間は
+            // 待ちを伸ばして CPU を起こさない。再開は read スレッドの notify で
+            // 拾うので、伸ばしても表示は遅れない。
+            let timeout = flush_wait_interval(last_data.elapsed());
+
             let (lock, cvar) = &*flush_state;
             let mut s = lock.lock();
             let _ = cvar.wait_for(&mut s, timeout);
@@ -659,9 +717,13 @@ fn spawn_flush_thread(
             let error = s.error.take();
 
             if raw.is_empty() && !eof && error.is_none() {
-                // 何もなければ次の wait へ
+                // 何もなければ次の wait へ。
+                // last_data は更新しないので、無出力が続けばアイドル側の待ちに移る。
                 continue;
             }
+
+            // 出力を見た。しばらくは 16ms 周期（アクティブ）で回す。
+            last_data = Instant::now();
 
             // pending + raw を組み立てる
             let combined = {
@@ -786,7 +848,7 @@ fn spawn_child_watcher(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         dbg_log!("[pty-watch] watcher loop entered");
-        let poll_interval = std::time::Duration::from_millis(100);
+        let poll_interval = CHILD_POLL_INTERVAL;
 
         loop {
             if stop_flag.load(Ordering::Relaxed) {
@@ -1168,6 +1230,65 @@ mod tests {
         assert_eq!(x_count, 75);
     }
 
+    // ─── flush スレッドの待ち時間 ────────────────────────────────────────────
+    //
+    // ここはアイドル時の消費電力に直結する。出力が止まっている間まで 16ms で
+    // 起き続けると、タブ 1 つにつき毎秒 62.5 回 CPU を起こすことになる。
+
+    #[test]
+    fn flush_waits_briefly_while_output_is_flowing() {
+        // 直前まで出力があった → バーストをまとめるため短い窓で回る
+        let t = flush_wait_interval(std::time::Duration::from_millis(0));
+        assert_eq!(t, FLUSH_ACTIVE_INTERVAL);
+    }
+
+    #[test]
+    fn flush_stays_active_just_before_the_idle_threshold() {
+        let t = flush_wait_interval(FLUSH_IDLE_AFTER - std::time::Duration::from_millis(1));
+        assert_eq!(t, FLUSH_ACTIVE_INTERVAL);
+    }
+
+    #[test]
+    fn flush_backs_off_once_output_stops() {
+        // 出力が止まったら待ちを伸ばす。ここが伸びないとアイドルで電力を食う。
+        let t = flush_wait_interval(FLUSH_IDLE_AFTER);
+        assert_eq!(t, FLUSH_IDLE_INTERVAL);
+    }
+
+    #[test]
+    fn flush_stays_backed_off_while_idle_continues() {
+        let t = flush_wait_interval(std::time::Duration::from_secs(60));
+        assert_eq!(t, FLUSH_IDLE_INTERVAL);
+    }
+
+    #[test]
+    fn idle_interval_is_much_longer_than_active() {
+        // 「アイドルのほうが長い」という関係が崩れたら省電力の意味が無くなる。
+        // 具体値ではなく関係を固定する。
+        assert!(
+            FLUSH_IDLE_INTERVAL >= FLUSH_ACTIVE_INTERVAL * 10,
+            "アイドル時の待ちが短すぎる: idle={FLUSH_IDLE_INTERVAL:?} active={FLUSH_ACTIVE_INTERVAL:?}"
+        );
+    }
+
+    #[test]
+    fn idle_wakeups_per_second_stay_small() {
+        // アイドル時の起床回数（1 タブあたり毎秒）。8 タブ開いても
+        // 二桁に収まる範囲に留める。
+        let wakeups_per_sec = 1.0 / FLUSH_IDLE_INTERVAL.as_secs_f64();
+        assert!(
+            wakeups_per_sec <= 2.0,
+            "アイドル時に毎秒 {wakeups_per_sec} 回起きている"
+        );
+    }
+
+    #[test]
+    fn child_poll_is_not_a_busy_loop() {
+        // 子プロセスの終了確認もアイドル時に効く。人が知覚できる速さで足りる。
+        assert!(CHILD_POLL_INTERVAL >= std::time::Duration::from_millis(250));
+        assert!(CHILD_POLL_INTERVAL <= std::time::Duration::from_secs(1));
+    }
+
     #[test]
     fn back_pressure_constants_sanity() {
         // 定数が期待値であることを確認する（値の変更検知）
@@ -1331,6 +1452,51 @@ mod pty_integration_tests {
         assert!(
             found,
             "echo の出力が Data イベントで届かない。受信内容: {seen}"
+        );
+
+        mgr.kill(&id).expect("kill できること");
+        settle();
+    }
+
+    /// **アイドルが続いた後でも、最初の出力がすぐ届くこと。**
+    ///
+    /// flush スレッドは出力が止まると待ちを 1 秒へ伸ばす（省電力のため）。
+    /// このとき、出力再開をタイマー任せにすると最初の 1 文字が最大 1 秒遅れ、
+    /// 「キーを打っても表示されない」状態になる。
+    /// 再開は read スレッドからの notify で拾う設計なので、それが効いているかを見る。
+    ///
+    /// この経路が壊れると省電力と引き換えに体感がはっきり悪くなるため、
+    /// 遅延そのものを測って上限を課している。
+    /// （notify を外して実際に約 1.05 秒へ悪化することを確認済み）
+    #[test]
+    fn output_is_prompt_even_after_going_idle() {
+        let (channel, rx) = probe_channel();
+        let mgr = PtyManager::default();
+
+        let id = mgr
+            .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+            .expect("spawn できること");
+
+        answer_dsr(&mgr, &id);
+        // 起動直後の出力を捨てて、静かな状態にする
+        let _ = wait_for(&rx, "___never___", 2);
+
+        // flush スレッドがアイドル判定に入るまで待つ
+        std::thread::sleep(FLUSH_IDLE_AFTER + std::time::Duration::from_millis(300));
+        while rx.try_recv().is_ok() {} // 残っていれば捨てる
+
+        let started = Instant::now();
+        mgr.write(&id, "echo idle_wake_marker\r\n")
+            .expect("write できること");
+        let (found, seen) = wait_for(&rx, "idle_wake_marker", 10);
+        let latency = started.elapsed();
+
+        assert!(found, "アイドル後の出力が届かない。受信内容: {seen}");
+        assert!(
+            latency < std::time::Duration::from_millis(600),
+            "アイドル後の初回出力に {latency:?} かかった。\
+             read スレッドからの notify が効かず、flush のタイマー待ち\
+             ({FLUSH_IDLE_INTERVAL:?}) に引きずられている疑いがある"
         );
 
         mgr.kill(&id).expect("kill できること");

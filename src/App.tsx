@@ -9,6 +9,7 @@ import {
   listClaudeSessions,
   matchSessionsToTabs,
   collectWslDistros,
+  shouldPollWsl,
 } from './lib/claudeSessions';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
 import { getPrStatus, groupTabsByCwd } from './lib/prStatus';
@@ -272,13 +273,22 @@ function App() {
   useEffect(() => {
     const POLL_INTERVAL_MS = 2000;
     let cancelled = false;
+    // WSL 側を間引くための通し番号（shouldPollWsl 参照）
+    let tickCount = 0;
 
     const tick = async () => {
       const before = useAppStore.getState();
       const tabList = Object.values(before.tabs);
       // 実際に開いている WSL タブの distro だけを渡す。
       // 使っていない distro を渡すと、停止中の WSL をポーリングのたびに起こしてしまう。
-      const sessions = await listClaudeSessions(collectWslDistros(tabList));
+      //
+      // さらに、開いている distro であっても毎回は見に行かない。
+      // `\\wsl.localhost\` へのアクセスは 9P 越しで高く、2 秒ごとに触ると
+      // WSL が眠れなくなる。Windows 側だけ 2 秒、WSL 側は 10 秒に 1 回にする。
+      const distros = shouldPollWsl(tickCount) ? collectWslDistros(tabList) : [];
+      tickCount += 1;
+
+      const sessions = await listClaudeSessions(distros);
       if (cancelled || sessions.length === 0) return;
 
       // await の前後で store が変化しうるので、照合には最新のタブ一覧を使う

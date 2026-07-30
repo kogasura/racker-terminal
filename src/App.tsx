@@ -36,8 +36,10 @@ interface NotifyState {
 /**
  * agentState が変わったタブについて、必要なら通知を出す。
  * prevStates は呼び出し側が持つ「直前の状態」の控えで、ここで最新値に更新する。
+ *
+ * テストのため export している（App 本体は描画を伴うので直接は回しにくい）。
  */
-function notifyChangedTabs(
+export function notifyChangedTabs(
   state: NotifyState,
   prevStates: Map<string, AgentState | undefined>,
 ): void {
@@ -59,8 +61,10 @@ function notifyChangedTabs(
 /**
  * 閉じられたタブを控えから外す。
  * タブ ID が再利用されることはないが、長時間の運用で Map が単調増加するのを防ぐ。
+ *
+ * テストのため export している。
  */
-function pruneClosedTabs(
+export function pruneClosedTabs(
   prevStates: Map<string, AgentState | undefined>,
   tabs: Record<string, Tab>,
 ): void {

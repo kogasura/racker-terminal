@@ -1,3 +1,14 @@
+// 本番コードでの unwrap / expect を禁じる。
+//
+// このアプリはユーザーの作業中ずっと居座る常駐アプリで、パニックはその場で
+// 全タブを道連れにする。Result を握り潰して落ちるより、エラーとして扱って
+// 動き続けるほうが常に良い。
+//
+// テストでは unwrap / expect は普通に使うので、cfg(test) では外している
+// (テスト側で握り潰すと、失敗の原因が分からなくなるだけで益がない)。
+// これにより `cargo clippy --all-targets` でも本番コードだけが検査される。
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 mod claude_sessions;
 mod command_audit;
 mod git_pr;
@@ -10,6 +21,10 @@ use pty::PtyManager;
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// ここだけは expect を許す。アプリの起動そのものに失敗した場合、
+// ウィンドウも PTY もまだ無く、ユーザーに知らせる手段も継続する状態も無い。
+// 黙って終了するより、パニックさせてメッセージを残すほうが調査できる。
+#[allow(clippy::expect_used, reason = "起動失敗は継続不能。落として原因を残す")]
 pub fn run() {
     tauri::Builder::default()
         // single-instance は他プラグインより先に登録する（プラグイン仕様）。

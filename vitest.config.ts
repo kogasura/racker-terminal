@@ -26,12 +26,12 @@ export default defineConfig({
       // 赤いのが普通の状態になって誰も見なくなる。ここは**下がったら気付く**ための
       // ラチェットとして使い、テストを足したときに一緒に引き上げていく。
       //
-      // 計測値 (2026-07-30): stmts 56.15 / branch 57.83 / funcs 51.98 / lines 56.71
+      // 計測値 (2026-07-30): stmts 56.99 / branch 58.55 / funcs 52.28 / lines 57.53
       thresholds: {
-        statements: 55,
-        branches: 56,
-        functions: 50,
-        lines: 55,
+        statements: 56,
+        branches: 57,
+        functions: 51,
+        lines: 56,
       },
     },
   },

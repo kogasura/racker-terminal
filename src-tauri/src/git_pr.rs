@@ -11,9 +11,9 @@
 //! - WSL タブ (Linux パスの cwd) は対象外。Windows の git からは辿れないため、
 //!   呼び出し側で Windows パスのタブだけを対象にする
 
+use crate::proc::hidden_command;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::Command;
 
 /// `gh pr view --json ...` の出力。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +54,9 @@ pub fn parse_branch_output(stdout: &str) -> Option<String> {
 
 /// 作業ディレクトリの現在のブランチ名を返す。git リポジトリでなければ `None`。
 fn current_branch(cwd: &Path) -> Option<String> {
-    let output = Command::new("git")
+    // hidden_command: 30 秒ごとに呼ばれるため、素の Command だとその都度
+    // コンソール窓が明滅する（proc.rs 参照）
+    let output = hidden_command("git")
         .current_dir(cwd)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -67,7 +69,7 @@ fn current_branch(cwd: &Path) -> Option<String> {
 
 /// 指定ブランチの PR を `gh` で引く。PR が無い場合も `None`。
 fn pr_for_branch(cwd: &Path, branch: &str) -> Option<GhPrView> {
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .current_dir(cwd)
         .args(["pr", "view", branch, "--json", "number,state,url,isDraft"])
         .output()

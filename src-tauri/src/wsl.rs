@@ -1,7 +1,7 @@
 //! WSL distro 検出用 Tauri command
 //! Phase 4 P-K で追加。
 
-use std::process::Command;
+use crate::proc::hidden_command;
 
 /// `wsl.exe --list --quiet` の出力をパースする純関数。
 /// - UTF-16LE BOM をスキップ
@@ -40,7 +40,10 @@ pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
 /// （WSL が停止中だと数秒かかる）の間ウィンドウが固まる。
 #[tauri::command(async)]
 pub fn list_wsl_distros() -> Vec<String> {
-    let Ok(output) = Command::new("wsl.exe").args(["--list", "--quiet"]).output() else {
+    let Ok(output) = hidden_command("wsl.exe")
+        .args(["--list", "--quiet"])
+        .output()
+    else {
         return vec![]; // wsl.exe が無い / 実行失敗 → 空
     };
     if !output.status.success() {

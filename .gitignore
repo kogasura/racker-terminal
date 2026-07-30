@@ -32,6 +32,9 @@ dist-ssr
 dist-installer/
 latest.json
 
+# Coverage output (npm run test:coverage で生成)
+coverage/
+
 # Release signing secrets (パスフレーズ等。コミット厳禁)
 .env
 .env.release

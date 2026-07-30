@@ -8,6 +8,7 @@ import {
   nextAgentStateFromSession,
   collectWslDistros,
   type ClaudeSession,
+  shouldPollWsl,
 } from './claudeSessions';
 
 describe('agentStateFromStatus', () => {
@@ -259,5 +260,36 @@ describe('matchSessionsToTabs', () => {
 
     expect(m.get('t1')).toBe(older);
     expect(m.get('t2')).toBe(newer);
+  });
+});
+
+describe('shouldPollWsl', () => {
+  // WSL 側は `\wsl.localhost\` = 9P 越しで高く、停止した WSL を起こしてしまう。
+  // 毎回触ると WSL が眠れないため、Windows 側より間引く。
+  it('初回は必ず見に行く（起動直後の取りこぼしを避ける）', () => {
+    expect(shouldPollWsl(0)).toBe(true);
+  });
+
+  it('間引かれた回は見に行かない', () => {
+    expect(shouldPollWsl(1)).toBe(false);
+    expect(shouldPollWsl(2)).toBe(false);
+    expect(shouldPollWsl(3)).toBe(false);
+    expect(shouldPollWsl(4)).toBe(false);
+  });
+
+  it('N 回に 1 回だけ見に行く', () => {
+    expect(shouldPollWsl(5)).toBe(true);
+    expect(shouldPollWsl(10)).toBe(true);
+  });
+
+  it('2 秒間隔なら WSL アクセスは 10 秒に 1 回になる', () => {
+    const ticks = 30; // 60 秒ぶん
+    const polls = Array.from({ length: ticks }, (_, i) => shouldPollWsl(i)).filter(Boolean).length;
+    expect(polls).toBe(6); // 60 秒 / 10 秒
+  });
+
+  it('everyN=1 を渡せば毎回見に行く（間引きを無効化できる）', () => {
+    expect(shouldPollWsl(1, 1)).toBe(true);
+    expect(shouldPollWsl(2, 1)).toBe(true);
   });
 });

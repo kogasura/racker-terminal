@@ -18,7 +18,34 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* 到達しないコードをエラーにする。消し忘れた早期 return の後ろに残った処理など、
+       「書いたのに動いていない」コードを検出する。 */
+    "allowUnreachableCode": false,
+
+    /* 値を返す関数で return を書き忘れた経路を検出する。
+       useEffect の分岐で cleanup を返したり返さなかったりする書き方も拾う。 */
+    "noImplicitReturns": true,
+
+    /* 基底クラスのメンバを上書きするときに override を必須にする。
+       React.Component の render / componentDidCatch のような「上書きのつもり」が
+       綴り違いで新規メンバになる事故を防ぐ。 */
+    "noImplicitOverride": true
+
+    /* ── 未導入のオプションと、その時点の違反件数 ──────────────────────────
+       段階的に潰す前提でここに残しておく。件数は計測値 (2026-07-30)。
+
+       - noUncheckedIndexedAccess (243 件)
+         arr[i] / map[key] を T | undefined として扱う。実バグを最も拾うが、
+         件数が多いため一括導入は避けている。
+
+       - exactOptionalPropertyTypes (36 件)
+         `foo?: string` に undefined を明示代入するのを禁じる。
+
+       - noPropertyAccessFromIndexSignature (58 件)
+         インデックスシグネチャへのドットアクセスを禁じる。様式寄りのため優先度は低い。
+    */
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

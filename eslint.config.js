@@ -1,4 +1,5 @@
 import tsParser from '@typescript-eslint/parser';
+import tsPlugin from '@typescript-eslint/eslint-plugin';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 // 関数の長さ・複雑度をチェックするための ESLint 設定。
@@ -8,7 +9,15 @@ import reactHooks from 'eslint-plugin-react-hooks';
 // ノイズが大きく、本来の目的が埋もれるため。必要になったら段階的に足す。
 export default [
   {
-    ignores: ['dist/**', 'src-tauri/**', 'node_modules/**', 'scripts/**', '*.config.js'],
+    ignores: [
+      'dist/**',
+      'src-tauri/**',
+      'node_modules/**',
+      'scripts/**',
+      '*.config.js',
+      // npm run test:coverage が吐く HTML レポート。同梱の JS は生成物なので見ない。
+      'coverage/**',
+    ],
   },
 
   {
@@ -45,6 +54,53 @@ export default [
 
       // コールバックのネスト。useEffect の中の setTimeout の中の … を防ぐ。
       'max-nested-callbacks': ['error', 4],
+    },
+  },
+
+  {
+    // ── 非同期の取り扱いを型情報で検査する ──────────────────────────────────
+    //
+    // 型情報を要求するルールなので parserOptions.projectService が要る。その分
+    // lint は遅くなるが、ここに挙げた 4 つは**導入時点で違反ゼロ**だった。
+    // つまり現状の書き方は既に正しく、これは「崩れたら気付く」ための固定であって
+    // 既存コードの修正を迫るものではない。
+    //
+    // 非同期の取り違えはこのアプリで実際に事故になった領域でもある
+    // (v1.8.1 のフリーズ)。安く張れる網は張っておく。
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    plugins: { '@typescript-eslint': tsPlugin },
+    rules: {
+      // await も .catch() も付けずに投げっぱなしにした Promise を検出する。
+      // 失敗が握り潰され、原因の分からない不整合として現れるのを防ぐ。
+      // 意図的に待たない場合は既存コードと同じく `void` を付ける。
+      '@typescript-eslint/no-floating-promises': 'error',
+
+      // Promise を返す関数を、それを待たない場所へ渡すのを検出する。
+      // 典型は onClick={async () => ...} や if (asyncFn()) で、
+      // 前者は例外が消え、後者は常に truthy になる。
+      '@typescript-eslint/no-misused-promises': 'error',
+
+      // Promise でない値への await を検出する。待っているつもりで待てていない箇所。
+      '@typescript-eslint/await-thenable': 'error',
+
+      // await を含まない async 関数を検出する。非同期のつもりで同期のまま、
+      // あるいは await の書き忘れ。テストのモックでは普通に起きるので対象外にしている。
+      '@typescript-eslint/require-await': 'error',
+
+      // ── 見送ったルール ────────────────────────────────────────────────
+      // no-unnecessary-condition (39 件): React の cancellation フラグ
+      //   (`let cancelled = false` を cleanup で true にする書き方) を
+      //   「常に falsy」と誤検知する。TypeScript がクロージャによる書き換えを
+      //   追えないための誤りで、こちらのコードの問題ではないため入れていない。
     },
   },
 

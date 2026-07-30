@@ -1,4 +1,5 @@
 mod claude_sessions;
+mod command_audit;
 mod git_pr;
 mod launch;
 mod pty;

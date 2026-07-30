@@ -19,13 +19,13 @@ interface State {
  * 想定は「開発者に見せる」用途で、ユーザー向けの体裁は整えていない。
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, componentStack: null };
+  override state: State = { error: null, componentStack: null };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     // DevTools を開ける環境（dev ビルド）では console にも残す
     console.error('[ErrorBoundary] 描画中に例外が発生しました:', error, info.componentStack);
     this.setState({ componentStack: info.componentStack ?? null });
@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<Props, State> {
     void navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  render() {
+  override render() {
     const { error, componentStack } = this.state;
     if (error === null) return this.props.children;
 

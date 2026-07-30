@@ -1296,6 +1296,37 @@ mod pty_integration_tests {
         );
     }
 
+    /// タブの開閉を繰り返してもフロント側の呼び出しが詰まらないこと。
+    ///
+    /// 報告されていたフリーズは「しばらく使っていると」発生していた。タブの開閉は
+    /// spawn → kill の繰り返しであり、1 回あたりの後始末がわずかでも呼び出し元を
+    /// 待たせると、回数を重ねるうちにメインスレッドの占有時間が積み上がる。
+    /// spawn/kill を連続で回して、合計時間が現実的な範囲に収まることを見る。
+    #[test]
+    fn repeated_open_close_does_not_pile_up() {
+        const ROUNDS: usize = 10;
+        // 1 回あたり 500ms も呼び出し元を止めるようだと、実使用では体感で固まる。
+        let budget = std::time::Duration::from_millis(500) * ROUNDS as u32;
+
+        let mgr = PtyManager::default();
+        let started = Instant::now();
+
+        for _ in 0..ROUNDS {
+            let (channel, _rx) = probe_channel();
+            let id = mgr
+                .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+                .expect("spawn できること");
+            mgr.kill(&id).expect("kill できること");
+        }
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < budget,
+            "spawn/kill を {ROUNDS} 回繰り返すのに {elapsed:?} かかった (上限 {budget:?})。\
+             後始末が呼び出し元をブロックしている疑いがある"
+        );
+    }
+
     /// 子プロセスが自然終了したときに Exit イベントが届くこと。
     /// flush スレッドの EOF / shutdown 経路を通す。
     #[test]

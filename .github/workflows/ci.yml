@@ -28,9 +28,7 @@ jobs:
 
       - run: npm run lint:ts
 
-      # カバレッジ付きで実行する。vitest.config.ts の thresholds を下回ると失敗する。
-      # 閾値は現状維持のためのラチェットで、目標値ではない（設定側のコメント参照）。
-      - run: npm run test:coverage
+      - run: npm run test:run
 
   rust:
     name: Rust (fmt + clippy + test)

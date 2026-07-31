@@ -1482,6 +1482,24 @@ mod pty_integration_tests {
         });
     }
 
+    /// PTY を起動するテストを直列化するためのロック。
+    ///
+    /// リーク検査 (`open_close_does_not_leak_*`) はプロセス数やハンドル数という
+    /// **プロセス全体で共有された値**を見る。並行して PTY を開くテストがあると、
+    /// その分が測定値に混ざって判定が壊れる。
+    ///
+    /// 実行時間への影響はほぼない (PTY テスト全体で数秒)。
+    static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// PTY を使うテストの共通の入り口。ロックを取り、Job への割り当てを済ませる。
+    ///
+    /// 戻り値のガードを**テストの最後まで持ち続けること** (`let _guard = ...`)。
+    /// `let _ = ...` と書くと即座に解放されて直列化されない。
+    fn pty_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+        confine_test_process();
+        PTY_TEST_LOCK.lock()
+    }
+
     /// 後始末が捌けるのを待つ。**テストの最後に呼ぶこと。**
     ///
     /// 後始末は別スレッドで走るので、待たずにテストプロセスが終了すると
@@ -1500,7 +1518,7 @@ mod pty_integration_tests {
     #[test]
     fn spawn_write_read_kill_roundtrip() {
         let (channel, rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1539,7 +1557,7 @@ mod pty_integration_tests {
     #[test]
     fn output_is_prompt_even_after_going_idle() {
         let (channel, rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1603,7 +1621,7 @@ mod pty_integration_tests {
     #[test]
     fn kill_does_not_block_the_caller() {
         let (channel, _rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1640,7 +1658,7 @@ mod pty_integration_tests {
         // なので、spawn の時間は測定対象から外す。
         let budget = std::time::Duration::from_millis(200) * ROUNDS as u32;
 
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
         let mut total_kill = std::time::Duration::ZERO;
 
@@ -1669,7 +1687,7 @@ mod pty_integration_tests {
     #[test]
     fn exit_event_is_delivered_on_shell_exit() {
         let (channel, rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1693,7 +1711,7 @@ mod pty_integration_tests {
     #[test]
     fn multibyte_output_is_not_corrupted() {
         let (channel, rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1720,7 +1738,7 @@ mod pty_integration_tests {
     #[test]
     fn read_pause_and_resume_does_not_lose_output() {
         let (channel, rx) = probe_channel();
-        confine_test_process();
+        let _guard = pty_test_guard();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1739,5 +1757,103 @@ mod pty_integration_tests {
 
         mgr.kill(&id).expect("kill できること");
         settle();
+    }
+
+    // ─── リソースリークの検査 ───────────────────────────────────────────────
+    //
+    // ここが壊れると「動くけれど閉じたものが片付かない」状態になり、使っている
+    // あいだ静かにマシンを圧迫する。実際 ConPTY のホストプロセスが 92 個まで
+    // 積み上がったことがあり、テストが無かったので気付けなかった。
+    //
+    // 閾値は**明らかな異常だけを捕まえる**幅にしてある。CI のランナーは負荷が高く、
+    // OS のハンドル解放にも遅れがあるため、厳しくすると偽陽性で信用を失う。
+    // リークが起きていれば開閉の回数に比例して増えるので、緩くても取り逃さない。
+
+    /// リーク検査で PTY を開閉する回数。
+    ///
+    /// リークがあれば「回数 × 1 セッション分」が積み上がるので、多いほど
+    /// ノイズとの差が開く。10 回で 3 秒程度に収まる。
+    const LEAK_ROUNDS: usize = 10;
+
+    /// PTY を開いて閉じる、を `LEAK_ROUNDS` 回繰り返す。
+    ///
+    /// ⚠️ **既知の制約**: シェルが動き出す前 (DSR-CPR に応答する前) に閉じると、
+    /// ConPTY の `ClosePseudoConsole` が返らず、そのセッションのホストプロセスは
+    /// アプリが終了するまで残る (実測で 10 回中 7 回)。ConPTY 側の挙動なので
+    /// racker からは回避できず、終了時に Job Object が回収する形で受けている。
+    /// ここでは実アプリと同じ「応答してから閉じる」経路を測る。
+    fn churn_ptys(mgr: &PtyManager) {
+        for _ in 0..LEAK_ROUNDS {
+            let (channel, rx) = probe_channel();
+            let id = mgr
+                .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
+                .expect("spawn できること");
+
+            // 実アプリと同じ状態にしてから閉じる。ConPTY は起動直後に
+            // カーソル位置問い合わせ (DSR-CPR) を出し、応答が返るまで動き出さない。
+            // 未応答のまま閉じるのは実アプリでは起きない状態で、そこだけを
+            // 見て「リークしている」と判定しても実態と合わない。
+            answer_dsr(mgr, &id);
+            let _ = wait_for(&rx, ">", 10);
+
+            mgr.kill(&id).expect("kill できること");
+        }
+        settle();
+    }
+
+    #[test]
+    #[cfg_attr(not(windows), ignore = "Job Object は Windows 固有")]
+    fn open_close_does_not_leak_processes() {
+        let _guard = pty_test_guard();
+        let Some(before) = crate::job::assigned_process_count() else {
+            // Job に入れられない環境では検査できない。テストを失敗にはしない
+            // (アプリ側も Job 無しで動作する設計のため)。
+            eprintln!("[leak] Job Object が使えないためプロセス数の検査をスキップ");
+            return;
+        };
+
+        let mgr = PtyManager::default();
+        churn_ptys(&mgr);
+
+        let after = crate::job::assigned_process_count().expect("2 回目も数えられること");
+        // 正常時は開閉したぶんがすべて消えて元の数に戻る。閉じきれなかった
+        // シェルや ConPTY のホストがいれば、その数だけ残る。
+        assert!(
+            after <= before + LEAK_PROCESS_SLACK,
+            "PTY を {LEAK_ROUNDS} 回開閉したあと Job 内のプロセスが {before} → {after} に増えた。             シェルまたは ConPTY のホストが片付いていない疑いがある"
+        );
+    }
+
+    /// プロセス数の許容増加。
+    ///
+    /// 正常時は 0。後始末が走りきる前に settle() を抜けた 1 件ぶんを見込んで
+    /// 少しだけ余裕を持たせる。リークすれば `LEAK_ROUNDS` (=10) 増えるので、
+    /// この幅でも取り逃さない。
+    const LEAK_PROCESS_SLACK: usize = 3;
+
+    /// ハンドル数の許容増加。
+    ///
+    /// 実測では開閉を繰り返しても数個しか動かない。ランナーの負荷や OS の
+    /// 遅延解放を吸収できるだけの幅を取っている。ハンドルを取りこぼしていれば
+    /// 1 セッションあたり数個ずつ増えるため、10 回で数十増えて確実に超える。
+    const LEAK_HANDLE_SLACK: usize = 50;
+
+    #[test]
+    #[cfg_attr(not(windows), ignore = "ハンドル数は Windows 固有")]
+    fn open_close_does_not_leak_handles() {
+        let _guard = pty_test_guard();
+        let Some(before) = crate::job::handle_count() else {
+            eprintln!("[leak] ハンドル数を取得できないため検査をスキップ");
+            return;
+        };
+
+        let mgr = PtyManager::default();
+        churn_ptys(&mgr);
+
+        let after = crate::job::handle_count().expect("2 回目も数えられること");
+        assert!(
+            after <= before + LEAK_HANDLE_SLACK,
+            "PTY を {LEAK_ROUNDS} 回開閉したあとハンドルが {before} → {after} に増えた。             パイプ・プロセス・PTY のハンドルを取りこぼしている疑いがある"
+        );
     }
 }

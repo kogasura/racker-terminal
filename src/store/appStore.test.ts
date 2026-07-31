@@ -1500,6 +1500,8 @@ function makeState(
     editingId: null,
     contextMenuOpen: false,
     wslDistros: [],
+    claudeMeta: null,
+    claudeUsage: null,
     closedTabs: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
     updateInfo: null,
@@ -3140,5 +3142,63 @@ describe('closedTabs / restoreLastClosedTab', () => {
       ) as { tabs: Record<string, { bypassPermissions?: boolean }> };
       expect(result.tabs[tabId].bypassPermissions).toBe(true);
     });
+  });
+});
+
+// --- setClaudeMeta / setClaudeUsage ---
+//
+// ステータスバーの値は数秒ごとに書き込まれる。値が変わっていないのに
+// 参照だけ差し替えると、会話が止まっているあいだも再描画が走り続けるため、
+// 「同じ値なら参照ごと据え置く」ことを担保する。
+
+describe('setClaudeMeta / setClaudeUsage', () => {
+  beforeEach(() => {
+    useAppStore.setState({ claudeMeta: null, claudeUsage: null });
+  });
+
+  it('setClaudeMeta: 同じタブの同じ値なら参照を据え置く（再描画を起こさない）', () => {
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5', contextTokens: 100 });
+    const first = useAppStore.getState().claudeMeta;
+
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5', contextTokens: 100 });
+
+    expect(useAppStore.getState().claudeMeta).toBe(first);
+  });
+
+  it('setClaudeMeta: コンテキスト量が動けば差し替える', () => {
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5', contextTokens: 100 });
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5', contextTokens: 200 });
+
+    expect(useAppStore.getState().claudeMeta?.meta.contextTokens).toBe(200);
+  });
+
+  it('setClaudeMeta: タブが変われば差し替える（前のタブの値を残さない）', () => {
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5', contextTokens: 100 });
+    useAppStore.getState().setClaudeMeta('t2', { model: 'claude-opus-5', contextTokens: 100 });
+
+    expect(useAppStore.getState().claudeMeta?.tabId).toBe('t2');
+  });
+
+  it('setClaudeMeta: null は表示を消す', () => {
+    useAppStore.getState().setClaudeMeta('t1', { model: 'claude-opus-5' });
+    useAppStore.getState().setClaudeMeta('t1', null);
+
+    expect(useAppStore.getState().claudeMeta).toBeNull();
+  });
+
+  it('setClaudeUsage: 同じ値なら参照を据え置く', () => {
+    useAppStore.getState().setClaudeUsage({ fiveHourPercent: 13, sevenDayPercent: 22 });
+    const first = useAppStore.getState().claudeUsage;
+
+    useAppStore.getState().setClaudeUsage({ fiveHourPercent: 13, sevenDayPercent: 22 });
+
+    expect(useAppStore.getState().claudeUsage).toBe(first);
+  });
+
+  it('setClaudeUsage: 利用率が動けば差し替える', () => {
+    useAppStore.getState().setClaudeUsage({ fiveHourPercent: 13 });
+    useAppStore.getState().setClaudeUsage({ fiveHourPercent: 16 });
+
+    expect(useAppStore.getState().claudeUsage?.fiveHourPercent).toBe(16);
   });
 });

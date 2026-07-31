@@ -60,6 +60,11 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
     patch.notificationsEnabled = notificationsEnabled;
   }
 
+  const statusBarEnabled = draft.statusBarEnabled !== false;
+  if (statusBarEnabled !== (settings.statusBarEnabled !== false)) {
+    patch.statusBarEnabled = statusBarEnabled;
+  }
+
   return patch;
 }
 
@@ -260,6 +265,21 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               <small className="dialog-hint">
                 表示中でないタブの Claude が応答待ちになったとき、または処理を終えたときに
                 Windows の通知を出します。いま開いているタブは通知しません。
+              </small>
+            </label>
+
+            <label className="dialog-field dialog-field--checkbox">
+              <input
+                type="checkbox"
+                checked={draft.statusBarEnabled !== false}
+                onChange={(e) =>
+                  setDraft({ ...draft, statusBarEnabled: e.target.checked })
+                }
+              />
+              <span className="dialog-label">画面下部に Claude の状況を表示する</span>
+              <small className="dialog-hint">
+                表示中のタブで動いている Claude のモデル・effort・コンテキスト消費量と、
+                プランの使用量（5 時間 / 週次）を 1 行で出します。
               </small>
             </label>
 

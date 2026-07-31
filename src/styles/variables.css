@@ -24,6 +24,18 @@
   --agent-working: #ff9500;  /* 本体 busy    rgb(255,149,0)  — 実行中 (shell も含む) */
   --agent-done:    #9ece6a;  /* racker 独自 — 完了（見るまで残る）。本体に対応する状態はない */
 
+  /* ステータスバー（画面下部の 1 行）
+     ターミナルの内容から目を奪わないよう、既定の文字は本文より暗く置く。
+     警告色はステータスドットと同じ色を使い、アプリ全体で「黄=注意 / 赤=危険」を揃える。 */
+  --status-bar-fg: #9aa5ce;
+  --status-bar-fg-dim: #737aa2;
+  --status-bar-model-fg: #7aa2f7;
+  --status-bar-chip-border: #3b4261;
+  --status-bar-bar-bg: #292e42;
+  --status-bar-ok: #7aa2f7;
+  --status-bar-warn: #e0af68;
+  --status-bar-critical: #f7768e;
+
   /* crashed 状態の薄赤背景（MainPane 用） */
   --crashed-overlay-bg: rgba(247, 118, 142, 0.08);
 

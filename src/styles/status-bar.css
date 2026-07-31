@@ -1,0 +1,80 @@
+/* =====================================================================
+   StatusBar — 画面下部の 1 行。Claude のモデル / effort / コンテキスト量 /
+   プラン利用量を常時表示する。
+   ===================================================================== */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 22px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  background: var(--title-bar-bg, rgba(26, 27, 38, 0.95));
+  border-top: 1px solid var(--panel-divider);
+  color: var(--status-bar-fg);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 左（Claude の実行情報）と右（プラン利用量）を押し分ける */
+.status-bar__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-bar__model {
+  color: var(--status-bar-model-fg);
+  font-weight: 600;
+}
+
+/* effort は補足情報なので、モデル名より一段落とす */
+.status-bar__effort {
+  padding: 1px 5px;
+  border: 1px solid var(--status-bar-chip-border);
+  border-radius: 3px;
+  color: var(--status-bar-fg-dim);
+}
+
+/* ----- コンテキスト消費量 ----- */
+.status-bar__context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--status-bar-fg-dim);
+}
+
+.status-bar__bar {
+  display: block;
+  width: 52px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--status-bar-bar-bg);
+  overflow: hidden;
+}
+
+.status-bar__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--status-bar-ok);
+  /* 数秒ごとの更新でバーが飛ばないよう、幅の変化だけ滑らかにする */
+  transition: width 300ms ease-out;
+}
+
+.status-bar__context--warn .status-bar__bar-fill { background: var(--status-bar-warn); }
+.status-bar__context--critical .status-bar__bar-fill { background: var(--status-bar-critical); }
+.status-bar__context--warn .status-bar__context-text { color: var(--status-bar-warn); }
+.status-bar__context--critical .status-bar__context-text { color: var(--status-bar-critical); }
+
+/* ----- プラン利用量 ----- */
+.status-bar__usage {
+  color: var(--status-bar-fg-dim);
+}
+
+.status-bar__usage--warn { color: var(--status-bar-warn); }
+.status-bar__usage--critical { color: var(--status-bar-critical); }

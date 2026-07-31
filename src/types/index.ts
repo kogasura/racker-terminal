@@ -1,3 +1,8 @@
+// Rust から受け取る形をそのまま状態に載せるため、定義元 (lib/claudeMeta.ts) から借りる。
+// `import type` なのでランタイムの依存は生まれず、循環にもならない
+// (claudeMeta.ts は types を参照しない)。
+import type { ClaudeTranscriptMeta, ClaudeUsageLimits } from '../lib/claudeMeta';
+
 /**
  * タブの状態。
  * - 'spawning': PTY spawn 中（Rust 側の pty_spawn 呼び出し中）
@@ -290,6 +295,13 @@ export interface Settings {
    * 通知は侵襲的なので、明示的に false にして切れるようにしている。
    */
   notificationsEnabled?: boolean;
+  /**
+   * 画面下部のステータスバー（Claude のモデル / effort / コンテキスト量 / 利用量）を出すか。
+   *
+   * 未設定 (undefined) は **有効**として扱う。1 行ぶんの高さしか使わず、
+   * Claude タブ以外では利用量だけの控えめな表示になるため、既定で出す。
+   */
+  statusBarEnabled?: boolean;
 }
 
 /**
@@ -397,6 +409,23 @@ export interface AppState {
   /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
    *  Phase 4 P-K で追加。 */
   wslDistros: string[];
+
+  // --- Claude の実行情報スライス (persist 対象外) ---
+  /**
+   * アクティブタブで動いている Claude のモデル / effort / コンテキスト量。
+   *
+   * **アクティブタブぶんしか持たない。** 会話ログは 50MB を超えることがあり、
+   * 全タブぶんを数秒ごとに読むのは割に合わない。tabId を併せて持つのは、
+   * タブを切り替えた直後に前のタブの値を出さないため。
+   *
+   * ランタイム状態のため persist 対象外（起動のたびに読み直す）。
+   */
+  claudeMeta: { tabId: string; meta: ClaudeTranscriptMeta } | null;
+  /**
+   * プラン利用量 (5 時間ウィンドウ / 週次)。タブに依らずアカウント単位。
+   * 取得できない環境（未ログイン・オフライン）では null のまま。
+   */
+  claudeUsage: ClaudeUsageLimits | null;
 
   // --- closedTabs スタック (persist 対象外) ---
   /**

@@ -10,6 +10,8 @@
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
 mod claude_sessions;
+mod claude_transcript;
+mod claude_usage;
 mod command_audit;
 mod git_pr;
 mod launch;
@@ -56,6 +58,8 @@ pub fn run() {
             wsl::list_wsl_distros,
             launch::get_launch_path,
             claude_sessions::list_claude_sessions,
+            claude_transcript::get_claude_transcript_meta,
+            claude_usage::get_claude_usage,
             git_pr::get_pr_status,
             scrollback::save_scrollback,
             scrollback::load_scrollback,

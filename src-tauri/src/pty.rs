@@ -87,6 +87,29 @@ const CHILD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_milli
 /// 実行中の reaper スレッド数。
 static REAPS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
+/// `ClosePseudoConsole` の完了を待つ猶予。
+///
+/// 正常なセッションはここに収まる (実測で長くても数百 ms)。超えたということは
+/// 返ってこない側に入ったということなので、待たずに子プロセスの終了へ進む。
+/// 短くしすぎると正常時にも子を先に殺してしまい、v1.8.1 で直した
+/// 「先に kill すると ClosePseudoConsole が永久に返らない」を踏み直す。
+const CLOSE_PTY_GRACE: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// `master` を drop (= `ClosePseudoConsole`) する。猶予内に返れば `true`。
+///
+/// drop 自体を更に別スレッドへ逃がしている。返らない場合にそのスレッドは
+/// 残り続けるが、プロセスの終了時に OS が回収する。ここで待ち続けて
+/// 後続の後始末 (子プロセスの終了) を止めるほうが害が大きい。
+fn close_master_with_grace(master: &SharedMaster) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let master = Arc::clone(master);
+    std::thread::spawn(move || {
+        drop(master.lock().take());
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(CLOSE_PTY_GRACE).is_ok()
+}
+
 /// 進行中の後始末が捌けるのを待つ。`timeout` を過ぎたら諦めて戻る (戻り値 `false`)。
 ///
 /// **待ち切れないことは普通に起こる。** ConPTY の `ClosePseudoConsole` は、
@@ -333,9 +356,21 @@ impl PtySession {
             // join が返らない」と言われていたものの正体で、ConPTY のホストプロセス
             // (OpenConsole.exe) が孤児として残る原因でもあった。
             drop(writer);
-            drop(master.lock().take());
 
-            // Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
+            // ② は返らないことがある。ここで詰まると ③ に到達できず、シェルが
+            // 生き残る。**シェルが生きている限り ConPTY のホストも終了できない**ので、
+            // プロセスが死んだときに OpenConsole.exe がそのまま残ることになる。
+            // そこで ② を更に別スレッドへ逃がし、猶予を過ぎたら ③ を先に撃つ。
+            // 「順序が重要」なのは正常時の話で、既に返ってこないと分かった後は
+            // シェルを止めて ConPTY を解放するほうが良い。
+            let closed = close_master_with_grace(&master);
+            if !closed {
+                dbg_log!(
+                    "[pty-reap] session {id}: ClosePseudoConsole が {CLOSE_PTY_GRACE:?} で返らず、子プロセスを先に終了させる"
+                );
+            }
+
+            // ③ Fix 8 (SF-8): child.kill() 後に child.wait() を明示的に呼んで zombie 化を防ぐ
             if let Some(mut child) = child.lock().take() {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -343,8 +378,15 @@ impl PtySession {
 
             // (2.10) detached thread リーク対策として join 自体は維持する。
             // 呼び出し元ではなくこのスレッドで待つので、返らなくても UI には影響しない。
-            for handle in handles.into_iter().flatten() {
-                let _ = handle.join();
+            //
+            // ただし ② が返らなかった場合は join もまず返らない (reader は
+            // 出力パイプが閉じるまで抜けられない)。そこで join を諦めて
+            // カウンタを解放する。ここで待ち続けると、終了時の wait_for_reapers が
+            // 必ず上限まで粘ることになり、**待つ意味がなくなる**。
+            if closed {
+                for handle in handles.into_iter().flatten() {
+                    let _ = handle.join();
+                }
             }
             dbg_log!("[pty-reap] session {id} reaped in {:?}", t.elapsed());
             REAPS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
@@ -1425,15 +1467,30 @@ mod pty_integration_tests {
         let _ = mgr.write(id, "\x1b[1;1R");
     }
 
+    /// テストプロセスから生えた PTY を、テストバイナリの終了と道連れにする。
+    /// **PTY を起動するテストの先頭で呼ぶこと。**
+    ///
+    /// `settle()` で待っても、ClosePseudoConsole が返らないぶんは残る。実測では
+    /// 1 回の `cargo test` で ConPTY のホストプロセスが 10 個前後積み上がっていた。
+    /// アプリ本体と同じ Job Object に入れて、OS に片付けさせる (job.rs 参照)。
+    ///
+    /// 道連れになるのはこのテストバイナリの子孫だけで、`cargo` 自身は Job の外にいる。
+    fn confine_test_process() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let _ = crate::job::confine_descendants();
+        });
+    }
+
     /// 後始末が捌けるのを待つ。**テストの最後に呼ぶこと。**
     ///
     /// 後始末は別スレッドで走るので、待たずにテストプロセスが終了すると
-    /// ConPTY のホストプロセス (OpenConsole.exe) が孤児として残り、
-    /// `cargo test` を回すたびにマシンへ積み上がっていく。
+    /// シェルが停止しないまま取り残される。
     ///
     /// **完了は assert しない。** ConPTY の ClosePseudoConsole は、起動直後の
     /// セッションを閉じたときなど返ってこないことがあり、そこは racker 側では
-    /// どうにもできない。ここでの待ちは「捌けるぶんは捌かせる」ための best-effort。
+    /// どうにもできない。ここでの待ちは「捌けるぶんは捌かせる」ための best-effort で、
+    /// 取りこぼしは `confine_test_process` の Job Object が受け止める。
     fn settle() {
         let _ = wait_for_reapers(std::time::Duration::from_secs(3));
     }
@@ -1443,6 +1500,7 @@ mod pty_integration_tests {
     #[test]
     fn spawn_write_read_kill_roundtrip() {
         let (channel, rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1481,6 +1539,7 @@ mod pty_integration_tests {
     #[test]
     fn output_is_prompt_even_after_going_idle() {
         let (channel, rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1544,6 +1603,7 @@ mod pty_integration_tests {
     #[test]
     fn kill_does_not_block_the_caller() {
         let (channel, _rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1580,6 +1640,7 @@ mod pty_integration_tests {
         // なので、spawn の時間は測定対象から外す。
         let budget = std::time::Duration::from_millis(200) * ROUNDS as u32;
 
+        confine_test_process();
         let mgr = PtyManager::default();
         let mut total_kill = std::time::Duration::ZERO;
 
@@ -1608,6 +1669,7 @@ mod pty_integration_tests {
     #[test]
     fn exit_event_is_delivered_on_shell_exit() {
         let (channel, rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1631,6 +1693,7 @@ mod pty_integration_tests {
     #[test]
     fn multibyte_output_is_not_corrupted() {
         let (channel, rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr
@@ -1657,6 +1720,7 @@ mod pty_integration_tests {
     #[test]
     fn read_pause_and_resume_does_not_lose_output() {
         let (channel, rx) = probe_channel();
+        confine_test_process();
         let mgr = PtyManager::default();
 
         let id = mgr

@@ -57,3 +57,12 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
+# Job Object で PTY の子孫プロセスを道連れにするために使う (job.rs)。
+# tauri が既に同じ版に依存しているので、ビルドへの追加コストはない。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+

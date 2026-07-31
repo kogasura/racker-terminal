@@ -14,6 +14,7 @@ mod claude_transcript;
 mod claude_usage;
 mod command_audit;
 mod git_pr;
+mod job;
 mod launch;
 mod proc;
 mod pty;
@@ -29,6 +30,13 @@ use tauri::{Emitter, Manager};
 // 黙って終了するより、パニックさせてメッセージを残すほうが調査できる。
 #[allow(clippy::expect_used, reason = "起動失敗は継続不能。落として原因を残す")]
 pub fn run() {
+    // PTY から生えるプロセス (シェルと ConPTY のホスト) を、このプロセスの終了と
+    // 道連れにする。後始末が間に合わないまま終了しても取り残さないための保険で、
+    // 強制終了やクラッシュでも効く。失敗しても従来どおり動く (job.rs 参照)。
+    if !job::confine_descendants() {
+        eprintln!("[job] Job Object を用意できませんでした。PTY のプロセスが残ることがあります。");
+    }
+
     tauri::Builder::default()
         // single-instance は他プラグインより先に登録する（プラグイン仕様）。
         // Explorer「Racker Terminal で開く」で 2 回目以降に起動されたときは、

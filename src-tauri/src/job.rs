@@ -86,6 +86,59 @@ mod imp {
         }
     }
 
+    /// Job に入っているプロセスの数を返す (自プロセスを含む)。
+    ///
+    /// **リソースリークの検査に使う。** PTY を開いて閉じたあと、この数が元に戻れば
+    /// シェルも ConPTY のホストも片付いたことになる。Job の中だけを数えるので、
+    /// 同じマシンで他のターミナルが動いていても影響を受けない。
+    ///
+    /// Job に入れていない場合 (`confine_current_process` を呼んでいない・失敗した)
+    /// は `None`。
+    #[cfg(test)]
+    pub fn assigned_process_count() -> Option<usize> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicProcessIdList, QueryInformationJobObject, JOBOBJECT_BASIC_PROCESS_ID_LIST,
+        };
+
+        let job = *JOB.get()? as HANDLE;
+
+        // 可変長構造体。プロセス ID の一覧までは要らないが、API はまとめて返そうと
+        // するのでバッファを持たせる。足りなければ戻り値は 0 になるものの、
+        // 先頭の NumberOfAssignedProcesses は書き込まれるのでそれを読む。
+        let mut buf = vec![0u8; 8 * 1024];
+        let mut returned = 0u32;
+        // SAFETY: buf は下の read_unaligned が読む範囲より十分大きく、
+        // 構造体の先頭 2 フィールドは API が必ず埋める。
+        unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                buf.as_mut_ptr().cast(),
+                u32::try_from(buf.len()).ok()?,
+                &raw mut returned,
+            );
+            let list = buf
+                .as_ptr()
+                .cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>()
+                .read_unaligned();
+            usize::try_from(list.NumberOfAssignedProcesses).ok()
+        }
+    }
+
+    /// 自プロセスが握っているカーネルハンドルの数を返す。
+    ///
+    /// **リソースリークの検査に使う。** PTY の開閉でパイプやプロセスのハンドルを
+    /// 取りこぼしていれば、ここが単調に増えていく。
+    #[cfg(test)]
+    pub fn handle_count() -> Option<usize> {
+        use windows_sys::Win32::System::Threading::GetProcessHandleCount;
+
+        let mut count = 0u32;
+        // SAFETY: 自プロセスの疑似ハンドルと、書き込み先の有効な参照を渡している。
+        let ok = unsafe { GetProcessHandleCount(GetCurrentProcess(), &raw mut count) };
+        (ok != 0).then_some(count as usize)
+    }
+
     /// 自プロセスを Job に入れる。以降に起動する子孫はすべてこの Job を受け継ぐ。
     ///
     /// 何度呼んでも最初の 1 回だけ効く。成功したら `true`。
@@ -122,6 +175,18 @@ mod imp {
     pub fn confine_current_process() -> bool {
         false
     }
+
+    /// Windows 以外では数えられない (Job Object が存在しない)。
+    #[cfg(test)]
+    pub fn assigned_process_count() -> Option<usize> {
+        None
+    }
+
+    /// Windows 以外では数えられない (ハンドル数は Windows 固有の概念)。
+    #[cfg(test)]
+    pub fn handle_count() -> Option<usize> {
+        None
+    }
 }
 
 /// PTY から生えるプロセスを、アプリの終了と道連れにする。
@@ -130,6 +195,26 @@ mod imp {
 /// (後始末が間に合わなかったときにプロセスが残りうる、という従来の挙動に戻るだけ)。
 pub fn confine_descendants() -> bool {
     imp::confine_current_process()
+}
+
+/// Job に入っているプロセス数 (自プロセスを含む)。数えられなければ `None`。
+///
+/// リソースリークの検査用。`confine_descendants` を呼んでいることが前提。
+///
+/// 本体からは使わないのでテストビルドにだけ置く (製品コードに計測用の口を残さない)。
+#[cfg(test)]
+pub fn assigned_process_count() -> Option<usize> {
+    imp::assigned_process_count()
+}
+
+/// 自プロセスが握っているカーネルハンドルの数。数えられなければ `None`。
+///
+/// リソースリークの検査用。
+///
+/// 本体からは使わないのでテストビルドにだけ置く (製品コードに計測用の口を残さない)。
+#[cfg(test)]
+pub fn handle_count() -> Option<usize> {
+    imp::handle_count()
 }
 
 #[cfg(all(test, windows))]

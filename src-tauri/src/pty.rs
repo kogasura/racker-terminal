@@ -95,6 +95,32 @@ static REAPS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// 「先に kill すると ClosePseudoConsole が永久に返らない」を踏み直す。
 const CLOSE_PTY_GRACE: std::time::Duration = std::time::Duration::from_millis(1000);
 
+/// ConPTY が起動直後に出すカーソル位置問い合わせ (DSR-CPR) への応答。
+///
+/// 「カーソルは 1 行 1 桁にある」という内容。実際の位置は問題にならない。
+/// 閉じる直前に送るだけなので、シェルの表示を乱すこともない。
+const DSR_CPR_REPLY: &[u8] = b"\x1b[1;1R";
+
+/// 入力パイプを閉じる。**閉じる前に DSR-CPR へ応答しておく。**
+///
+/// ConPTY は起動直後にカーソル位置問い合わせ (`ESC[6n`) を出し、**応答が返るまで
+/// 先へ進まない**。通常は端末 (xterm) が応答するが、応答が返る前にタブを閉じると
+/// 誰も応答しないまま入力パイプが閉じ、`ClosePseudoConsole` が返らなくなる。
+/// 後始末が返らなければホストプロセス (OpenConsole.exe) はアプリの終了まで残るため、
+/// **タブを開いてすぐ閉じる操作を繰り返すと、その数だけ積み上がっていく**。
+///
+/// そこで閉じる直前に代わりに応答して、ConPTY を進ませてから閉じる。
+/// 既に応答済みのセッションにとっては余分な入力だが、直後にパイプごと閉じるので
+/// 実害はない。
+fn answer_pending_dsr_then_close(writer: Option<Box<dyn Write + Send>>) {
+    let Some(mut writer) = writer else {
+        return;
+    };
+    let _ = writer.write_all(DSR_CPR_REPLY);
+    let _ = writer.flush();
+    drop(writer);
+}
+
 /// `master` を drop (= `ClosePseudoConsole`) する。猶予内に返れば `true`。
 ///
 /// drop 自体を更に別スレッドへ逃がしている。返らない場合にそのスレッドは
@@ -355,7 +381,7 @@ impl PtySession {
             // ClosePseudoConsole が**永久に返らない**。これが「Windows では Drop の
             // join が返らない」と言われていたものの正体で、ConPTY のホストプロセス
             // (OpenConsole.exe) が孤児として残る原因でもあった。
-            drop(writer);
+            answer_pending_dsr_then_close(writer);
 
             // ② は返らないことがある。ここで詰まると ③ に到達できず、シェルが
             // 生き残る。**シェルが生きている限り ConPTY のホストも終了できない**ので、
@@ -1783,18 +1809,25 @@ mod pty_integration_tests {
     /// racker からは回避できず、終了時に Job Object が回収する形で受けている。
     /// ここでは実アプリと同じ「応答してから閉じる」経路を測る。
     fn churn_ptys(mgr: &PtyManager) {
+        churn_ptys_inner(mgr, true);
+    }
+
+    /// `settled` が false のときは、シェルが動き出すのを待たずに閉じる。
+    ///
+    /// ConPTY は起動直後にカーソル位置問い合わせ (DSR-CPR) を出し、応答が返るまで
+    /// 動き出さない。その状態で閉じるのが、後始末が返らなくなる一番きつい経路。
+    /// 実アプリでもタブを開いた直後に閉じれば同じ状況になる。
+    fn churn_ptys_inner(mgr: &PtyManager, settled: bool) {
         for _ in 0..LEAK_ROUNDS {
             let (channel, rx) = probe_channel();
             let id = mgr
                 .spawn(Some(test_shell()), None, None, 80, 24, None, channel)
                 .expect("spawn できること");
 
-            // 実アプリと同じ状態にしてから閉じる。ConPTY は起動直後に
-            // カーソル位置問い合わせ (DSR-CPR) を出し、応答が返るまで動き出さない。
-            // 未応答のまま閉じるのは実アプリでは起きない状態で、そこだけを
-            // 見て「リークしている」と判定しても実態と合わない。
-            answer_dsr(mgr, &id);
-            let _ = wait_for(&rx, ">", 10);
+            if settled {
+                answer_dsr(mgr, &id);
+                let _ = wait_for(&rx, ">", 10);
+            }
 
             mgr.kill(&id).expect("kill できること");
         }
@@ -1837,6 +1870,31 @@ mod pty_integration_tests {
     /// 遅延解放を吸収できるだけの幅を取っている。ハンドルを取りこぼしていれば
     /// 1 セッションあたり数個ずつ増えるため、10 回で数十増えて確実に超える。
     const LEAK_HANDLE_SLACK: usize = 50;
+
+    /// タブを開いた直後に閉じても、シェルと ConPTY のホストが残らないこと。
+    ///
+    /// ConPTY は起動直後の DSR-CPR に応答が返るまで動き出さず、その状態で
+    /// 閉じると `ClosePseudoConsole` が返らない。**後始末が返らないと
+    /// ホストプロセスはアプリ終了まで残る**ので、開いてすぐ閉じる操作を
+    /// 繰り返すとその数だけ積み上がっていく。
+    #[test]
+    #[cfg_attr(not(windows), ignore = "Job Object は Windows 固有")]
+    fn closing_immediately_after_spawn_does_not_leak() {
+        let _guard = pty_test_guard();
+        let Some(before) = crate::job::assigned_process_count() else {
+            eprintln!("[leak] Job Object が使えないためプロセス数の検査をスキップ");
+            return;
+        };
+
+        let mgr = PtyManager::default();
+        churn_ptys_inner(&mgr, false);
+
+        let after = crate::job::assigned_process_count().expect("2 回目も数えられること");
+        assert!(
+            after <= before + LEAK_PROCESS_SLACK,
+            "起動直後に閉じる操作を {LEAK_ROUNDS} 回繰り返したあと、             Job 内のプロセスが {before} → {after} に増えた。             ClosePseudoConsole が返らずホストプロセスが残っている疑いがある"
+        );
+    }
 
     #[test]
     #[cfg_attr(not(windows), ignore = "ハンドル数は Windows 固有")]

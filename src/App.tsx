@@ -11,7 +11,14 @@ import {
   matchSessionsToTabs,
   collectWslDistros,
   shouldPollWsl,
+  type ClaudeSession,
 } from './lib/claudeSessions';
+import {
+  getTranscriptMeta,
+  getUsageLimits,
+  shouldPollTranscript,
+  shouldFetchUsage,
+} from './lib/claudeMeta';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
 import { getPrStatus, groupTabsByCwd, shouldPollPr } from './lib/prStatus';
 import { getTabDisplayTitle, type AgentState, type Tab, type Settings } from './types';
@@ -20,6 +27,7 @@ import { TabBar } from './components/TabBar';
 import { DragDropProvider } from './components/DragDropProvider';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
+import { StatusBar } from './components/StatusBar';
 import { UpdateDialog } from './components/UpdateDialog';
 import { useFileDropToTerminal } from './hooks/useFileDropToTerminal';
 import { FileDropOverlay } from './components/FileDropOverlay';
@@ -27,6 +35,7 @@ import './styles/variables.css';
 import './styles/title-bar.css';
 import './styles/dropdown-menu.css';
 import './styles/update-dialog.css';
+import './styles/status-bar.css';
 
 /** 通知判定に必要な store の断片。 */
 interface NotifyState {
@@ -74,6 +83,33 @@ export function pruneClosedTabs(
   for (const id of prevStates.keys()) {
     if (!(id in tabs)) prevStates.delete(id);
   }
+}
+
+/**
+ * アクティブタブで動いている Claude の会話ログを読み、モデル / effort /
+ * コンテキスト量をステータスバーへ反映する。
+ *
+ * アクティブタブぶんしか読まない。会話ログは 50MB を超えることがあり、
+ * 全タブぶんを数秒ごとに読むのは割に合わない（見えていないタブの
+ * モデル名を知っても使い道がない）。
+ *
+ * セッションが紐づかないタブ（claude を起動していない・終了した）では
+ * null を渡して表示を消す。
+ *
+ * テストのため export している。
+ */
+export async function refreshActiveTranscript(
+  activeTabId: string | null,
+  session: ClaudeSession | undefined,
+): Promise<void> {
+  if (activeTabId === null) return;
+
+  if (session?.sessionId === undefined) {
+    useAppStore.getState().setClaudeMeta(activeTabId, null);
+    return;
+  }
+  const meta = await getTranscriptMeta(session.sessionId, session.cwd, session.distro);
+  useAppStore.getState().setClaudeMeta(activeTabId, meta);
 }
 
 function App() {
@@ -304,8 +340,11 @@ function App() {
     let cancelled = false;
     // WSL 側を間引くための通し番号（shouldPollWsl 参照）
     let tickCount = 0;
+    // 前回が終わるまで次を出さない。WSL 側は `\\wsl.localhost\` 越しで
+    // 1 回に数秒かかることがあり、2 秒間隔だと要求が積み上がってしまう。
+    let running = false;
 
-    const tick = async () => {
+    const pollOnce = async () => {
       const before = useAppStore.getState();
       const tabList = Object.values(before.tabs);
       // 実際に開いている WSL タブの distro だけを渡す。
@@ -314,7 +353,8 @@ function App() {
       // さらに、開いている distro であっても毎回は見に行かない。
       // `\\wsl.localhost\` へのアクセスは 9P 越しで高く、2 秒ごとに触ると
       // WSL が眠れなくなる。Windows 側だけ 2 秒、WSL 側は 10 秒に 1 回にする。
-      const distros = shouldPollWsl(tickCount) ? collectWslDistros(tabList) : [];
+      const currentTick = tickCount;
+      const distros = shouldPollWsl(currentTick) ? collectWslDistros(tabList) : [];
       tickCount += 1;
 
       const sessions = await listClaudeSessions(distros);
@@ -332,6 +372,27 @@ function App() {
         })),
       );
       after.applyClaudeSessions(matches);
+
+      // ついでにアクティブタブの会話ログも読む（セッション ID と cwd がここで揃うため）。
+      // セッションの巡回より頻度を落とす: モデルや effort はめったに変わらず、
+      // WSL タブでは 9P 越しのファイル読み取りになるため。
+      if (shouldPollTranscript(currentTick) && !cancelled) {
+        const activeTabId = after.activeTabId;
+        await refreshActiveTranscript(
+          activeTabId,
+          activeTabId === null ? undefined : matches.get(activeTabId),
+        );
+      }
+    };
+
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        await pollOnce();
+      } finally {
+        running = false;
+      }
     };
 
     void tick();
@@ -339,6 +400,66 @@ function App() {
     return () => {
       cancelled = true;
       clearInterval(id);
+    };
+  }, []);
+
+  // プランの利用量（5 時間ウィンドウ / 週次）を定期的に引く。
+  //
+  // 「あと何割使えるか」を Claude Code の中で調べるには `/usage` を打つ必要があり、
+  // そのたびに会話が中断する。racker はタブの外にいるので、黙って出しておける。
+  //
+  // Anthropic の API を叩くため、間隔は分単位で十分に長く取る（利用率は
+  // 分単位でしか動かない）。裏に回っているあいだは引かず、前面に戻ったときは
+  // 引き直すが、最小間隔を置く（ウィンドウを行き来するだけで叩き続けないため）。
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 分
+    let cancelled = false;
+    let running = false;
+    // 初期値 true は「フォーカスイベントが来る前でも 1 回目は引く」ため（PR 取得と同じ）
+    let focused = true;
+    let hasEverPolled = false;
+    let lastFetchedAt = 0;
+    let unlistenFocus: (() => void) | null = null;
+
+    const tick = async () => {
+      if (running) return;
+      if (!shouldFetchUsage(focused, hasEverPolled, Date.now() - lastFetchedAt)) return;
+      running = true;
+      hasEverPolled = true;
+      try {
+        const usage = await getUsageLimits();
+        if (!cancelled) useAppStore.getState().setClaudeUsage(usage);
+      } finally {
+        lastFetchedAt = Date.now();
+        running = false;
+      }
+    };
+
+    // 前面に戻ってきたら引き直す。裏にいるあいだに使った分を反映するため
+    // （別のウィンドウで動かしている Claude Code の消費もここに乗る）。
+    void (async () => {
+      try {
+        const win = getCurrentWebviewWindow();
+        const fn = await win.onFocusChanged(({ payload }) => {
+          const wasFocused = focused;
+          focused = payload;
+          if (!wasFocused && focused) void tick();
+        });
+        if (cancelled) fn();
+        else unlistenFocus = fn;
+      } catch (e) {
+        // フォーカスを追えない環境では、5 分間隔の定期取得だけに任せる
+        console.warn('[App] onFocusChanged failed, usage polling stays interval-only:', e);
+        focused = true;
+      }
+    })();
+
+    void tick();
+    const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      unlistenFocus?.();
     };
   }, []);
 
@@ -436,6 +557,8 @@ function App() {
         </DragDropProvider>
         <FileDropOverlay isDragging={isDragging} />
       </div>
+      {/* サイドバーの下まで通す全幅の 1 行。出すものが無いときは自身で消える */}
+      <StatusBar />
     </div>
   );
 }

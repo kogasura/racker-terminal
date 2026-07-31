@@ -41,4 +41,19 @@ which = "7"
 thiserror = "2"
 parking_lot = "0.12"
 dirs = "5"
+# Claude のプラン利用量 API を叩くためだけに使う (claude_usage.rs)。
+# tauri-plugin-updater が既に依存しているので、ビルドへの追加コストは小さい。
+# TLS は rustls + ring。`rustls` feature ではなく `rustls-no-provider` を選び、
+# 暗号プロバイダを自前で指定している (lib.rs の install_default)。
+# 既定の `rustls` feature は aws-lc-rs を引き込み、そのビルドに cmake と C/C++
+# ツールチェインが要る。updater が既に ring を使っているので、揃えれば
+# ビルド要件が増えない。
+# system-proxy は既定で入る機能だが、外すとプロキシ配下の環境で取得できなく
+# なるため明示的に残している。charset は UTF-8 しか受けないので落とす。
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
+  "http2",
+  "system-proxy",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 

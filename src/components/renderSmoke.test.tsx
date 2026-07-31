@@ -6,6 +6,7 @@ import { TabItem } from './TabItem';
 import { GroupSection } from './GroupSection';
 import { FavoriteDialog } from './FavoriteDialog';
 import { SettingsDialog } from './SettingsDialog';
+import { StatusBar } from './StatusBar';
 
 // Tauri の invoke / plugin はテスト環境に存在しないのでスタブする。
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
@@ -32,6 +33,10 @@ describe('コンポーネントのレンダリング', () => {
       favorites: [],
       editingId: null,
       wslDistros: [],
+      claudeMeta: null,
+      claudeUsage: null,
+      // ステータスバーの表示設定はテスト間で持ち越さない（既定 = 有効に戻す）
+      settings: { ...useAppStore.getState().settings, statusBarEnabled: undefined },
     });
   });
 
@@ -279,6 +284,48 @@ describe('コンポーネントの操作', () => {
     await act(async () => {
       form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
+  });
+
+  it('StatusBar: 出す情報が何も無ければ帯ごと消える', () => {
+    useAppStore.setState({ claudeMeta: null, claudeUsage: null });
+    const { container } = render(<StatusBar />);
+    expect(container.querySelector('.status-bar')).toBeNull();
+  });
+
+  it('StatusBar: モデル・effort・コンテキスト量・利用量を出す', () => {
+    useAppStore.setState({
+      claudeMeta: {
+        tabId: 't1',
+        meta: { model: 'claude-opus-5', effort: 'high', contextTokens: 55_002 },
+      },
+      claudeUsage: { fiveHourPercent: 13, sevenDayPercent: 22 },
+    });
+    const { container } = render(<StatusBar />);
+    const text = container.textContent ?? '';
+    expect(text).toContain('Opus 5');
+    expect(text).toContain('high');
+    expect(text).toContain('55k / 200k (28%)');
+    expect(text).toContain('5h 13%');
+    expect(text).toContain('週 22%');
+  });
+
+  it('StatusBar: 別タブの情報は出さない（切り替え直後に前のタブの値を残さない）', () => {
+    useAppStore.setState({
+      claudeMeta: { tabId: 'other', meta: { model: 'claude-opus-5', contextTokens: 1000 } },
+      claudeUsage: { fiveHourPercent: 13 },
+    });
+    const { container } = render(<StatusBar />);
+    expect(container.textContent).not.toContain('Opus 5');
+    expect(container.textContent).toContain('5h 13%');
+  });
+
+  it('StatusBar: 設定で無効にすると描画しない', () => {
+    useAppStore.setState({
+      claudeUsage: { fiveHourPercent: 13 },
+      settings: { ...useAppStore.getState().settings, statusBarEnabled: false },
+    });
+    const { container } = render(<StatusBar />);
+    expect(container.querySelector('.status-bar')).toBeNull();
   });
 
   it('TabItem: クリックでアクティブタブが切り替わる', async () => {

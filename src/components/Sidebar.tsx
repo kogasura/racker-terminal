@@ -36,6 +36,7 @@ export const Sidebar = memo(function Sidebar() {
   const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
   const groupTitles = useAppStore(useShallow((s) => s.groups.map((g) => g.title)));
   const createGroup = useAppStore((s) => s.createGroup);
+  const setActiveGroup = useAppStore((s) => s.setActiveGroup);
   // タブをドラッグ中のときだけ「新規グループとして追加」エリアを出す
   const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
 
@@ -72,7 +73,12 @@ export const Sidebar = memo(function Sidebar() {
           <button
             type="button"
             className="sidebar__new-group-btn"
-            onClick={() => createGroup(nextNewGroupTitle(groupTitles.map((t) => ({ title: t }))))}
+            onClick={() => {
+              const id = createGroup(nextNewGroupTitle(groupTitles.map((t) => ({ title: t }))));
+              // 作ったグループをそのまま選択する。選択が前のグループに残っていると、
+              // 直後の Ctrl+T / タイトルバーの + が古いグループにタブを作ってしまう。
+              setActiveGroup(id);
+            }}
           >
             + New Group
           </button>

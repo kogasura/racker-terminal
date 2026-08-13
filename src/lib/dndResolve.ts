@@ -1,8 +1,13 @@
 import type { AppState } from '../types';
 
 /**
- * GroupBody の useDroppable に渡す id のプレフィックス。
- * Sidebar の handleDragEnd / GroupSection の両方でこの定数を参照して文字列を統一する。
+ * グループ本体を drop ターゲットにする際の useDroppable id プレフィックス。
+ *
+ * 現在のレイアウト（サイドバーはグループ 1 行のみ）では、グループ行の
+ * useSortable が登録する droppable（id は**生の groupId**）がそのまま
+ * タブの drop ターゲットを兼ねるため、この形式で登録している要素は無い。
+ * 過去のレイアウトで使っていた形式を resolveDropTarget / dropGroup が
+ * 引き続き解釈できるよう定数として残す。
  */
 export const GROUP_DROPPABLE_PREFIX = 'group-';
 
@@ -41,7 +46,10 @@ export function nextNewGroupTitle(groups: { title: string }[]): string {
  * dnd-kit の over.id を解析してドロップ先 (toGroupId / toIndex) を決定する純関数。
  *
  * - `'group-header-{groupId}'` 形式: auto-expand 専用のため drop ターゲット外 → null
- * - `'group-{groupId}'` 形式: 該当グループの末尾追加
+ * - **生の `groupId`**: 該当グループの末尾追加。サイドバーのグループ行は
+ *   useSortable（グループ並び替え用）の droppable を兼ねており、タブをその行へ
+ *   落としたときの over.id はこの形式になる
+ * - `'group-{groupId}'` 形式: 同上（過去のレイアウト互換。dropGroup と対称）
  * - タブ ID 形式: そのタブの現在位置に挿入
  * - 不整合（グループ消滅・タブ不在・tabIds 内に over タブが存在しない）: null を返す
  *
@@ -61,6 +69,12 @@ export function resolveDropTarget(
     const g = state.groups.find((g) => g.id === toGroupId);
     if (!g) return null;
     return { toGroupId, toIndex: g.tabIds.length };
+  }
+
+  // グループ行 (useSortable の droppable) への drop: そのグループの末尾へ追加する
+  const overGroup = state.groups.find((g) => g.id === overId);
+  if (overGroup) {
+    return { toGroupId: overId, toIndex: overGroup.tabIds.length };
   }
 
   // タブ ID への drop: そのタブの位置に挿入

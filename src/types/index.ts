@@ -357,8 +357,8 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, activeGroupId, lastActiveTabByGroup, dragId, dragKind, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings
+ * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, dragId, dragKind, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings, activeGroupId
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */
@@ -372,7 +372,10 @@ export interface AppState {
    * activeTabId から導出せず独立して持つ理由: タブが 1 つもないグループを
    * 選択している状態を表現する必要があるため (新規グループ作成直後など)。
    * activeTabId が変わるときは常にこちらも同期する (syncGroupSelection)。
-   * ランタイム状態のため persist 対象外。
+   *
+   * 新規タブの行き先もこの値で決まる (resolveTabGroup)。再起動で選択が
+   * 別のグループへ移ると、そのまま Ctrl+T したときに意図しないグループへ
+   * タブが入るため、これだけは persist 対象にしている。
    */
   activeGroupId: string | null;
   /**

@@ -7,7 +7,7 @@ import {
   DROP_AS_NEW_GROUP_ID,
   DRAG_KIND,
 } from '../lib/dndResolve';
-import type { DragEndEvent } from '@dnd-kit/core';
+import { closestCorners, type DragEndEvent } from '@dnd-kit/core';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
 vi.mock('../lib/terminalRegistry', () => ({ forceDisposeRuntime: vi.fn() }));
@@ -88,6 +88,24 @@ describe('D&D の drop 処理', () => {
       expect(useAppStore.getState().tabs.t1.groupId).toBe('g2');
     });
 
+    // サイドバーのグループ行はグループ並び替え用の useSortable を兼ねているため、
+    // タブをその行へ落としたときの over.id は接頭辞なしの生 groupId になる。
+    // (下の「グループ行の over.id」テストで dnd-kit 側の挙動を固定している)
+    it('生の groupId への drop で別グループの末尾へ移動する', () => {
+      dropTab(activeTab('t1', 'g1'), 'g2');
+      const s = useAppStore.getState();
+      expect(s.tabs.t1.groupId).toBe('g2');
+      expect(s.groups.find((g) => g.id === 'g2')!.tabIds).toEqual(['t2', 't1']);
+      expect(s.groups.find((g) => g.id === 'g1')!.tabIds).toEqual([]);
+    });
+
+    it('アクティブタブを別グループへ落とすと選択も追随する', () => {
+      dropTab(activeTab('t1', 'g1'), 'g2');
+      const s = useAppStore.getState();
+      expect(s.activeTabId).toBe('t1');
+      expect(s.activeGroupId).toBe('g2');
+    });
+
     it('タブ ID への drop でそのタブの位置に挿入される', () => {
       dropTab(activeTab('t1', 'g1'), 't2');
       const s = useAppStore.getState();
@@ -119,6 +137,50 @@ describe('D&D の drop 処理', () => {
     it('解決できない drop ターゲットは no-op', () => {
       dropTab(activeTab('t1', 'g1'), 'unknown-target');
       expect(useAppStore.getState().tabs.t1.groupId).toBe('g1');
+    });
+  });
+
+  /**
+   * グループ行の over.id が何になるかを dnd-kit 側の挙動として固定する。
+   *
+   * closestCorners は距離が同点のとき登録順の先頭を返すため、グループ行に
+   * sortable (id = 生 groupId) と useDroppable (id = `group-{id}`) を重ねると、
+   * 常に sortable 側だけが over になる。かつて後者しか解決できなかったため、
+   * タブをグループ行へ落としても何も起きない状態になっていた。
+   */
+  describe('グループ行の over.id', () => {
+    const rect = { top: 100, left: 0, width: 240, height: 24, right: 240, bottom: 124 };
+
+    it('同じ矩形に 2 つ登録すると、先に登録された sortable (生 groupId) が over になる', () => {
+      const collisions = closestCorners({
+        active: { id: 't1' } as never,
+        collisionRect: { top: 102, left: 2, width: 120, height: 22, right: 122, bottom: 124 } as never,
+        droppableRects: new Map([
+          ['g2', rect],
+          [`${GROUP_DROPPABLE_PREFIX}g2`, rect],
+        ]) as never,
+        droppableContainers: [
+          { id: 'g2', rect: { current: rect }, disabled: false },
+          { id: `${GROUP_DROPPABLE_PREFIX}g2`, rect: { current: rect }, disabled: false },
+        ] as never,
+        pointerCoordinates: null,
+      });
+
+      expect(collisions[0].id).toBe('g2');
+    });
+
+    it('その over.id をそのまま dropTab に渡すとグループ間移動が成立する', () => {
+      const collisions = closestCorners({
+        active: { id: 't1' } as never,
+        collisionRect: { top: 102, left: 2, width: 120, height: 22, right: 122, bottom: 124 } as never,
+        droppableRects: new Map([['g2', rect]]) as never,
+        droppableContainers: [{ id: 'g2', rect: { current: rect }, disabled: false }] as never,
+        pointerCoordinates: null,
+      });
+
+      dropTab(activeTab('t1', 'g1'), collisions[0].id as string);
+
+      expect(useAppStore.getState().tabs.t1.groupId).toBe('g2');
     });
   });
 });

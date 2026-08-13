@@ -30,7 +30,12 @@ const defaultSettings: Settings = {
  * 削除されたタブの代わりにアクティブにするタブ ID を決定する純関数。
  * テスト容易性のため appStore 外から import できる形で export する。
  *
- * 優先順: 同グループ末尾 → 前グループ末尾 → 後グループ先頭 → null
+ * 候補は**同じグループの末尾タブだけ**で、グループが空になったら null を返す。
+ * 別グループのタブへは移らない: TabBar は activeGroupId のタブだけを並べるため、
+ * 選択が別グループへ飛ぶと「見ているフォルダ」も「次のタブが作られる先」も
+ * 黙って変わってしまう（グループ内の最後のタブを閉じただけなのに、次に開いた
+ * タブが隣のグループに入る、という壊れ方をする）。
+ * 空になった場合は removeTab 側がそのグループを選択したまま端末領域を空にする。
  */
 export function selectFallbackTab(
   removedGroupId: string,
@@ -39,18 +44,6 @@ export function selectFallbackTab(
   const group = updatedGroups.find((g) => g.id === removedGroupId);
   if (group && group.tabIds.length > 0) {
     return group.tabIds[group.tabIds.length - 1];
-  }
-  const idx = updatedGroups.findIndex((g) => g.id === removedGroupId);
-  if (idx === -1) return null;
-  for (let i = idx - 1; i >= 0; i--) {
-    if (updatedGroups[i].tabIds.length > 0) {
-      return updatedGroups[i].tabIds[updatedGroups[i].tabIds.length - 1];
-    }
-  }
-  for (let i = idx + 1; i < updatedGroups.length; i++) {
-    if (updatedGroups[i].tabIds.length > 0) {
-      return updatedGroups[i].tabIds[0];
-    }
   }
   return null;
 }
@@ -143,6 +136,23 @@ export function syncGroupSelection(
     activeGroupId: tab.groupId,
     lastActiveTabByGroup: { ...lastActiveTabByGroup, [tab.groupId]: tabId },
   };
+}
+
+/**
+ * タブを別グループへ移したときに、選択（サイドバーのハイライトと横タブバーの
+ * 表示対象）を移動先へ追随させるための差分を返す。追随不要なら空オブジェクト。
+ *
+ * 見ていたタブを移したのに選択が元グループに残ると、TabBar には移動元のタブが
+ * 並んだまま端末にはそこに無いタブが映る（＝移した本人が画面から消える）。
+ */
+function movedTabSelection(
+  state: Pick<AppState, 'activeTabId' | 'lastActiveTabByGroup'>,
+  tabs: Record<string, Tab>,
+  tabId: string,
+  changedGroup: boolean,
+): ReturnType<typeof syncGroupSelection> {
+  if (!changedGroup || state.activeTabId !== tabId) return {};
+  return syncGroupSelection(tabs, state.lastActiveTabByGroup, tabId);
 }
 
 /**
@@ -249,21 +259,36 @@ function tabWithClaudeSession(
   };
 }
 
+/** groupId が現存すればそれを返す。未指定 / 不在なら undefined。 */
+function existingGroupId(
+  groups: Group[],
+  groupId: string | null | undefined,
+): string | undefined {
+  if (groupId === null || groupId === undefined) return undefined;
+  return groups.some((g) => g.id === groupId) ? groupId : undefined;
+}
+
 /**
  * 新規タブの所属グループを解決する。
  *   1. 指定されかつ存在 → そのグループを使う
  *   2. groups が空 → Default グループを自動作成
  *   3. 未指定 or 不正:
+ *      - **選択中グループ (activeGroupId) が現存 → そのグループに追加**
+ *        サイドバーで選択され、TabBar にタブが並んでいるグループが
+ *        ユーザーから見た「今いる場所」なので、これを最優先にする。
+ *        タブが 1 つも無いグループを選んでいる状態 (activeTabId === null) でも
+ *        意図どおりそのグループへ入る。
  *      - アクティブタブが存在し、その所属グループが現存 → そのグループに追加
- *        (favorite / Ctrl+T / 既定タブ起動など、現在の作業文脈を維持する目的)
+ *        (activeGroupId が未設定の起動直後などのフォールバック)
  *      - そうでなければ groups[0] にフォールバック
  */
 function resolveTabGroup(
-  state: Pick<AppState, 'groups' | 'tabs' | 'activeTabId'>,
+  state: Pick<AppState, 'groups' | 'tabs' | 'activeTabId' | 'activeGroupId'>,
   groupId: string | undefined,
 ): { groupId: string; groups: Group[] } {
-  if (groupId !== undefined && state.groups.some((g) => g.id === groupId)) {
-    return { groupId, groups: state.groups };
+  const explicit = existingGroupId(state.groups, groupId);
+  if (explicit !== undefined) {
+    return { groupId: explicit, groups: state.groups };
   }
 
   if (state.groups.length === 0) {
@@ -277,10 +302,11 @@ function resolveTabGroup(
   // activeTabId は string | null。Truthy 判定ではなく null 比較で意図を明示する
   // (将来空文字列が入る可能性に対する防御は state.tabs[id] が undefined を返すことで担保される)
   const activeTab = state.activeTabId !== null ? state.tabs[state.activeTabId] : undefined;
-  if (activeTab !== undefined && state.groups.some((g) => g.id === activeTab.groupId)) {
-    return { groupId: activeTab.groupId, groups: state.groups };
-  }
-  return { groupId: state.groups[0].id, groups: state.groups };
+  const resolved =
+    existingGroupId(state.groups, state.activeGroupId) ??
+    existingGroupId(state.groups, activeTab?.groupId) ??
+    state.groups[0].id;
+  return { groupId: resolved, groups: state.groups };
 }
 
 /** 新規タブのオブジェクトを組み立てる。 */
@@ -320,19 +346,41 @@ function sanitizeGroupTabIds(groups: Group[], validTabIds: Set<string>): Group[]
 }
 
 /**
+ * 復元直後に選択するグループを選ぶ。
+ * 前回終了時の選択が残っていればそれを、無ければタブを持つ最初のグループを返す。
+ * (persistedGroupId が null / undefined でも id とは一致しないので、そのまま find に通す)
+ */
+function pickInitialGroup(
+  groups: Group[],
+  persistedGroupId: string | null | undefined,
+): Group | undefined {
+  const persisted = groups.find((g) => g.id === persistedGroupId);
+  if (persisted !== undefined) return persisted;
+  return groups.find((g) => g.tabIds.length > 0) ?? groups[0];
+}
+
+/**
  * 復元直後のアクティブ選択を決める。
  *
- * activeTabId / activeGroupId は persist 対象外なので復元直後は null になる。
- * 横タブバーは activeGroupId のタブを並べるため、未選択のままだと再起動後に
- * タブが 1 つも表示されない。タブを持つ最初のグループの先頭タブを選ぶ。
+ * activeTabId は persist 対象外なので復元直後は null になる。横タブバーは
+ * activeGroupId のタブを並べるため、未選択のままだと再起動後にタブが
+ * 1 つも表示されない。
+ *
+ * グループは前回終了時の選択 (persistedGroupId) を復元する。これが無い / 既に
+ * 消えている場合だけ、タブを持つ最初のグループへフォールバックする。
+ * 前回と違うフォルダで起動すると、そのまま Ctrl+T したときに意図しない
+ * グループへタブが入るため、選択の復元は「どこにタブを作るか」の一貫性の一部。
  */
-function initialSelection(groups: Group[]): {
+function initialSelection(
+  groups: Group[],
+  persistedGroupId: string | null | undefined,
+): {
   activeGroupId: string | null;
   activeTabId: string | null;
   lastActiveTabByGroup: Record<string, string>;
 } {
-  const first = groups.find((g) => g.tabIds.length > 0) ?? groups[0] ?? null;
-  if (first === null) {
+  const first = pickInitialGroup(groups, persistedGroupId);
+  if (first === undefined) {
     return { activeGroupId: null, activeTabId: null, lastActiveTabByGroup: {} };
   }
   const activeTabId = first.tabIds[0] ?? null;
@@ -993,9 +1041,10 @@ export const useAppStore = create<Store>()(
         activeTabId: newActiveTabId,
         editingId: newEditingId,
         closedTabs: newClosedTabs,
-        // フォールバック先が別グループのタブなら選択も移す。
+        // フォールバック先は必ず同じグループのタブ (selectFallbackTab 参照)。
         // グループ内の最後のタブを閉じた場合 (newActiveTabId が null) は
-        // syncGroupSelection が空を返し、そのグループの選択が維持される。
+        // syncGroupSelection が空を返し、そのグループの選択が維持される
+        // （空のまま留まり、次の Ctrl+T はこのグループに入る）。
         ...syncGroupSelection(newTabs, state.lastActiveTabByGroup, newActiveTabId),
       };
     });
@@ -1102,10 +1151,14 @@ export const useAppStore = create<Store>()(
       });
 
       inserted = true;
+      const newTabs = { ...state.tabs, [newTabId]: newTab };
       return {
         groups: updatedGroups,
-        tabs: { ...state.tabs, [newTabId]: newTab },
+        tabs: newTabs,
         activeTabId: newTabId,
+        // 複製元が選択中グループ以外にあった場合でも、サイドバーの選択と
+        // 横タブバーの表示対象を複製先へ揃える (createTab と同じ規約)
+        ...syncGroupSelection(newTabs, state.lastActiveTabByGroup, newTabId),
       };
     });
 
@@ -1222,7 +1275,11 @@ export const useAppStore = create<Store>()(
           ? { ...state.tabs, [tabId]: { ...tab, groupId: toGroupId } }
           : state.tabs;
 
-      return { groups: updatedGroups, tabs: updatedTab };
+      return {
+        groups: updatedGroups,
+        tabs: updatedTab,
+        ...movedTabSelection(state, updatedTab, tabId, fromGroupId !== toGroupId),
+      };
     });
   },
 
@@ -1423,7 +1480,7 @@ export const useAppStore = create<Store>()(
     }),
     {
       name: 'racker-terminal',
-      version: 4,
+      version: 5,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -1460,10 +1517,11 @@ export const useAppStore = create<Store>()(
           }
         }
 
-        // v1 → v4 は optional フィールドの追加のみでデータ変換が不要なため、分岐を持たない。
+        // v1 → v5 は optional フィールドの追加のみでデータ変換が不要なため、分岐を持たない。
         //   v1 → v2: settings.defaultFavoriteId
         //   v2 → v3: Tab.args / Favorite.args
         //   v3 → v4: Tab.launchClaude / Tab.claudeSessionId / Favorite.launchClaude
+        //   v4 → v5: activeGroupId (未保存なら initialSelection がフォールバックする)
         // いずれも既存データに含まれなくても undefined のままで正常動作する。
 
         return state;
@@ -1490,6 +1548,9 @@ export const useAppStore = create<Store>()(
         ),
         favorites: state.favorites,
         settings: state.settings,
+        // 選択中グループだけは保存する。再起動で別のフォルダに飛ぶと、そのまま
+        // Ctrl+T したときに意図しないグループへタブが入るため。
+        activeGroupId: state.activeGroupId,
         // activeTabId / editingId / contextMenuOpen / wslDistros は OFF
         // updater 系 (updateInfo, updatePhase, updateProgress, updateError, updateDialogOpen)
         // は永続化対象外。再起動時はデフォルト値で初期化される。
@@ -1513,8 +1574,8 @@ export const useAppStore = create<Store>()(
         }
         state.tabs = newTabs;
 
-        // 3. アクティブ選択を張り直す
-        const selection = initialSelection(state.groups);
+        // 3. アクティブ選択を張り直す（前回選択していたグループを優先する）
+        const selection = initialSelection(state.groups, state.activeGroupId);
         state.activeGroupId = selection.activeGroupId;
         state.activeTabId = selection.activeTabId;
         state.lastActiveTabByGroup = selection.lastActiveTabByGroup;

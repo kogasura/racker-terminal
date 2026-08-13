@@ -1,12 +1,11 @@
 import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useDroppable } from '@dnd-kit/core';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
-import { GROUP_DROPPABLE_PREFIX, DRAG_KIND } from '../lib/dndResolve';
+import { DRAG_KIND } from '../lib/dndResolve';
 import { AGENT_STATE_LABEL, dominantAgentState, type AgentState } from '../types';
 
 interface GroupSectionProps {
@@ -46,8 +45,12 @@ function GroupAgentIndicator({ agentState }: { agentState: AgentState | undefine
  * 上部の TabBar に横並びで表示される。タブが見えなくなる代わりに、
  * 配下タブの代表エージェント状態とタブ数をこの行に集約して表示する。
  *
- * この行自体が drop ターゲット (`group-{id}`) を兼ねており、TabBar から
- * タブをここへドロップすると、そのグループの末尾へ移動する。
+ * この行自体が drop ターゲットを兼ねており、TabBar からタブをここへドロップ
+ * すると、そのグループの末尾へ移動する。drop 先は useSortable が登録する
+ * droppable（id は生の groupId）に一本化してある: 同じ矩形に別 id の
+ * useDroppable を重ねると、dnd-kit の closestCorners が同点になり、
+ * 先に登録された sortable 側が常に over になってタブの drop が
+ * 解決できなくなるため（resolveDropTarget 参照）。
  */
 export const GroupSection = memo(function GroupSection({
   groupId,
@@ -79,6 +82,8 @@ export const GroupSection = memo(function GroupSection({
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
   // F2: prop drilling 解消 — Sidebar から groupsCount を受け取らず直接 subscribe
   const canDelete = useAppStore((s) => s.groups.length > 1);
+  // drop ホバーの見た目をタブのドラッグ中に限定するため、種別だけ subscribe する
+  const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
 
   // B1: グループ自体を D&D 並び替え可能にする（kind=group でタブ用と区別）
   // F-M4: 編集中 (isEditingGroup) は D&D を無効化する（stopEditing が未確定入力を確定してしまうため）
@@ -89,6 +94,8 @@ export const GroupSection = memo(function GroupSection({
     transform: groupTransform,
     transition: groupTransition,
     isDragging: isGroupDragging,
+    // タブをこの行にドロップするとグループ末尾へ移動する (resolveDropTarget が解決する)
+    isOver,
   } = useSortable({ id: groupId, data: { kind: DRAG_KIND.GROUP }, disabled: isEditingGroup });
 
   const groupStyle = {
@@ -96,10 +103,9 @@ export const GroupSection = memo(function GroupSection({
     transition: groupTransition,
   };
 
-  // タブをこの行にドロップするとグループ末尾へ移動する (resolveDropTarget が解決する)
-  const { setNodeRef: setRowDropRef, isOver } = useDroppable({
-    id: `${GROUP_DROPPABLE_PREFIX}${groupId}`,
-  });
+  // ドロップ受け入れのハイライトはタブのドラッグ中だけ出す。
+  // グループ同士の並び替え中は sortable のアニメーションが位置を示すため不要。
+  const isTabDropTarget = isOver && isDraggingTab;
 
   if (!groupView) return null;
 
@@ -126,7 +132,7 @@ export const GroupSection = memo(function GroupSection({
   }
 
   return (
-    // setGroupNodeRef: グループ全体を sortable 要素として登録する
+    // setGroupNodeRef: グループ全体を sortable 要素 (= タブの drop ターゲット) として登録する
     // F-M2: className="group-section-wrapper" を追加（[data-dragging].group-section-wrapper CSS selector が機能するように）
     <div
       ref={setGroupNodeRef}
@@ -141,10 +147,8 @@ export const GroupSection = memo(function GroupSection({
           asChild
         >
           {/* F1: グループ行を role="button" + onKeyDown で a11y 化 */}
-          {/* setRowDropRef: タブのグループ間移動を受け付ける drop ターゲット */}
           <div
-            ref={setRowDropRef}
-            className={groupHeaderClassName(isActive, isOver)}
+            className={groupHeaderClassName(isActive, isTabDropTarget)}
             role="button"
             tabIndex={0}
             aria-current={isActive ? 'true' : undefined}

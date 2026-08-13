@@ -1151,6 +1151,40 @@ describe('appStore', () => {
 
       expect(useAppStore.getState().groups).toBe(before);
     });
+
+    // 見ているタブを別グループへ移したら、サイドバーの選択と TabBar の表示も
+    // 追随しないと「移した本人が画面から消える」ため
+    it('アクティブタブを別グループへ移すと選択も移動先へ追随する', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const g2 = useAppStore.getState().createGroup('G2');
+      useAppStore.getState().createTab(g2, { title: 'B' });
+      useAppStore.getState().setActiveTab(t1);
+      expect(useAppStore.getState().activeGroupId).toBe(g1);
+
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      const after = useAppStore.getState();
+      expect(after.tabs[t1].groupId).toBe(g2);
+      expect(after.activeTabId).toBe(t1);
+      expect(after.activeGroupId).toBe(g2);
+      expect(after.lastActiveTabByGroup[g2]).toBe(t1);
+    });
+
+    it('アクティブでないタブを別グループへ移しても選択は動かない', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
+      const g2 = useAppStore.getState().createGroup('G2');
+      useAppStore.getState().setActiveTab(t2);
+
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      const after = useAppStore.getState();
+      expect(after.tabs[t1].groupId).toBe(g2);
+      expect(after.activeTabId).toBe(t2);
+      expect(after.activeGroupId).toBe(g1);
+    });
   });
 
   // --- setTabAgentState ---
@@ -1450,20 +1484,22 @@ describe('selectFallbackTab', () => {
     expect(selectFallbackTab('g1', groups)).toBe('t2');
   });
 
-  it('同グループが空で前グループに残存タブがある場合: 前グループの末尾を返す', () => {
+  // 別グループのタブへは移らない: 選択が飛ぶと「見ているフォルダ」と
+  // 「次のタブが作られる先」まで黙って変わってしまうため (selectFallbackTab 参照)
+  it('同グループが空なら前グループにタブが残っていても null を返す', () => {
     const groups = [
       { id: 'g0', title: 'G0', collapsed: false, tabIds: ['t0'] },
       { id: 'g1', title: 'G1', collapsed: false, tabIds: [] },
     ];
-    expect(selectFallbackTab('g1', groups)).toBe('t0');
+    expect(selectFallbackTab('g1', groups)).toBeNull();
   });
 
-  it('前グループが空で後グループに残存タブがある場合: 後グループの先頭を返す', () => {
+  it('同グループが空なら後グループにタブが残っていても null を返す', () => {
     const groups = [
       { id: 'g1', title: 'G1', collapsed: false, tabIds: [] },
       { id: 'g2', title: 'G2', collapsed: false, tabIds: ['t2', 't3'] },
     ];
-    expect(selectFallbackTab('g1', groups)).toBe('t2');
+    expect(selectFallbackTab('g1', groups)).toBeNull();
   });
 
   it('全グループが空の場合: null を返す', () => {
@@ -1854,6 +1890,86 @@ describe('グループ選択 (activeGroupId)', () => {
     expect(useAppStore.getState().activeGroupId).toBe(g1);
   });
 
+  // --- 新規タブは「サイドバーで選択中のグループ」に作られる ---
+  //
+  // Ctrl+T / タイトルバーの + / お気に入り / フォルダを開く は groupId を渡さずに
+  // createTab を呼ぶ。ここで activeGroupId ではなく「アクティブタブの所属グループ」を
+  // 見ていると、タブが 1 つも無いグループを選んでいる間 (activeTabId === null) に
+  // groups[0] へフォールバックし、別のグループにタブができてしまう。
+
+  it('タブが 0 のグループを選択中に開いた新規タブは、そのグループに入る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1);
+    const empty = useAppStore.getState().createGroup('Empty');
+    useAppStore.getState().setActiveGroup(empty);
+
+    const tabId = useAppStore.getState().createTab();
+
+    expect(useAppStore.getState().tabs[tabId].groupId).toBe(empty);
+    expect(useAppStore.getState().groups.find((g) => g.id === empty)?.tabIds).toEqual([tabId]);
+  });
+
+  it('Ctrl+T (spawnDefaultOrNew) も選択中の空グループにタブを作る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1);
+    const empty = useAppStore.getState().createGroup('Empty');
+    useAppStore.getState().setActiveGroup(empty);
+
+    const tabId = useAppStore.getState().spawnDefaultOrNew();
+
+    expect(useAppStore.getState().tabs[tabId].groupId).toBe(empty);
+  });
+
+  it('お気に入り起動も選択中の空グループにタブを作る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1);
+    const empty = useAppStore.getState().createGroup('Empty');
+    useAppStore.getState().setActiveGroup(empty);
+    const favId = useAppStore.getState().addFavorite({ title: 'fav', cwd: 'C:\\work' });
+
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+
+    expect(tabId).not.toBeNull();
+    expect(useAppStore.getState().tabs[tabId!].groupId).toBe(empty);
+  });
+
+  it('明示的に groupId を渡した場合は選択中グループより優先される', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const g2 = useAppStore.getState().createGroup('G2');
+    useAppStore.getState().setActiveGroup(g2);
+
+    const tabId = useAppStore.getState().createTab(g1);
+
+    expect(useAppStore.getState().tabs[tabId].groupId).toBe(g1);
+  });
+
+  it('activeGroupId が消えたグループを指していてもアクティブタブのグループへ入る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const t1 = useAppStore.getState().createTab(g1);
+    // グループを消せない状況を作らず、直接 state を壊して防御動作だけを見る
+    useAppStore.setState({ activeGroupId: 'ghost', activeTabId: t1 });
+
+    const tabId = useAppStore.getState().createTab();
+
+    expect(useAppStore.getState().tabs[tabId].groupId).toBe(g1);
+  });
+
+  it('duplicateTab は複製先グループへ選択を追随させる', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    const t1 = useAppStore.getState().createTab(g1);
+    const g2 = useAppStore.getState().createGroup('G2');
+    useAppStore.getState().createTab(g2);
+    // 選択は g2 のまま、g1 のタブを複製する
+    expect(useAppStore.getState().activeGroupId).toBe(g2);
+
+    const copy = useAppStore.getState().duplicateTab(t1);
+
+    expect(copy).not.toBeNull();
+    expect(useAppStore.getState().activeTabId).toBe(copy);
+    expect(useAppStore.getState().activeGroupId).toBe(g1);
+    expect(useAppStore.getState().lastActiveTabByGroup[g1]).toBe(copy);
+  });
+
   it('setDragState はドラッグ中の id と kind を保持し、終了時にクリアできる', () => {
     useAppStore.getState().setDragState('tab-1', 'tab');
     expect(useAppStore.getState().dragId).toBe('tab-1');
@@ -2009,19 +2125,31 @@ describe('removeTab — fallback expand', () => {
 
   it('active タブを削除した結果フォールバックが折りたたみグループ内なら自動展開', () => {
     const g1 = useAppStore.getState().createGroup('G1');
-    const g2 = useAppStore.getState().createGroup('G2');
-    useAppStore.getState().createTab(g2, { title: 'B' }); // g2/t-B
-    const tA = useAppStore.getState().createTab(g1, { title: 'A' });
-    useAppStore.getState().setActiveTab(tA);
-    useAppStore.getState().toggleCollapse(g2); // g2 を折りたたむ
+    useAppStore.getState().createTab(g1, { title: 'A' });   // g1/t-A (fallback 先)
+    const tB = useAppStore.getState().createTab(g1, { title: 'B' });
+    useAppStore.getState().setActiveTab(tB);
+    useAppStore.getState().toggleCollapse(g1); // g1 を折りたたむ
 
-    expect(useAppStore.getState().groups.find((g) => g.id === g2)?.collapsed).toBe(true);
+    expect(useAppStore.getState().groups.find((g) => g.id === g1)?.collapsed).toBe(true);
 
-    useAppStore.getState().removeTab(tA); // tA を削除 → fallback は g2 内タブ
+    useAppStore.getState().removeTab(tB); // tB を削除 → fallback は同グループの t-A
 
     const after = useAppStore.getState();
     expect(after.activeTabId).not.toBeNull();
-    expect(after.groups.find((g) => g.id === g2)?.collapsed).toBe(false);
+    expect(after.groups.find((g) => g.id === g1)?.collapsed).toBe(false);
+  });
+
+  it('グループ最後のタブを閉じても別グループへは飛ばず、空のまま選択が残る', () => {
+    const g1 = useAppStore.getState().createGroup('G1');
+    useAppStore.getState().createTab(g1, { title: 'A' });
+    const g2 = useAppStore.getState().createGroup('G2');
+    const tB = useAppStore.getState().createTab(g2, { title: 'B' });
+
+    useAppStore.getState().removeTab(tB);
+
+    const after = useAppStore.getState();
+    expect(after.activeTabId).toBeNull();
+    expect(after.activeGroupId).toBe(g2);
   });
 });
 
@@ -2330,6 +2458,79 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
     expect(state.tabs['t1'].ptyId).toBeUndefined();
     expect(state.editingId).toBeNull();
     expect(state.contextMenuOpen).toBe(false);
+  });
+
+  // 再起動で別のフォルダに飛ぶと、そのまま Ctrl+T したときに意図しない
+  // グループへタブが入るため、選択したグループは保存して復元する
+  it('保存された activeGroupId のグループを選択して復元する', () => {
+    const state = {
+      groups: [
+        { id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] },
+        { id: 'g2', title: 'G2', collapsed: false, tabIds: ['t2'] },
+      ],
+      tabs: {
+        t1: { id: 't1', groupId: 'g1', status: 'live' },
+        t2: { id: 't2', groupId: 'g2', status: 'live' },
+      },
+      activeGroupId: 'g2',
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    expect(state.activeGroupId).toBe('g2');
+    expect((state as any).activeTabId).toBe('t2');
+  });
+
+  it('保存された activeGroupId が消えていればタブを持つ最初のグループへ戻す', () => {
+    const state = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
+      tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
+      activeGroupId: 'gone',
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    expect(state.activeGroupId).toBe('g1');
+    expect((state as any).activeTabId).toBe('t1');
+  });
+
+  it('activeGroupId が未保存 (旧バージョンのデータ) でも復元できる', () => {
+    const state = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
+      tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    expect((state as any).activeGroupId).toBe('g1');
+    expect((state as any).activeTabId).toBe('t1');
+  });
+
+  it('タブが 0 のグループを選択したまま終了しても、その選択を復元する', () => {
+    const state = {
+      groups: [
+        { id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] },
+        { id: 'g2', title: 'G2', collapsed: false, tabIds: [] },
+      ],
+      tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
+      activeGroupId: 'g2',
+      editingId: null,
+      contextMenuOpen: false,
+    };
+    callOnRehydrate(state);
+    expect(state.activeGroupId).toBe('g2');
+    expect((state as any).activeTabId).toBeNull();
+  });
+
+  it('partialize が activeGroupId を保存対象に含む', () => {
+    const opts = useAppStore.persist.getOptions();
+    const persisted = opts.partialize!({
+      ...useAppStore.getState(),
+      activeGroupId: 'g9',
+    } as any) as Record<string, unknown>;
+    expect(persisted.activeGroupId).toBe('g9');
+    // ランタイム状態は従来どおり保存しない
+    expect(persisted).not.toHaveProperty('activeTabId');
   });
 });
 

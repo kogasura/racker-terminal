@@ -43,6 +43,23 @@ describe('resolveDropTarget', () => {
     expect(result).toEqual({ toGroupId: 'g1', toIndex: 2 });
   });
 
+  // サイドバーのグループ行はグループ並び替え用の useSortable を兼ねており、
+  // タブをその行へ落としたときの over.id は接頭辞なしの生 groupId になる。
+  // ここを解決できないと「グループ間のタブ移動が何も起きない」壊れ方をする。
+  it('生の groupId への drop → 末尾追加 (グループ行の sortable が over になるケース)', () => {
+    const state = makeState(
+      [{ id: 'g1', tabIds: ['t1', 't2'] }],
+      { t1: { groupId: 'g1' }, t2: { groupId: 'g1' } },
+    );
+    const result = resolveDropTarget('g1', state);
+    expect(result).toEqual({ toGroupId: 'g1', toIndex: 2 });
+  });
+
+  it('生の groupId への drop → 空グループなら toIndex 0', () => {
+    const state = makeState([{ id: 'g1', tabIds: [] }], {});
+    expect(resolveDropTarget('g1', state)).toEqual({ toGroupId: 'g1', toIndex: 0 });
+  });
+
   it('タブ ID への drop → そのタブの位置 (idx) に挿入', () => {
     const state = makeState(
       [{ id: 'g1', tabIds: ['t1', 't2', 't3'] }],

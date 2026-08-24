@@ -10,7 +10,13 @@ import {
 import type { PrInfo as PrInfoValue } from '../lib/prStatus';
 import type { ClaudeTranscriptMeta, ClaudeUsageLimits } from '../lib/claudeMeta';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
-import { checkForUpdate, downloadUpdate, installAndRelaunch, type UpdateAvailable } from '../lib/updater';
+import {
+  checkForUpdate,
+  downloadUpdate,
+  installAndRelaunch,
+  takeFailedUpdateAttempt,
+  type UpdateAvailable,
+} from '../lib/updater';
 
 // Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
 let pendingUpdateHandle: UpdateAvailable | null = null;
@@ -716,6 +722,15 @@ interface AppActions {
   resetUpdateError: () => void;
 
   /**
+   * 前回の更新適用が反映されたかを起動時に確かめる。
+   * 反映されていなければ updateInstallFailure を立てて知らせる。
+   */
+  checkPreviousUpdateAttempt: () => Promise<void>;
+
+  /** 更新失敗の通知を閉じる。 */
+  dismissUpdateInstallFailure: () => void;
+
+  /**
    * 最後に閉じたタブを復元する。Ctrl+Shift+T から呼ぶ。
    * - スタックが空 → null を返す (no-op)
    * - 元グループが残っていればそこに、なければ groups[0] にフォールバック
@@ -749,6 +764,7 @@ export const useAppStore = create<Store>()(
   updateProgress: 0,
   updateError: null,
   updateDialogOpen: false,
+  updateInstallFailure: null,
 
   addFavorite: (fav) => {
     const id = newId();
@@ -1452,6 +1468,13 @@ export const useAppStore = create<Store>()(
     });
   },
 
+  checkPreviousUpdateAttempt: async () => {
+    const failure = await takeFailedUpdateAttempt();
+    if (failure) set({ updateInstallFailure: failure });
+  },
+
+  dismissUpdateInstallFailure: () => set({ updateInstallFailure: null }),
+
   restoreLastClosedTab: () => {
     const { closedTabs, groups } = get();
     if (closedTabs.length === 0) return null;
@@ -1592,6 +1615,7 @@ export const useAppStore = create<Store>()(
         state.updateProgress = 0;
         state.updateError = null;
         state.updateDialogOpen = false;
+        state.updateInstallFailure = null;
 
         // closedTabs は永続化対象外のため再起動時に明示初期化する
         state.closedTabs = [];

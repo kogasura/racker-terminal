@@ -333,6 +333,20 @@ export interface UpdateInfo {
 }
 
 /**
+ * 更新の適用を試みたのに、バージョンが変わらないまま起動してきたときの情報。
+ *
+ * Windows ではインストーラの起動失敗がアプリ側に一切返らないため、
+ * 「適用したつもりが何も起きていない」状態を検知する唯一の手段になる
+ * (lib/updater.ts の takeFailedUpdateAttempt を参照)。
+ */
+export interface UpdateInstallFailure {
+  /** 適用しようとしたバージョン */
+  version: string;
+  /** 実際に起動しているバージョン */
+  currentVersion: string;
+}
+
+/**
  * 閉じたタブの復元用情報。
  * id / status / ptyId / oscTitle は復元時に新規生成・初期化されるため保存しない。
  */
@@ -448,4 +462,9 @@ export interface AppState {
   updateError: string | null;
   /** 更新ダイアログの表示状態。 */
   updateDialogOpen: boolean;
+  /**
+   * 前回の更新が反映されないまま起動したときに立つ。通知したら null に戻す。
+   * updatePhase とは独立しており、通常の更新フローを妨げない。
+   */
+  updateInstallFailure: UpdateInstallFailure | null;
 }

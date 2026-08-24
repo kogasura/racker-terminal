@@ -8,14 +8,36 @@ vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: vi.fn(),
+}));
+
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { checkForUpdate, downloadUpdate, installAndRelaunch, relaunchApp } from './updater';
+import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
+import {
+  checkForUpdate,
+  downloadUpdate,
+  installAndRelaunch,
+  relaunchApp,
+  recordUpdateAttempt,
+  clearUpdateAttempt,
+  takeFailedUpdateAttempt,
+} from './updater';
 
 describe('updater', () => {
   beforeEach(() => {
     vi.mocked(check).mockReset();
     vi.mocked(relaunch).mockReset();
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue(true);
+    vi.mocked(getVersion).mockReset();
+    localStorage.clear();
   });
 
   describe('checkForUpdate', () => {
@@ -188,7 +210,46 @@ describe('updater', () => {
       expect(relaunch).toHaveBeenCalledTimes(1);
     });
 
-    it('install() が reject した場合は relaunch() を呼ばない', async () => {
+    it('install() の前に Job から抜けられるようにする', async () => {
+      // インストーラが racker の Job に入ったまま起動すると、直後の exit(0) で
+      // 道連れに殺される。install() より先に緩めることが要件。
+      const order: string[] = [];
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        order.push(cmd);
+        return true;
+      });
+      const mockHandle = {
+        install: vi.fn().mockImplementation(async () => {
+          order.push('install');
+        }),
+      };
+      vi.mocked(relaunch).mockResolvedValueOnce(undefined);
+
+      await installAndRelaunch({
+        version: '1.2.0',
+        currentVersion: '1.1.0',
+        notes: '',
+        _handle: mockHandle as any,
+      });
+
+      expect(order).toEqual(['allow_process_breakaway', 'install']);
+    });
+
+    it('適用を試みたバージョンを記録する', async () => {
+      const mockHandle = { install: vi.fn().mockResolvedValueOnce(undefined) };
+      vi.mocked(relaunch).mockResolvedValueOnce(undefined);
+
+      await installAndRelaunch({
+        version: '1.9.3',
+        currentVersion: '1.9.2',
+        notes: '',
+        _handle: mockHandle as any,
+      });
+
+      expect(localStorage.getItem('racker.update.attempt')).toBe('1.9.3');
+    });
+
+    it('install() が reject した場合は relaunch() を呼ばず、Job を締め直して記録も消す', async () => {
       const mockHandle = {
         install: vi.fn().mockRejectedValueOnce(new Error('install failed')),
       };
@@ -203,6 +264,72 @@ describe('updater', () => {
 
       await expect(installAndRelaunch(update)).rejects.toThrow('install failed');
       expect(relaunch).not.toHaveBeenCalled();
+      expect(vi.mocked(invoke).mock.calls.map((c) => c[0])).toEqual([
+        'allow_process_breakaway',
+        'restore_process_confinement',
+      ]);
+      expect(localStorage.getItem('racker.update.attempt')).toBeNull();
+    });
+
+    it('allow_process_breakaway が失敗しても更新自体は続行する', async () => {
+      vi.mocked(invoke).mockRejectedValueOnce(new Error('no such command'));
+      const mockHandle = { install: vi.fn().mockResolvedValueOnce(undefined) };
+      vi.mocked(relaunch).mockResolvedValueOnce(undefined);
+
+      await installAndRelaunch({
+        version: '1.2.0',
+        currentVersion: '1.1.0',
+        notes: '',
+        _handle: mockHandle as any,
+      });
+
+      expect(mockHandle.install).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('takeFailedUpdateAttempt', () => {
+    it('記録がなければ null', async () => {
+      expect(await takeFailedUpdateAttempt()).toBeNull();
+      expect(getVersion).not.toHaveBeenCalled();
+    });
+
+    it('記録どおりのバージョンで起動していれば null (適用できている)', async () => {
+      recordUpdateAttempt('1.9.3');
+      vi.mocked(getVersion).mockResolvedValueOnce('1.9.3');
+
+      expect(await takeFailedUpdateAttempt()).toBeNull();
+    });
+
+    it('バージョンが変わっていなければ失敗として返す', async () => {
+      recordUpdateAttempt('1.9.3');
+      vi.mocked(getVersion).mockResolvedValueOnce('1.9.2');
+
+      expect(await takeFailedUpdateAttempt()).toEqual({
+        version: '1.9.3',
+        currentVersion: '1.9.2',
+      });
+    });
+
+    it('記録は 1 度読んだら消える (通知は 1 回きり)', async () => {
+      recordUpdateAttempt('1.9.3');
+      vi.mocked(getVersion).mockResolvedValue('1.9.2');
+
+      expect(await takeFailedUpdateAttempt()).not.toBeNull();
+      expect(await takeFailedUpdateAttempt()).toBeNull();
+    });
+
+    it('現在バージョンを取れないときは黙る (誤検知しない)', async () => {
+      recordUpdateAttempt('1.9.3');
+      vi.mocked(getVersion).mockRejectedValueOnce(new Error('not tauri'));
+
+      expect(await takeFailedUpdateAttempt()).toBeNull();
+    });
+
+    it('clearUpdateAttempt で記録を消せる', async () => {
+      recordUpdateAttempt('1.9.3');
+      clearUpdateAttempt();
+
+      expect(await takeFailedUpdateAttempt()).toBeNull();
     });
   });
 

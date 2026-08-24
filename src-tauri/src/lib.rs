@@ -73,6 +73,8 @@ pub fn run() {
             scrollback::load_scrollback,
             scrollback::delete_scrollback,
             scrollback::prune_scrollback,
+            job::allow_process_breakaway,
+            job::restore_process_confinement,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

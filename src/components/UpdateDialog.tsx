@@ -2,6 +2,51 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useAppStore } from '../store/appStore';
 import type { UpdateInfo } from '../types';
 
+/**
+ * 前回の更新が反映されなかったことを知らせるダイアログ。
+ *
+ * 通常の更新フロー (updatePhase) とは独立している。Windows ではインストーラの
+ * 起動失敗がアプリ側に一切返らないため、次の起動でバージョンを突き合わせて
+ * 初めて分かる (lib/updater.ts の takeFailedUpdateAttempt を参照)。
+ */
+function UpdateInstallFailureDialog() {
+  const failure = useAppStore((s) => s.updateInstallFailure);
+  const dismiss = useAppStore((s) => s.dismissUpdateInstallFailure);
+
+  if (!failure) return null;
+
+  return (
+    <Dialog.Root
+      open
+      onOpenChange={(next) => {
+        if (!next) dismiss();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content">
+          <Dialog.Title className="dialog-title">
+            アップデートが適用されませんでした
+          </Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            {failure.version} をインストールしようとしましたが、{failure.currentVersion}{' '}
+            のまま起動しています。
+          </Dialog.Description>
+          <p className="update-dialog__failure-hint">
+            インストーラが最後まで走らなかったようです。もう一度お試しください。
+            続くようであれば、リリースページからインストーラを直接実行してください。
+          </p>
+          <div className="dialog-actions">
+            <button type="button" className="dialog-btn dialog-btn--submit" onClick={dismiss}>
+              閉じる
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export function UpdateDialog() {
   const open = useAppStore((s) => s.updateDialogOpen);
   const info = useAppStore((s) => s.updateInfo);
@@ -10,12 +55,11 @@ export function UpdateDialog() {
   const close = useAppStore((s) => s.closeUpdateDialog);
   const apply = useAppStore((s) => s.applyUpdate);
 
-  // idle / checking / downloading のときは Dialog を非表示にする
-  if (phase === 'idle' || phase === 'checking' || phase === 'downloading') {
-    return null;
+  // idle / checking / downloading のときは更新ダイアログを出さない。
+  // 失敗通知は phase と独立しているので、そのときも描画する。
+  if (phase === 'idle' || phase === 'checking' || phase === 'downloading' || !info) {
+    return <UpdateInstallFailureDialog />;
   }
-
-  if (!info) return null;
 
   const isBusy = phase === 'installing';
 
@@ -78,21 +122,24 @@ export function UpdateDialog() {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content">
-          <Dialog.Title className="dialog-title">
-            アップデートが利用可能です ({info.currentVersion} → {info.version})
-          </Dialog.Title>
-          <Dialog.Description className="dialog-description">
-            {phase === 'ready'
-              ? '新しいバージョンのダウンロードが完了しました。再起動して適用しますか?'
-              : `現在のバージョン: ${info.currentVersion}${info.date ? ` — リリース: ${info.date}` : ''}`}
-          </Dialog.Description>
-          {renderBody(info)}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <>
+      <UpdateInstallFailureDialog />
+      <Dialog.Root open={open} onOpenChange={handleOpenChange}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title className="dialog-title">
+              アップデートが利用可能です ({info.currentVersion} → {info.version})
+            </Dialog.Title>
+            <Dialog.Description className="dialog-description">
+              {phase === 'ready'
+                ? '新しいバージョンのダウンロードが完了しました。再起動して適用しますか?'
+                : `現在のバージョン: ${info.currentVersion}${info.date ? ` — リリース: ${info.date}` : ''}`}
+            </Dialog.Description>
+            {renderBody(info)}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
   );
 }

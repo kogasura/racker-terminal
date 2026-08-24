@@ -1545,6 +1545,7 @@ function makeState(
     updateProgress: 0,
     updateError: null,
     updateDialogOpen: false,
+    updateInstallFailure: null,
   };
 }
 
@@ -2782,9 +2783,15 @@ vi.mock('../lib/updater', () => ({
   checkForUpdate: vi.fn(),
   downloadUpdate: vi.fn(),
   installAndRelaunch: vi.fn(),
+  takeFailedUpdateAttempt: vi.fn().mockResolvedValue(null),
 }));
 
-import { checkForUpdate, downloadUpdate, installAndRelaunch } from '../lib/updater';
+import {
+  checkForUpdate,
+  downloadUpdate,
+  installAndRelaunch,
+  takeFailedUpdateAttempt,
+} from '../lib/updater';
 
 describe('updater スライス', () => {
   function resetUpdaterStore() {
@@ -2808,6 +2815,7 @@ describe('updater スライス', () => {
       updateProgress: 0,
       updateError: null,
       updateDialogOpen: false,
+      updateInstallFailure: null,
     });
   }
 
@@ -2816,6 +2824,8 @@ describe('updater スライス', () => {
     vi.mocked(checkForUpdate).mockReset();
     vi.mocked(downloadUpdate).mockReset();
     vi.mocked(installAndRelaunch).mockReset();
+    vi.mocked(takeFailedUpdateAttempt).mockReset();
+    vi.mocked(takeFailedUpdateAttempt).mockResolvedValue(null);
   });
 
   it('runUpdateCheck: idle → checking → downloading → ready (更新あり、DL 成功)', async () => {
@@ -2983,6 +2993,43 @@ describe('updater スライス', () => {
     expect(s.updateError).toBe(null);
     expect(s.updateProgress).toBe(0);
     expect(s.updateDialogOpen).toBe(false);
+  });
+
+  it('checkPreviousUpdateAttempt: 反映されていれば何も立てない', async () => {
+    resetUpdaterStore();
+    vi.mocked(takeFailedUpdateAttempt).mockResolvedValueOnce(null);
+
+    await useAppStore.getState().checkPreviousUpdateAttempt();
+
+    expect(useAppStore.getState().updateInstallFailure).toBe(null);
+  });
+
+  it('checkPreviousUpdateAttempt: 反映されていなければ updateInstallFailure を立てる', async () => {
+    resetUpdaterStore();
+    vi.mocked(takeFailedUpdateAttempt).mockResolvedValueOnce({
+      version: '1.9.3',
+      currentVersion: '1.9.2',
+    });
+
+    await useAppStore.getState().checkPreviousUpdateAttempt();
+
+    expect(useAppStore.getState().updateInstallFailure).toEqual({
+      version: '1.9.3',
+      currentVersion: '1.9.2',
+    });
+    // 通常の更新フローは妨げない
+    expect(useAppStore.getState().updatePhase).toBe('idle');
+  });
+
+  it('dismissUpdateInstallFailure: 通知を閉じる', () => {
+    resetUpdaterStore();
+    useAppStore.setState({
+      updateInstallFailure: { version: '1.9.3', currentVersion: '1.9.2' },
+    });
+
+    useAppStore.getState().dismissUpdateInstallFailure();
+
+    expect(useAppStore.getState().updateInstallFailure).toBe(null);
   });
 
   it('closeUpdateDialog: error phase で閉じても phase は維持される (バッジ残存)', () => {

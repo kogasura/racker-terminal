@@ -70,3 +70,12 @@
   padding: 16px 0;
   margin: 0;
 }
+
+/* 更新が反映されなかったときの補足説明 */
+.update-dialog__failure-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--sidebar-fg, #c0caf5);
+  opacity: 0.8;
+  margin: 12px 0 0;
+}

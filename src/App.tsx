@@ -173,6 +173,9 @@ function App() {
 
     const start = () => {
       if (cancelled) return;
+      // 前回「再起動して適用」したのにバージョンが変わっていないなら、更新は
+      // 無言で失敗している。チェックより先に確かめて知らせる。
+      void useAppStore.getState().checkPreviousUpdateAttempt();
       fire();
       intervalId = setInterval(fire, UPDATE_CHECK_INTERVAL_MS);
     };

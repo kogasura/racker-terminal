@@ -1022,6 +1022,14 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(&shell_path);
         cmd.cwd(&cwd_path);
 
+        // ハイパーリンク (OSC 8) 対応をシェル内の CLI に知らせる。
+        // racker は TERM_PROGRAM 等の既知の識別変数を名乗らないため、
+        // supports-hyperlinks 系の判定を使う CLI (Claude Code など) はこれが無いと
+        // リンクを出さずプレーンテキストに落とす。xterm.js 側の受け口は
+        // linkHandler (src/lib/linkHandler.ts)。
+        // ユーザー env 適用より前に置くので、env で FORCE_HYPERLINK=0 を渡せば無効化できる。
+        cmd.env("FORCE_HYPERLINK", "1");
+
         apply_args_and_env(&mut cmd, args, env);
 
         // TERM / COLORTERM は env 適用後に強制上書きして xterm 互換性を保護する

@@ -49,3 +49,25 @@ export function isAllowedUrl(input: string): boolean {
   // スキーム allowlist: http: と https: のみ許可
   return parsed.protocol === 'http:' || parsed.protocol === 'https:';
 }
+
+/**
+ * ターミナル出力の OSC 8 リンクとして受け取った `file:` URI の事前検証。
+ *
+ * 実際にどう開くか (allowlist 拡張子は既定アプリ / それ以外は Explorer 表示) の
+ * 最終判断は Rust 側 (file_link.rs) が行う。ここは isAllowedUrl と同じ
+ * 文字レベルの防御 (長さ・制御文字・Bidi 上書き) とスキーム確認だけを担う。
+ */
+export function isPlausibleFileUri(input: string): boolean {
+  if (input.length < 1 || input.length > MAX_URL_LENGTH) return false;
+  if (CONTROL_CHAR_RE.test(input)) return false;
+  if (BIDI_OVERRIDE_RE.test(input)) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    return false;
+  }
+
+  return parsed.protocol === 'file:';
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isAllowedUrl } from './urlValidator';
+import { isAllowedUrl, isPlausibleFileUri } from './urlValidator';
 
 describe('isAllowedUrl', () => {
   it('1: http URL → true', () => {
@@ -53,5 +53,45 @@ describe('isAllowedUrl', () => {
     // 'https://safe.com/' + RLO + 'moc.live/login' のような偽装攻撃を弾く
     const spoofed = 'https://safe.com/‮moc.live/login';
     expect(isAllowedUrl(spoofed)).toBe(false);
+  });
+});
+
+describe('isPlausibleFileUri', () => {
+  it('file: URI (Windows パス) → true', () => {
+    expect(isPlausibleFileUri('file:///C:/work/shot.png')).toBe(true);
+  });
+
+  it('file: URI (WSL の /mnt パス) → true', () => {
+    expect(isPlausibleFileUri('file:///mnt/c/work/shot.png')).toBe(true);
+  });
+
+  it('file: URI (host 付き UNC) → true', () => {
+    expect(isPlausibleFileUri('file://wsl.localhost/Ubuntu/home/user/a.png')).toBe(true);
+  });
+
+  it('http/https → false (こちらは isAllowedUrl の担当)', () => {
+    expect(isPlausibleFileUri('https://example.com/a.png')).toBe(false);
+    expect(isPlausibleFileUri('http://example.com')).toBe(false);
+  });
+
+  it('javascript: スキーム → false', () => {
+    expect(isPlausibleFileUri('javascript:alert(1)')).toBe(false);
+  });
+
+  it('制御文字混入 → false', () => {
+    expect(isPlausibleFileUri('file:///C:/ab.png')).toBe(false);
+  });
+
+  it('Bidi 上書き文字混入 → false', () => {
+    expect(isPlausibleFileUri('file:///C:/a‮b.png')).toBe(false);
+  });
+
+  it('URL としてパース不能 → false', () => {
+    expect(isPlausibleFileUri('C:\work\shot.png')).toBe(false);
+    expect(isPlausibleFileUri('')).toBe(false);
+  });
+
+  it('2048 文字超 → false', () => {
+    expect(isPlausibleFileUri('file:///C:/' + 'a'.repeat(2048))).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ mod claude_sessions;
 mod claude_transcript;
 mod claude_usage;
 mod command_audit;
+mod file_link;
 mod git_pr;
 mod job;
 mod launch;
@@ -73,6 +74,7 @@ pub fn run() {
             scrollback::load_scrollback,
             scrollback::delete_scrollback,
             scrollback::prune_scrollback,
+            file_link::open_file_link,
             job::allow_process_breakaway,
             job::restore_process_confinement,
         ])

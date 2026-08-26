@@ -41,6 +41,9 @@ which = "7"
 thiserror = "2"
 parking_lot = "0.12"
 dirs = "5"
+# file:// リンク (OSC 8) のパース用 (file_link.rs)。
+# tauri 本体が既に依存しているので、ビルドへの追加コストはゼロ。
+url = "2"
 # Claude のプラン利用量 API を叩くためだけに使う (claude_usage.rs)。
 # tauri-plugin-updater が既に依存しているので、ビルドへの追加コストは小さい。
 # TLS は rustls + ring。`rustls` feature ではなく `rustls-no-provider` を選び、

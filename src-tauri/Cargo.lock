@@ -3074,6 +3074,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "thiserror 2.0.18",
+ "url",
  "uuid",
  "which",
  "windows-sys 0.61.2",

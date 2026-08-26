@@ -8,6 +8,7 @@ import type { PtyHandle, PtyEvent, SpawnOptions } from './pty';
 import type { Settings, AgentState } from '../types';
 import { spawnPty, writePty, resizePty, setReadPaused } from './pty';
 import { isAllowedUrl } from './urlValidator';
+import { createLinkHandler } from './linkHandler';
 import { readBottomSnapshot, classifyAgentState, AGENT_SETTLE_MS } from './agentState';
 import {
   parseTabStatusOsc,
@@ -670,6 +671,9 @@ export function createRuntime(
     scrollback: settings.scrollback,
     cursorBlink: true,
     allowProposedApi: true,
+    // OSC 8 ハイパーリンク (Claude Code の file:// リンク等) の受け口。
+    // 未設定だと xterm は警告付き confirm ダイアログを出す。linkHandler.ts 参照。
+    linkHandler: createLinkHandler(),
     // v0.5 改善: 透明背景を有効化する (xterm.js の必須オプション)
     // theme.background に rgba/transparent を設定するときに必要。
     // false (default) だと alpha が無視されて opaque で描画される。

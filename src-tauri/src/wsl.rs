@@ -10,9 +10,11 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     } else {
         bytes
     };
-    let utf16: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    // 端数バイト (奇数長) は捨てる。`chunks_exact` を使わないのは、
+    // clippy が Rust 1.98 で `as_chunks` への置き換えを要求してくるため
+    // (`as_chunks` は 1.97 以前ではまだ使えず、手元と CI で通らなくなる)。
+    let utf16: Vec<u16> = (0..bytes.len() / 2)
+        .map(|i| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
         .collect();
     String::from_utf16_lossy(&utf16)
 }

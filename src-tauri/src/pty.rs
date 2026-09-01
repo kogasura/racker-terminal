@@ -539,6 +539,35 @@ fn apply_args_and_env(
     }
 }
 
+/// WSL タブ (wsl.exe) の Linux 側へ引き継ぎたい変数。
+///
+/// Windows 側で `cmd.env` に入れても、それは wsl.exe プロセスに効くだけで
+/// **distro の中には伝播しない**。WSLENV に名前を列挙したものだけが渡る。
+const WSLENV_PASS_THROUGH: &[&str] = &["FORCE_HYPERLINK", "COLORTERM"];
+
+/// 既存の WSLENV に、渡したい変数名を重複なく追記する純関数。
+///
+/// WSLENV は `NAME:NAME2/p` のように `:` 区切りで、要素ごとに `/p` `/l` `/u` `/w`
+/// のフラグが付きうる。重複判定はフラグを除いた名前部分で行い、ユーザーや親プロセスが
+/// 付けたフラグ (例: `FORCE_HYPERLINK/u`) はそのまま残す。
+fn merge_wslenv(existing: Option<&str>, vars: &[&str]) -> String {
+    let mut out: Vec<String> = existing
+        .unwrap_or("")
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    for var in vars {
+        let already = out.iter().any(|e| e.split('/').next() == Some(*var));
+        if !already {
+            out.push((*var).to_string());
+        }
+    }
+
+    out.join(":")
+}
+
 /// #4 フロー制御: フロント側が high watermark に達したら pause 要求が来る。
 /// paused の間は read を止めて PTY の OS バッファを埋め、子プロセスに背圧をかける。
 /// MAX_READ_PAUSE を超えたら安全弁として強制再開する（resume 消失時のハング防止）。
@@ -1037,6 +1066,18 @@ impl PtyManager {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
 
+        // WSL タブ対策: 上で設定した env は wsl.exe にしか効かず、distro の中には
+        // 伝播しない。WSLENV に列挙したものだけが Linux 側へ渡るので追記する。
+        // これが無いと WSL 内の Claude Code は FORCE_HYPERLINK を見られず、
+        // ハイパーリンク非対応と判定して画像・ファイル参照をプレーンテキストに落とす。
+        // 既存の WSLENV (親プロセス継承 / ユーザー env 由来) は保持する。
+        // FORCE_HYPERLINK=0 での無効化も、値ごと伝播するのでそのまま効く。
+        let wslenv = merge_wslenv(
+            cmd.get_env("WSLENV").and_then(|v| v.to_str()),
+            WSLENV_PASS_THROUGH,
+        );
+        cmd.env("WSLENV", wslenv);
+
         // プロセス起動
         let child = pair
             .slave
@@ -1203,6 +1244,42 @@ pub fn pty_set_read_paused(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wslenv_is_created_when_absent() {
+        assert_eq!(
+            merge_wslenv(None, WSLENV_PASS_THROUGH),
+            "FORCE_HYPERLINK:COLORTERM"
+        );
+        assert_eq!(
+            merge_wslenv(Some(""), WSLENV_PASS_THROUGH),
+            "FORCE_HYPERLINK:COLORTERM"
+        );
+    }
+
+    #[test]
+    fn wslenv_keeps_existing_entries() {
+        // ユーザーや親プロセスが設定した WSLENV は壊さず、後ろに追記する
+        assert_eq!(
+            merge_wslenv(Some("MY_PATH/p:OTHER"), WSLENV_PASS_THROUGH),
+            "MY_PATH/p:OTHER:FORCE_HYPERLINK:COLORTERM"
+        );
+    }
+
+    #[test]
+    fn wslenv_does_not_duplicate_existing_vars() {
+        // フラグ付きで既に列挙されている場合も重複させない (フラグは保持)
+        assert_eq!(
+            merge_wslenv(Some("FORCE_HYPERLINK/u:COLORTERM"), WSLENV_PASS_THROUGH),
+            "FORCE_HYPERLINK/u:COLORTERM"
+        );
+    }
+
+    #[test]
+    fn wslenv_ignores_empty_segments() {
+        // 末尾 `:` 等で空要素ができても増やさない
+        assert_eq!(merge_wslenv(Some("A::B:"), &["A"]), "A:B");
+    }
 
     #[test]
     fn split_all_valid() {

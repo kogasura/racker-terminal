@@ -9,6 +9,7 @@ import type { Settings, AgentState } from '../types';
 import { spawnPty, writePty, resizePty, setReadPaused } from './pty';
 import { isAllowedUrl } from './urlValidator';
 import { createLinkHandler } from './linkHandler';
+import { isWslShell, parseWslArgs } from './profileTemplates';
 import { readBottomSnapshot, classifyAgentState, AGENT_SETTLE_MS } from './agentState';
 import {
   parseTabStatusOsc,
@@ -662,6 +663,12 @@ export function createRuntime(
   let onEventHandler: ((e: PtyEvent) => void) | null = null;
   let isDisposed = false;
   let spawning = false;
+  /**
+   * WSL タブなら distro 名 (`-d` 未指定なら空文字)、それ以外のタブは undefined。
+   * startSpawn で確定させ、linkHandler が file:// リンクの解決に使う。
+   * sleep/wake の再 spawn でも起動引数から取り直される。
+   */
+  let wslDistro: string | undefined;
   // F-M3: applySettings で前回の transparency を保持し、不要な theme 再構築を回避する
   let lastTransparency: number = settings.transparency ?? 1.0;
 
@@ -673,7 +680,7 @@ export function createRuntime(
     allowProposedApi: true,
     // OSC 8 ハイパーリンク (Claude Code の file:// リンク等) の受け口。
     // 未設定だと xterm は警告付き confirm ダイアログを出す。linkHandler.ts 参照。
-    linkHandler: createLinkHandler(),
+    linkHandler: createLinkHandler({ getWslDistro: () => wslDistro }),
     // v0.5 改善: 透明背景を有効化する (xterm.js の必須オプション)
     // theme.background に rgba/transparent を設定するときに必要。
     // false (default) だと alpha が無視されて opaque で描画される。
@@ -951,6 +958,10 @@ export function createRuntime(
     startSpawn(opts, onError, bootstrap) {
       if (spawning || ptyHandle !== null) return;
       spawning = true;
+
+      // このタブが WSL かどうかを起動引数から確定させる (linkHandler が使う)。
+      // distro 未指定 (`-d` なし) は空文字のまま渡し、既定 distro の解決は Rust に任せる。
+      wslDistro = isWslShell(opts.shell) ? parseWslArgs(opts.args).distro : undefined;
 
       spawnPty(opts, (e) => onEventHandler?.(e))
         .then((handle) => {

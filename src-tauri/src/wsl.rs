@@ -3,6 +3,22 @@
 
 use crate::proc::hidden_command;
 
+/// `wsl.exe` の出力 (UTF-16LE、先頭に BOM が付くことがある) を文字列にする。
+fn decode_utf16le(bytes: &[u8]) -> String {
+    let bytes = if bytes.starts_with(&[0xFF, 0xFE]) {
+        &bytes[2..]
+    } else {
+        bytes
+    };
+    // 端数バイト (奇数長) は捨てる。`chunks_exact` を使わないのは、
+    // clippy が Rust 1.98 で `as_chunks` への置き換えを要求してくるため
+    // (`as_chunks` は 1.97 以前ではまだ使えず、手元と CI で通らなくなる)。
+    let utf16: Vec<u16> = (0..bytes.len() / 2)
+        .map(|i| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
+        .collect();
+    String::from_utf16_lossy(&utf16)
+}
+
 /// `wsl.exe --list --quiet` の出力をパースする純関数。
 /// - UTF-16LE BOM をスキップ
 /// - CRLF を改行として扱う
@@ -11,17 +27,8 @@ use crate::proc::hidden_command;
 ///
 /// テスト容易性のため pub にする。
 pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
-    let bytes = if bytes.starts_with(&[0xFF, 0xFE]) {
-        &bytes[2..]
-    } else {
-        bytes
-    };
-    let utf16: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .collect();
-    let text = String::from_utf16_lossy(&utf16);
-    text.lines()
+    decode_utf16le(bytes)
+        .lines()
         .map(|l| {
             l.trim_matches(|c: char| c.is_whitespace() || c == '\0')
                 .to_string()
@@ -50,6 +57,45 @@ pub fn list_wsl_distros() -> Vec<String> {
         return vec![]; // 異常終了 → 空
     }
     parse_wsl_list_output(&output.stdout)
+}
+
+/// `wsl.exe --list --verbose` の出力から既定 distro (`*` 付きの行) を取り出す純関数。
+///
+/// 出力例 (UTF-16LE):
+/// ```text
+///   NAME              STATE           VERSION
+/// * Ubuntu-24.04      Running         2
+///   Ubuntu-22.04      Stopped         2
+/// ```
+///
+/// `list_wsl_distros` と違い `docker-desktop` を除外しない。既定 distro が
+/// docker-desktop の環境も実在し、そこで `wsl.exe` を引数なしで起動すれば
+/// 実際に動くのはその distro なので、除外するとパス解決が誤る。
+pub fn parse_wsl_default_distro(bytes: &[u8]) -> Option<String> {
+    decode_utf16le(bytes).lines().find_map(|line| {
+        let rest = line
+            .trim_start_matches(|c: char| c.is_whitespace() || c == '\0')
+            .strip_prefix('*')?;
+        rest.split_whitespace().next().map(str::to_string)
+    })
+}
+
+/// 既定 WSL distro 名を返す。取得できなければ `None`。
+///
+/// `-d` を付けずに起動した WSL タブ (`wsl.exe --cd ~` など) が出す Linux パスを
+/// `\\wsl.localhost\<distro>\...` に解決するために使う (file_link.rs)。
+///
+/// リンクのクリック時にだけ呼ばれる。既に WSL タブが動いている状況なので、
+/// この `wsl.exe` 実行が停止中の distro を起こすことはない。
+pub fn default_wsl_distro() -> Option<String> {
+    let output = hidden_command("wsl.exe")
+        .args(["--list", "--verbose"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_wsl_default_distro(&output.stdout)
 }
 
 #[cfg(test)]
@@ -94,6 +140,40 @@ mod tests {
             buf.push((u >> 8) as u8);
         }
         assert_eq!(parse_wsl_list_output(&buf), vec!["Ubuntu-22.04"]);
+    }
+
+    #[test]
+    fn parse_default_distro_from_verbose_output() {
+        let bytes = utf16le(
+            "  NAME              STATE           VERSION\r\n\
+             * Ubuntu-24.04      Running         2\r\n\
+             \x20 Ubuntu-22.04      Stopped         2\r\n",
+        );
+        assert_eq!(
+            parse_wsl_default_distro(&bytes),
+            Some("Ubuntu-24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_default_distro_includes_docker_desktop() {
+        // 既定が docker-desktop の環境もある。実際にそれが起動するので除外しない
+        let bytes = utf16le(
+            "  NAME              STATE           VERSION\r\n\
+             * docker-desktop    Running         2\r\n",
+        );
+        assert_eq!(
+            parse_wsl_default_distro(&bytes),
+            Some("docker-desktop".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_default_distro_absent_returns_none() {
+        // `*` の行が無い (WSL 未セットアップ等)
+        let bytes = utf16le("  NAME              STATE           VERSION\r\n");
+        assert_eq!(parse_wsl_default_distro(&bytes), None);
+        assert_eq!(parse_wsl_default_distro(&[]), None);
     }
 
     #[test]

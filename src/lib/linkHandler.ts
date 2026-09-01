@@ -26,7 +26,21 @@ import { isAllowedUrl, isPlausibleFileUri } from './urlValidator';
  * 誤発火させない。ターミナル出力は untrusted なので、修飾キーによる明示操作を
  * 開く条件にすること自体が防御の一部でもある。
  */
-export function createLinkHandler(): ILinkHandler {
+export interface LinkHandlerOptions {
+  /**
+   * このタブの WSL distro を返す関数。
+   *
+   * - WSL タブ (wsl.exe) → distro 名。`-d` 未指定なら空文字 (Rust 側が既定 distro を引く)
+   * - それ以外のタブ → undefined
+   *
+   * WSL 内の Claude Code は `file:///tmp/...` のような Linux 絶対パスを出す。
+   * distro が分からないと Windows のパスに解決できないため、Rust に一緒に渡す。
+   * spawn のたびに変わりうるので値ではなく関数で受け取る。
+   */
+  getWslDistro?: () => string | undefined;
+}
+
+export function createLinkHandler(options: LinkHandlerOptions = {}): ILinkHandler {
   return {
     // file: スキームを届かせるために必要。true にすると全スキームが activate に
     // 到達するようになるため、下の allowlist 検証が必須になる。
@@ -46,7 +60,9 @@ export function createLinkHandler(): ILinkHandler {
       }
 
       if (isPlausibleFileUri(uri)) {
-        void invoke<string>('open_file_link', { uri }).catch((e) => {
+        // WSL タブなら distro も渡す (Linux 絶対パスの解決に必要)。非 WSL タブは null
+        const wslDistro = options.getWslDistro?.() ?? null;
+        void invoke<string>('open_file_link', { uri, wslDistro }).catch((e) => {
           // ファイル名にも PII がありうるので URI は出さない
           console.warn('[linkHandler] open_file_link failed:', e);
         });

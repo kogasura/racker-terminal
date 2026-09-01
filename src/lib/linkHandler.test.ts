@@ -44,8 +44,39 @@ describe('createLinkHandler', () => {
 
     expect(invoke).toHaveBeenCalledWith('open_file_link', {
       uri: 'file:///C:/work/shot.png',
+      wslDistro: null, // 非 WSL タブ
     });
     expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('WSL タブでは distro を添えて渡す (Linux 絶対パスの解決に必要)', () => {
+    const wslHandler = createLinkHandler({ getWslDistro: () => 'Ubuntu-24.04' });
+    wslHandler.activate(click(), 'file:///tmp/claude-1000/slide.001.png', null as never);
+
+    expect(invoke).toHaveBeenCalledWith('open_file_link', {
+      uri: 'file:///tmp/claude-1000/slide.001.png',
+      wslDistro: 'Ubuntu-24.04',
+    });
+  });
+
+  it('distro 未指定の WSL タブは空文字を渡す (Rust 側が既定 distro を引く)', () => {
+    const wslHandler = createLinkHandler({ getWslDistro: () => '' });
+    wslHandler.activate(click(), 'file:///tmp/a.png', null as never);
+
+    expect(invoke).toHaveBeenCalledWith('open_file_link', {
+      uri: 'file:///tmp/a.png',
+      wslDistro: '',
+    });
+  });
+
+  it('spawn 前など distro が未確定なら null を渡す', () => {
+    const wslHandler = createLinkHandler({ getWslDistro: () => undefined });
+    wslHandler.activate(click(), 'file:///C:/a.png', null as never);
+
+    expect(invoke).toHaveBeenCalledWith('open_file_link', {
+      uri: 'file:///C:/a.png',
+      wslDistro: null,
+    });
   });
 
   it('Cmd+クリック (Mac) でも開く', () => {

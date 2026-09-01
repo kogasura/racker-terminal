@@ -1,0 +1,7 @@
+# リリースノートは LF 固定。
+#
+# core.autocrlf=true の環境ではチェックアウト時に CRLF へ変換されてしまい、
+# その状態で `npm run release` を回すと latest.json の notes に \r が混入する
+# (v1.9.6 で実際に発生)。docs/release-process.md が要求する LF を守るため、
+# autocrlf の設定に関わらず作業ツリーでも LF のままにする。
+CHANGELOG-*.md text eol=lf

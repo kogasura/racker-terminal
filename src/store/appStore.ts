@@ -145,20 +145,34 @@ export function syncGroupSelection(
 }
 
 /**
- * タブを別グループへ移したときに、選択（サイドバーのハイライトと横タブバーの
- * 表示対象）を移動先へ追随させるための差分を返す。追随不要なら空オブジェクト。
+ * タブを別グループへ移したときの選択の差分を返す。変更不要なら空オブジェクト。
  *
- * 見ていたタブを移したのに選択が元グループに残ると、TabBar には移動元のタブが
- * 並んだまま端末にはそこに無いタブが映る（＝移した本人が画面から消える）。
+ * **見ているグループ (activeGroupId) は動かさない。** 別グループへ移すのは
+ * 「今の作業場から送り出す」操作であり、送り出した先へ画面ごと連れて行かれると
+ * 手元の文脈が失われる。D&D でも右クリックの「別のグループへ移動」でも同じ。
+ *
+ * ただし移したタブは移動元の TabBar から消えるため、選択したままにはできない
+ * （どのタブもハイライトされていないのに端末だけ別グループのタブが映る、という
+ * 不整合になる）。選択は removeTab と同じ規則で元グループの残りタブへ寄せ、
+ * グループが空になったら null にして端末領域を空にする。
  */
 function movedTabSelection(
-  state: Pick<AppState, 'activeTabId' | 'lastActiveTabByGroup'>,
-  tabs: Record<string, Tab>,
+  state: Pick<AppState, 'activeTabId' | 'lastActiveTabByGroup' | 'tabs'>,
+  updatedGroups: Group[],
+  fromGroupId: string,
   tabId: string,
   changedGroup: boolean,
-): ReturnType<typeof syncGroupSelection> {
+): { activeTabId?: string | null } & ReturnType<typeof syncGroupSelection> {
   if (!changedGroup || state.activeTabId !== tabId) return {};
-  return syncGroupSelection(tabs, state.lastActiveTabByGroup, tabId);
+  // フォールバック先は必ず fromGroupId に残ったタブなので、syncGroupSelection が
+  // 返す activeGroupId は元グループのまま = 画面は動かない。null のときは
+  // syncGroupSelection が空を返し、やはり元グループの選択が維持される。
+  // 移動で groupId が変わるのは tabId だけなので、移動前の state.tabs で足りる。
+  const nextActiveTabId = selectFallbackTab(fromGroupId, updatedGroups);
+  return {
+    activeTabId: nextActiveTabId,
+    ...syncGroupSelection(state.tabs, state.lastActiveTabByGroup, nextActiveTabId),
+  };
 }
 
 /**
@@ -1294,7 +1308,13 @@ export const useAppStore = create<Store>()(
       return {
         groups: updatedGroups,
         tabs: updatedTab,
-        ...movedTabSelection(state, updatedTab, tabId, fromGroupId !== toGroupId),
+        ...movedTabSelection(
+          state,
+          updatedGroups,
+          fromGroupId,
+          tabId,
+          fromGroupId !== toGroupId,
+        ),
       };
     });
   },

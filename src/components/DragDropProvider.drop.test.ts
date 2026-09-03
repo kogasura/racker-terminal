@@ -99,11 +99,14 @@ describe('D&D の drop 処理', () => {
       expect(s.groups.find((g) => g.id === 'g1')!.tabIds).toEqual([]);
     });
 
-    it('アクティブタブを別グループへ落とすと選択も追随する', () => {
+    // D&D でも右クリックの「別のグループへ移動」でも、画面 (activeGroupId) は
+    // 移動元グループに留める（moveTab の movedTabSelection 参照）
+    it('アクティブタブを別グループへ落としても画面は移動元グループに留まる', () => {
       dropTab(activeTab('t1', 'g1'), 'g2');
       const s = useAppStore.getState();
-      expect(s.activeTabId).toBe('t1');
-      expect(s.activeGroupId).toBe('g2');
+      expect(s.activeGroupId).toBe('g1');
+      // g1 は t1 だけだったので空になり、選択できるタブが無くなる
+      expect(s.activeTabId).toBeNull();
     });
 
     it('タブ ID への drop でそのタブの位置に挿入される', () => {

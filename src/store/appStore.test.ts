@@ -1152,13 +1152,15 @@ describe('appStore', () => {
       expect(useAppStore.getState().groups).toBe(before);
     });
 
-    // 見ているタブを別グループへ移したら、サイドバーの選択と TabBar の表示も
-    // 追随しないと「移した本人が画面から消える」ため
-    it('アクティブタブを別グループへ移すと選択も移動先へ追随する', () => {
+    // 見ているタブを別グループへ「送り出す」操作なので、画面 (activeGroupId) は
+    // 手元のグループに留める。移したタブは元の TabBar から消えるため、選択だけを
+    // 同じグループの残りタブへ寄せる
+    it('アクティブタブを別グループへ移しても画面は移動元グループに留まる', () => {
       const g1 = useAppStore.getState().createGroup('G1');
       const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const t2 = useAppStore.getState().createTab(g1, { title: 'B' });
       const g2 = useAppStore.getState().createGroup('G2');
-      useAppStore.getState().createTab(g2, { title: 'B' });
+      useAppStore.getState().createTab(g2, { title: 'C' });
       useAppStore.getState().setActiveTab(t1);
       expect(useAppStore.getState().activeGroupId).toBe(g1);
 
@@ -1166,9 +1168,26 @@ describe('appStore', () => {
 
       const after = useAppStore.getState();
       expect(after.tabs[t1].groupId).toBe(g2);
-      expect(after.activeTabId).toBe(t1);
-      expect(after.activeGroupId).toBe(g2);
-      expect(after.lastActiveTabByGroup[g2]).toBe(t1);
+      // 画面は G1 のまま。選択は G1 に残った t2 へ移る
+      expect(after.activeGroupId).toBe(g1);
+      expect(after.activeTabId).toBe(t2);
+      expect(after.lastActiveTabByGroup[g1]).toBe(t2);
+    });
+
+    it('アクティブタブを移して移動元が空になったら端末領域が空になる', () => {
+      const g1 = useAppStore.getState().createGroup('G1');
+      const t1 = useAppStore.getState().createTab(g1, { title: 'A' });
+      const g2 = useAppStore.getState().createGroup('G2');
+      useAppStore.getState().createTab(g2, { title: 'B' });
+      useAppStore.getState().setActiveTab(t1);
+
+      useAppStore.getState().moveTab(t1, g2, 0);
+
+      const after = useAppStore.getState();
+      expect(after.tabs[t1].groupId).toBe(g2);
+      // 空になっても選択は G1 に留まる（次の Ctrl+T は G1 に入る）
+      expect(after.activeGroupId).toBe(g1);
+      expect(after.activeTabId).toBeNull();
     });
 
     it('アクティブでないタブを別グループへ移しても選択は動かない', () => {

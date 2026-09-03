@@ -2,10 +2,11 @@ import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
+import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
 import { InlineEdit } from './InlineEdit';
 import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type Tab, type TabStatus } from '../types';
-import { DRAG_KIND } from '../lib/dndResolve';
+import { DRAG_KIND, nextNewGroupTitle } from '../lib/dndResolve';
 import { prBadgeKind, prTooltip } from '../lib/prStatus';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
@@ -93,6 +94,73 @@ function TabPrBadge({ tab }: { tab: Tab }) {
     >
       #{tab.prNumber}
     </button>
+  );
+}
+
+/**
+ * 右クリックメニューの「別のグループへ移動」サブメニュー。
+ *
+ * D&D（タブをサイドバーのグループ行へドロップ）と同じ移動を、掴んで運ばずに
+ * 選ぶだけで行えるようにする。グループが増えてサイドバーをスクロールしないと
+ * 目的のグループが見えない状況では、ドロップより確実で速い。
+ *
+ * ContextMenu.Content の中に置くことで、右クリックでメニューを開いたときだけ
+ * マウントされる。TabItem 本体でグループ一覧を subscribe すると、全タブが
+ * グループのタイトル変更で再レンダーされてしまうため、あえて分離している。
+ */
+function MoveToGroupSubmenu({
+  tabId,
+  currentGroupId,
+}: {
+  tabId: string;
+  currentGroupId: string;
+}) {
+  // Sidebar と同じく id / title を別々に subscribe する。
+  // オブジェクトの配列にすると useShallow の要素比較が毎回 false になる。
+  const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
+  const groupTitles = useAppStore(useShallow((s) => s.groups.map((g) => g.title)));
+  const moveTab = useAppStore((s) => s.moveTab);
+  const createGroup = useAppStore((s) => s.createGroup);
+
+  return (
+    <ContextMenu.Sub>
+      <ContextMenu.SubTrigger className="context-menu__item context-menu__item--sub">
+        <span className="context-menu__label">別のグループへ移動</span>
+        <span className="context-menu__sub-arrow" aria-hidden="true">▸</span>
+      </ContextMenu.SubTrigger>
+
+      <ContextMenu.Portal>
+        <ContextMenu.SubContent className="context-menu__content" sideOffset={2} alignOffset={-4}>
+          {groupIds.map((groupId, i) => (
+            <ContextMenu.Item
+              key={groupId}
+              className="context-menu__item"
+              // 今いるグループへの移動は no-op なので選ばせない
+              disabled={groupId === currentGroupId}
+              // 移動先の末尾に置く。moveTab 側が toIndex をクランプする
+              onSelect={() => moveTab(tabId, groupId, Number.MAX_SAFE_INTEGER)}
+            >
+              <span className="context-menu__label">{groupTitles[i]}</span>
+            </ContextMenu.Item>
+          ))}
+
+          <ContextMenu.Separator className="context-menu__separator" />
+
+          {/* サイドバー下部の「+ 新規グループに追加」drop エリアと同じ操作 */}
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => {
+              const newGroupId = createGroup(
+                nextNewGroupTitle(groupTitles.map((title) => ({ title }))),
+              );
+              moveTab(tabId, newGroupId, 0);
+            }}
+          >
+            <span className="context-menu__label">+ 新規グループへ移動</span>
+          </ContextMenu.Item>
+        </ContextMenu.SubContent>
+      </ContextMenu.Portal>
+    </ContextMenu.Sub>
   );
 }
 
@@ -203,6 +271,8 @@ export const TabItem = memo(function TabItem({
           >
             複製
           </ContextMenu.Item>
+
+          <MoveToGroupSubmenu tabId={tabId} currentGroupId={tab.groupId} />
 
           <ContextMenu.Item
             className="context-menu__item"

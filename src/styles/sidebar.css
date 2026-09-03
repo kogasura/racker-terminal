@@ -864,3 +864,27 @@ select.dialog-input {
   background: var(--sidebar-border);
   margin: 4px 0;
 }
+
+/* ----- コンテキストメニューのサブメニュー（タブの「別のグループへ移動」） ----- */
+.context-menu__item--sub {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* サブメニューを開いている間は親項目をハイライトしたままにする */
+.context-menu__item--sub[data-state='open'] {
+  background: var(--tab-item-bg-active);
+}
+
+.context-menu__sub-arrow {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* グループ名は任意の長さになりうるので省略表示する */
+.context-menu__label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

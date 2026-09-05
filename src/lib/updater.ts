@@ -122,6 +122,32 @@ export async function relaunchApp(): Promise<void> {
   await relaunch();
 }
 
+/**
+ * `x.y.z` 形式のバージョンを比較する。a > b で正、a < b で負、同値で 0。
+ *
+ * 桁数が違う場合は足りない側を 0 とみなす (`1.9` < `1.9.1`)。
+ * `1.9.9-beta.1` のようなプレリリース識別子は無視する。racker のリリースは
+ * 常に `x.y.z` なので、細かい semver の順序付けまでは踏み込まない。
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/, '')
+      .split(/[-+]/, 1)[0]
+      .split('.')
+      .map((s) => Number.parseInt(s, 10) || 0);
+
+  const pa = parse(a);
+  const pb = parse(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 // --- 更新が反映されなかったことの検知 ---
 //
 // Windows では install() が失敗してもアプリ側には何も返らない (プロセスが

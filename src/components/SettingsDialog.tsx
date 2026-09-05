@@ -122,8 +122,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   }
 
   async function handleCheckUpdate() {
-    // 既に DL 完了済み → 既存の UpdateDialog を開いてユーザーに再起動を促す
+    // 既に DL 完了済み → 既存の UpdateDialog を開いてユーザーに再起動を促す。
+    // ready のときは裏でさらに新しい版が出ていないかも確認する (待たずに開く。
+    // 差し替わったら updateInfo 経由で UpdateDialog の表示も追従する)。
     if (updatePhase === 'ready' || updatePhase === 'error') {
+      if (updatePhase === 'ready') void runUpdateCheck();
       openUpdateDialog();
       onClose();
       return;

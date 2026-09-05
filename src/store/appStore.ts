@@ -1523,7 +1523,7 @@ export const useAppStore = create<Store>()(
     }),
     {
       name: 'racker-terminal',
-      version: 5,
+      version: 6,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -1560,11 +1560,12 @@ export const useAppStore = create<Store>()(
           }
         }
 
-        // v1 → v5 は optional フィールドの追加のみでデータ変換が不要なため、分岐を持たない。
+        // v1 → v6 は optional フィールドの追加のみでデータ変換が不要なため、分岐を持たない。
         //   v1 → v2: settings.defaultFavoriteId
         //   v2 → v3: Tab.args / Favorite.args
         //   v3 → v4: Tab.launchClaude / Tab.claudeSessionId / Favorite.launchClaude
         //   v4 → v5: activeGroupId (未保存なら initialSelection がフォールバックする)
+        //   v5 → v6: settings.gpuAcceleration (未設定は有効扱い)
         // いずれも既存データに含まれなくても undefined のままで正常動作する。
 
         return state;

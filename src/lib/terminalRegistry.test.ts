@@ -6,6 +6,7 @@ import {
   forceDisposeAll,
   recyclePty,
   getAllRuntimes,
+  clearAllTextureAtlases,
   getRuntimeCount,
   getRefs,
   sanitizeOscTitle,
@@ -14,6 +15,7 @@ import {
   attachImeCompositionGuard,
   reserveWebglLru,
   promoteWebglLru,
+  computeWebglDesired,
   nextPauseState,
   MAX_WEBGL_CONTEXTS,
   WRITE_HIGH_WATERMARK,
@@ -1221,6 +1223,46 @@ describe('reserveWebglLru (#3)', () => {
   it('MAX_WEBGL_CONTEXTS は 1〜15（Chromium 16 上限の安全マージン内）', () => {
     expect(MAX_WEBGL_CONTEXTS).toBeGreaterThanOrEqual(1);
     expect(MAX_WEBGL_CONTEXTS).toBeLessThan(16);
+  });
+});
+
+describe('computeWebglDesired', () => {
+  it('GPU 描画 ON かつ不透明なら WebGL を使う', () => {
+    expect(computeWebglDesired(true, 1.0)).toBe(true);
+  });
+
+  // グリフキャッシュ破損（文字が空白になる / 別の字に化ける）を踏んだときの逃げ道
+  it('GPU 描画を切っていれば不透明でも使わない', () => {
+    expect(computeWebglDesired(false, 1.0)).toBe(false);
+  });
+
+  // WebglAddon は theme.background の alpha を尊重しない
+  it('透明度 < 1.0 なら GPU 描画 ON でも使わない', () => {
+    expect(computeWebglDesired(true, 0.95)).toBe(false);
+  });
+
+  it('両方 OFF なら当然使わない', () => {
+    expect(computeWebglDesired(false, 0.8)).toBe(false);
+  });
+});
+
+describe('clearAllTextureAtlases (#5)', () => {
+  // TextureAtlas は端末どうしで共有されるため、全 runtime に対してクリアを呼ぶと
+  // 同じアトラスへ連続でクリアが走り、グリフ化けを誘発する。WebGL context を
+  // 持っているタブ (webglLru) にだけ呼ぶのが仕様。
+  it('WebGL を持つタブが無ければ 1 つも clearGlyphCache を呼ばない', () => {
+    const a = makeRuntime();
+    const b = makeRuntime();
+    acquireRuntime('atlas-none-a', () => a);
+    acquireRuntime('atlas-none-b', () => b);
+
+    clearAllTextureAtlases();
+
+    expect(a.clearGlyphCache).not.toHaveBeenCalled();
+    expect(b.clearGlyphCache).not.toHaveBeenCalled();
+
+    forceDisposeRuntime('atlas-none-a');
+    forceDisposeRuntime('atlas-none-b');
   });
 });
 

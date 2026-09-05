@@ -550,6 +550,21 @@ export const MAX_WEBGL_CONTEXTS = 8;
 const webglLru: string[] = [];
 
 /**
+ * この runtime が GPU (WebGL) 描画を使いたいかを決める純関数。
+ *
+ * 2 つの理由で false になる:
+ * - **設定で GPU 描画を切っている** — WebGL renderer のグリフキャッシュ破損
+ *   （文字が空白になる / 別の字に化ける）を踏んだときの逃げ道。
+ * - **透明度 < 1.0** — xterm の WebglAddon は theme.background の alpha を
+ *   尊重しない（canvas が opaque）ため、透明時は使えない。
+ *
+ * どちらの場合も DOM renderer にフォールバックする。テスト用に export する。
+ */
+export function computeWebglDesired(gpuAcceleration: boolean, transparency: number): boolean {
+  return gpuAcceleration && transparency >= 1.0;
+}
+
+/**
  * exceptId を新たに WebGL 化する前に、上限を超えないよう LRU 先頭（古い方）から
  * 間引くべき victim id 一覧を返す純関数。lru から victim を取り除く副作用を持つ。
  * exceptId 自身は（保険として）victim にしない。テスト用に export する。
@@ -733,10 +748,10 @@ export function createRuntime(
   // WebView2/Chromium の 16-context 上限を越え、context loss の嵐で固まっていた。
   // 生成はアクティブ化時の wakeWebgl に委ね、直近で使ったタブだけが context を保持する。
   //
-  // webglDesired: WebGL を使いたいか（透明度 < 1.0 のときは alpha 非対応のため常に false）。
-  // xterm の WebglAddon は theme.background の rgba alpha を尊重しない (canvas が opaque)
-  // ため、透明時は WebGL を使わず DOM/Canvas renderer にフォールバックする。
-  let webglDesired = lastTransparency >= 1.0;
+  // webglDesired: WebGL を使いたいか。設定で GPU 描画を切っているか、透明度 < 1.0 の
+  // ときは false になり DOM/Canvas renderer にフォールバックする（computeWebglDesired 参照）。
+  let lastGpuAcceleration = settings.gpuAcceleration !== false;
+  let webglDesired = computeWebglDesired(lastGpuAcceleration, lastTransparency);
   let webglHandle: WebglRendererHandle | null = null;
 
   // §3.2 dispose 順序のため、WebGL の sleep/wake はローカルクロージャに集約する。
@@ -759,6 +774,38 @@ export function createRuntime(
     if (!webglHandle) return; // 既に sleep 済 or 未生成
     webglHandle.dispose(); // forceLoseWebglContext 込みで context を即解放 → DOM renderer
     webglHandle = null;
+  }
+
+  /**
+   * 描画に関わる設定（背景透明度・GPU 描画）の変更を反映する。
+   *
+   * この 2 つは**どちらも WebGL を使えるかを左右する**ため、片方だけ見て判断すると
+   * 取りこぼす（例: 透明度は据え置きで GPU 描画だけ切られたケース）。まとめて扱う。
+   *
+   * F-M3: 変化が無ければ何もしない（theme 再構築は描画コストがかかる）。
+   */
+  function applyRendererSettings(s: Settings): void {
+    const targetAlpha = s.transparency ?? 1.0;
+    const targetGpu = s.gpuAcceleration !== false;
+    const alphaChanged = lastTransparency !== targetAlpha;
+    const gpuChanged = lastGpuAcceleration !== targetGpu;
+    if (!alphaChanged && !gpuChanged) return;
+
+    // F-M4: DEFAULT_BG 定数を使用（ハードコード排除）
+    if (alphaChanged) {
+      lastTransparency = targetAlpha;
+      term.options.theme = {
+        ...term.options.theme,
+        background: computeBackground(targetAlpha),
+      };
+    }
+
+    // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック。
+    // #3: 無効化で sleep（context を loseContext で解放）する。
+    // 有効化時の再生成は次回アクティブ化（wakeWebgl）に委ねる。
+    lastGpuAcceleration = targetGpu;
+    webglDesired = computeWebglDesired(targetGpu, targetAlpha);
+    if (!webglDesired) sleepWebglLocal();
   }
 
   try {
@@ -1084,26 +1131,7 @@ export function createRuntime(
         term.options.scrollback = settings.scrollback;
       }
 
-      // F-M3: transparency が変わった時のみ theme.background を再構築する
-      // F-M4: DEFAULT_BG 定数を使用（ハードコード排除）
-      const targetAlpha = settings.transparency ?? 1.0;
-      if (lastTransparency !== targetAlpha) {
-        lastTransparency = targetAlpha;
-        term.options.theme = {
-          ...term.options.theme,
-          background: computeBackground(targetAlpha),
-        };
-
-        // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック。
-        // #3: 透明化で sleep（context を loseContext で解放）、不透明化で webglDesired を戻す。
-        // 不透明化時の再生成は次回アクティブ化（wakeWebgl）に委ねる。
-        if (targetAlpha < 1.0) {
-          webglDesired = false;
-          sleepWebglLocal();
-        } else {
-          webglDesired = true;
-        }
-      }
+      applyRendererSettings(settings);
     },
 
     dispose() {
@@ -1273,13 +1301,26 @@ export function getRuntimeScreen(tabId: string): string | null {
 }
 
 /**
- * 全 runtime の WebGL グリフキャッシュ（TextureAtlas）をクリアする（#5）。
+ * WebGL グリフキャッシュ（TextureAtlas）をクリアする（#5）。
  * truecolor 出力で無制限に増える (glyph,fg,bg) キャッシュを定期的にリセットして
  * 長時間運用での JS ヒープ単調増加を抑える。App.tsx から一定間隔で呼ぶ。
- * DOM renderer（sleep 中 / 透明）のタブでは no-op。
+ *
+ * **アトラスは端末どうしで共有される。** xterm の `acquireTextureAtlas` は
+ * フォント・テーマ・セル寸法が同じ端末へ同一インスタンスを配る作りで、
+ * racker は全タブが同じ設定なので実体は 1 つしかない。
+ *
+ * そのため全 runtime に対して呼んではいけない: 同じアトラスへクリアが連続で走り、
+ * 他タブが描画中だとページ管理が壊れてグリフ化け（文字が空白になる / 別の字になる）を
+ * 誘発する。WebGL を持っているタブ 1 つに対してだけ呼べば、共有相手にも行き渡る。
+ *
+ * WebGL を使っているタブが 1 つも無ければ（全タブ sleep / 透明 / GPU 描画 OFF）
+ * クリア対象のアトラスも存在しないので no-op。
  */
 export function clearAllTextureAtlases(): void {
-  for (const e of runtimes.values()) e.runtime.clearGlyphCache();
+  // 末尾 = most-recently-used。表示中のタブなので、クリア後の再構築が最も自然に進む。
+  const targetId = webglLru[webglLru.length - 1];
+  if (targetId === undefined) return;
+  runtimes.get(targetId)?.runtime.clearGlyphCache();
 }
 
 /**

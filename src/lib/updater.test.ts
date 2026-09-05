@@ -22,6 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import {
   checkForUpdate,
+  compareVersions,
   downloadUpdate,
   installAndRelaunch,
   relaunchApp,
@@ -340,6 +341,31 @@ describe('updater', () => {
       await relaunchApp();
 
       expect(relaunch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('compareVersions', () => {
+    it('新しい方が正、古い方が負、同値は 0', () => {
+      expect(compareVersions('1.9.8', '1.9.7')).toBeGreaterThan(0);
+      expect(compareVersions('1.9.7', '1.9.8')).toBeLessThan(0);
+      expect(compareVersions('1.9.8', '1.9.8')).toBe(0);
+    });
+
+    it('文字列比較では逆転する桁を正しく扱う (1.9.10 > 1.9.9)', () => {
+      expect(compareVersions('1.9.10', '1.9.9')).toBeGreaterThan(0);
+      expect(compareVersions('1.10.0', '1.9.99')).toBeGreaterThan(0);
+      expect(compareVersions('2.0.0', '1.99.99')).toBeGreaterThan(0);
+    });
+
+    it('桁数が違う場合は足りない側を 0 とみなす', () => {
+      expect(compareVersions('1.9', '1.9.0')).toBe(0);
+      expect(compareVersions('1.9', '1.9.1')).toBeLessThan(0);
+    });
+
+    it('先頭の v とプレリリース識別子は無視する', () => {
+      expect(compareVersions('v1.9.8', '1.9.8')).toBe(0);
+      expect(compareVersions('1.9.8-beta.1', '1.9.8')).toBe(0);
+      expect(compareVersions('1.9.9-beta.1', '1.9.8')).toBeGreaterThan(0);
     });
   });
 });

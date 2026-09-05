@@ -11,7 +11,7 @@ DL 完了後にバッジを表示し、ユーザーが再起動を承認した�
 
 ```
 [App.tsx 起動時 useEffect]
-       ↓ runUpdateCheck() 1 回
+       ↓ runUpdateCheck() (起動時 1 回 + 以降 1 時間ごと)
 [lib/updater.ts wrapper]
        ↓ checkForUpdate() → @tauri-apps/plugin-updater
 [Tauri Rust runtime]
@@ -41,6 +41,8 @@ DL 完了後にバッジを表示し、ユーザーが再起動を承認した�
 | downloading | downloadUpdate() 進行中 | downloading (継続、UI 変化なし) |
 | downloading | downloadUpdate() 完了 | ready |
 | downloading | downloadUpdate() 失敗 | idle (silently fail、次回起動でリトライ) |
+| ready | runUpdateCheck() (定期チェック) → pending より新しい版あり | ready (裏で DL して pending を差し替え) |
+| ready | runUpdateCheck() (定期チェック) → 新しい版なし / 取得失敗 | ready (pending 維持) |
 | ready | applyUpdate() 実行 | installing |
 | installing | installAndRelaunch() 後 | (プロセス終了) |
 | installing | 例外発生 | error |
@@ -55,6 +57,24 @@ DL 完了後にバッジを表示し、ユーザーが再起動を承認した�
 - applyUpdate 成功 → relaunch でプロセス終了 (実質クリア)
 - applyUpdate 失敗 (error phase) → 保持 (リトライのため)
 - resetUpdateError → null クリア
+- ready のまま待機中に、より新しいリリースを検出 → **その DL 完了後に差し替え**
+
+### ready 中の差し替え (なぜ必要か)
+
+racker は起動しっぱなしで使われるため、DL 済みバッジが何日も放置されることがある。
+その間に出たリリースを拾わないと、バッジから入るのは常に「気付いた時点の次の版」になり、
+**再起動のたびに 1 バージョンずつしか上がらない**。
+
+そのため `runUpdateCheck()` は phase が `'ready'` のときも no-op にせず、
+`refreshPendingUpdate()` (appStore.ts) を通す:
+
+1. `checkForUpdate()` で最新 manifest を取り直す
+2. `compareVersions()` で pending より新しいときだけ DL する
+3. **DL 完了後**に `pendingUpdateHandle` / `updateInfo` を差し替える
+
+DL 中に失敗しても、すでに DL 済みの古い pending がそのまま残るので「更新できる状態」を失わない。
+差し替え中の再入は `refreshingPendingUpdate` フラグで防ぐ。phase は `'ready'` のまま動かさないので、
+バッジは出したままになる。
 
 ## バッジ表示条件
 
@@ -82,7 +102,10 @@ const showBadge = updatePhase === 'ready' || updatePhase === 'error';
 - **NSIS インストーラーのみ対応** (MSI は v1.1 で廃止済み)
 - **SmartScreen 警告**: コード署名証明書 (Authenticode) を購入していないため、
   各更新インストール時に SmartScreen 警告が出ます。「詳細情報 → 実行」で続行可能
-- **チェックは起動時 1 回のみ**: 起動中の長時間運用では自動的に再チェックしません
+- **チェック間隔は 1 時間**: 起動時に 1 回、以降は 1 時間ごと。リリース直後に
+  「今すぐ再起動」を押した場合、最大 1 時間前の版が入ることがあります (次回チェックで最新に追いつきます)
+- **`'error'` phase では再チェックしない**: インストールに失敗した状態は保持され、
+  ユーザーがリトライするか `resetUpdateError()` で idle に戻すまで新しい版を取りに行きません
 - **バックグラウンド DL 失敗は無音**: DL エラーはユーザーに通知せず idle に戻し、次回起動でリトライします
 
 ## 設定値

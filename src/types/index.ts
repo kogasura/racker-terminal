@@ -302,6 +302,19 @@ export interface Settings {
    * Claude タブ以外では利用量だけの控えめな表示になるため、既定で出す。
    */
   statusBarEnabled?: boolean;
+  /**
+   * 端末の描画に GPU (WebGL) を使うか。
+   *
+   * 未設定 (undefined) は **有効**として扱う。GPU 描画は速いが、xterm の WebGL
+   * renderer はグリフを 1 枚のテクスチャ (TextureAtlas) に焼いて使い回す作りで、
+   * このアトラスが壊れると**文字が空白になったり別の字に化けたりする**。
+   * 長時間・多タブ・CJK で使うと踏みやすい。化けているのは描画だけで文字データは
+   * 無事なので、これを切ると直る（描画は DOM renderer にフォールバックする）。
+   *
+   * 透明度 < 1.0 のときは WebGL が alpha を尊重しないため、この設定に関わらず
+   * GPU 描画は無効になる。
+   */
+  gpuAcceleration?: boolean;
 }
 
 /**

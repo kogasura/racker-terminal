@@ -65,6 +65,11 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
     patch.statusBarEnabled = statusBarEnabled;
   }
 
+  const gpuAcceleration = draft.gpuAcceleration !== false;
+  if (gpuAcceleration !== (settings.gpuAcceleration !== false)) {
+    patch.gpuAcceleration = gpuAcceleration;
+  }
+
   return patch;
 }
 
@@ -280,6 +285,24 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               <small className="dialog-hint">
                 表示中のタブで動いている Claude のモデル・effort・コンテキスト消費量と、
                 プランの使用量（5 時間 / 週次）を 1 行で出します。
+              </small>
+            </label>
+
+            <label className="dialog-field dialog-field--checkbox">
+              <input
+                type="checkbox"
+                checked={draft.gpuAcceleration !== false}
+                onChange={(e) =>
+                  setDraft({ ...draft, gpuAcceleration: e.target.checked })
+                }
+              />
+              <span className="dialog-label">GPU で描画する</span>
+              <small className="dialog-hint">
+                通常は ON のままで構いません。長時間使っていると
+                <strong>文字が空白になったり別の字に化けたりする</strong>場合は、これを切ると直ります
+                （化けているのは表示だけで、文字そのものは壊れていません）。
+                切ると描画は CPU 側に切り替わります。背景透明度を 1.00 未満にしている間は
+                この設定に関わらず GPU 描画は使いません。
               </small>
             </label>
 

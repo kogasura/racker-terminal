@@ -1,7 +1,7 @@
 {
   "name": "racker-terminal",
   "private": true,
-  "version": "1.9.7",
+  "version": "1.9.8",
   "type": "module",
   "scripts": {
     "dev": "vite",

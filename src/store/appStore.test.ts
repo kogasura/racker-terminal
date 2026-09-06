@@ -2798,7 +2798,10 @@ describe('setWslDistros', () => {
 
 // --- updater スライス (Chrome 風バックグラウンド DL フロー) ---
 
-vi.mock('../lib/updater', () => ({
+// compareVersions は純粋関数なので実物を使う (モックすると差し替え判定のテストが
+// モック側の実装をテストすることになってしまう)。
+vi.mock('../lib/updater', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/updater')>()),
   checkForUpdate: vi.fn(),
   downloadUpdate: vi.fn(),
   installAndRelaunch: vi.fn(),
@@ -2912,6 +2915,125 @@ describe('updater スライス', () => {
     expect(state.updatePhase).toBe('idle');
     expect(state.updateInfo).toBeNull();
     expect(state.updateProgress).toBe(0);
+  });
+
+  // --- ready のまま放置している間に出たリリースへの追従 ---
+  //
+  // racker は起動しっぱなしで使われる。DL 済みバッジを放置している間に新しい版が出ても
+  // 拾えないと、バッジから入るのは常に「気付いた時点の次の版」になり、再起動のたびに
+  // 1 バージョンずつしか上がらない。
+
+  /** ready (1.2.0 を DL 済み) の状態を作る。 */
+  async function makeReadyWith(version: string, handleTag = version) {
+    vi.mocked(checkForUpdate).mockResolvedValueOnce({
+      version,
+      currentVersion: '1.1.0',
+      notes: `notes ${version}`,
+      _handle: { tag: handleTag } as any,
+    });
+    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
+    await useAppStore.getState().runUpdateCheck();
+    expect(useAppStore.getState().updatePhase).toBe('ready');
+  }
+
+  it('runUpdateCheck: ready のとき、より新しい版が出ていれば DL して差し替える', async () => {
+    await makeReadyWith('1.2.0');
+
+    // 放置中に 1.4.0 が出た
+    vi.mocked(checkForUpdate).mockResolvedValueOnce({
+      version: '1.4.0',
+      currentVersion: '1.1.0',
+      notes: 'notes 1.4.0',
+      _handle: { tag: '1.4.0' } as any,
+    });
+    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('ready');
+    expect(state.updateInfo?.version).toBe('1.4.0');
+    expect(downloadUpdate).toHaveBeenCalledTimes(2);
+
+    // 実際に適用されるハンドルも差し替わっていること
+    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
+    await useAppStore.getState().applyUpdate();
+    expect(vi.mocked(installAndRelaunch).mock.calls[0][0].version).toBe('1.4.0');
+  });
+
+  it('runUpdateCheck: ready のとき、同じ版なら再 DL しない', async () => {
+    await makeReadyWith('1.2.0');
+
+    vi.mocked(checkForUpdate).mockResolvedValueOnce({
+      version: '1.2.0',
+      currentVersion: '1.1.0',
+      notes: 'notes 1.2.0',
+      _handle: { tag: 'other' } as any,
+    });
+
+    await useAppStore.getState().runUpdateCheck();
+
+    expect(downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().updateInfo?.version).toBe('1.2.0');
+  });
+
+  it('runUpdateCheck: ready のとき、チェックが null なら pending を維持する', async () => {
+    await makeReadyWith('1.2.0');
+
+    // ネットワーク不通など
+    vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('ready');
+    expect(state.updateInfo?.version).toBe('1.2.0');
+  });
+
+  it('runUpdateCheck: ready のとき、差し替えの DL に失敗しても古い pending で更新できる', async () => {
+    await makeReadyWith('1.2.0');
+
+    vi.mocked(checkForUpdate).mockResolvedValueOnce({
+      version: '1.4.0',
+      currentVersion: '1.1.0',
+      notes: 'notes 1.4.0',
+      _handle: { tag: '1.4.0' } as any,
+    });
+    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network timeout'));
+
+    await useAppStore.getState().runUpdateCheck();
+
+    const state = useAppStore.getState();
+    expect(state.updatePhase).toBe('ready');
+    expect(state.updateInfo?.version).toBe('1.2.0');
+
+    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
+    await useAppStore.getState().applyUpdate();
+    expect(vi.mocked(installAndRelaunch).mock.calls[0][0].version).toBe('1.2.0');
+  });
+
+  it('runUpdateCheck: ready のとき、差し替え中に再入しても二重に DL しない', async () => {
+    await makeReadyWith('1.2.0');
+
+    let resolveDownload!: () => void;
+    vi.mocked(checkForUpdate).mockResolvedValue({
+      version: '1.4.0',
+      currentVersion: '1.1.0',
+      notes: 'notes 1.4.0',
+      _handle: { tag: '1.4.0' } as any,
+    });
+    vi.mocked(downloadUpdate).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveDownload = () => resolve(); }),
+    );
+
+    const first = useAppStore.getState().runUpdateCheck();
+    await useAppStore.getState().runUpdateCheck(); // 定期チェックが重なった
+    resolveDownload();
+    await first;
+
+    // 1 回目 (ready 到達) + 差し替え 1 回 = 2 回まで
+    expect(downloadUpdate).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().updateInfo?.version).toBe('1.4.0');
   });
 
   it('applyUpdate: ready → installing (installAndRelaunch が呼ばれる)', async () => {

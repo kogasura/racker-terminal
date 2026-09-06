@@ -12,6 +12,7 @@ import type { ClaudeTranscriptMeta, ClaudeUsageLimits } from '../lib/claudeMeta'
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 import {
   checkForUpdate,
+  compareVersions,
   downloadUpdate,
   installAndRelaunch,
   takeFailedUpdateAttempt,
@@ -20,6 +21,10 @@ import {
 
 // Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
 let pendingUpdateHandle: UpdateAvailable | null = null;
+
+// ready のまま待機している pending を差し替え中かどうか。定期チェックが重なって
+// 同じ版を二重に DL しないためのガード。
+let refreshingPendingUpdate = false;
 
 export const CLOSED_TABS_MAX = 10;
 
@@ -710,9 +715,14 @@ interface AppActions {
 
   // --- updater アクション ---
   /**
-   * 起動時に App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新があれば
-   * バックグラウンドで自動 DL して updatePhase を 'ready' に遷移させる。
-   * 再入防止: phase !== 'idle' のとき no-op。
+   * 起動時と定期チェックで App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新が
+   * あればバックグラウンドで自動 DL して updatePhase を 'ready' に遷移させる。
+   *
+   * すでに 'ready' (DL 済みで再起動待ち) の場合は、その pending より新しいリリースが
+   * 出ていないかを確認し、出ていれば裏で DL して差し替える (phase は 'ready' のまま)。
+   * これがないと、放置している間に出た版を飛ばして 1 つずつしか上がらない。
+   *
+   * 再入防止: phase が 'idle' / 'ready' 以外のとき no-op。
    */
   runUpdateCheck: () => Promise<void>;
 
@@ -754,6 +764,48 @@ interface AppActions {
 }
 
 type Store = AppState & AppActions;
+
+/**
+ * ready のまま待機している pending 更新を、さらに新しいリリースへ差し替える。
+ *
+ * racker は起動しっぱなしで使われるため、DL 済みバッジが何日も放置されることがある。
+ * その間に出たリリースを拾わないと、バッジから入るのは常に「気付いた時点の次の版」に
+ * なってしまう (= 1 バージョンずつしか上がらない)。定期チェックのたびにここを通し、
+ * 現在の pending より新しい版があれば DL してから差し替える。
+ *
+ * 差し替えは **DL 完了後** に行う。途中で失敗しても、すでに DL 済みの古い pending が
+ * そのまま残るので「更新できる状態」を失わない。
+ */
+async function refreshPendingUpdate(
+  set: (partial: Partial<Store>) => void,
+  get: () => Store,
+): Promise<void> {
+  if (refreshingPendingUpdate) return;
+  refreshingPendingUpdate = true;
+  try {
+    const latest = await checkForUpdate();
+    // 取得できない (ネットワーク不通など) ときは既存の pending をそのまま残す
+    if (!latest) return;
+
+    const pending = pendingUpdateHandle;
+    if (pending && compareVersions(latest.version, pending.version) <= 0) return;
+
+    // バッジ表示中なので進捗 UI は不要。完全に裏で落とす。
+    await downloadUpdate(latest, () => {});
+
+    // DL 中にユーザーが適用を始めていたら (installing / error) 触らない
+    if (get().updatePhase !== 'ready') return;
+
+    pendingUpdateHandle = latest;
+    const { _handle: _newHandle, ...persistableInfo } = latest;
+    set({ updateInfo: persistableInfo, updateProgress: 1 });
+  } catch (e) {
+    // 差し替えに失敗しても古い pending で更新はできる。黙って諦める。
+    console.warn('[updater] refreshPendingUpdate failed:', e);
+  } finally {
+    refreshingPendingUpdate = false;
+  }
+}
 
 export const useAppStore = create<Store>()(
   persist(
@@ -1411,7 +1463,18 @@ export const useAppStore = create<Store>()(
     }),
 
   runUpdateCheck: async () => {
-    if (get().updatePhase !== 'idle') return;
+    const phase = get().updatePhase;
+
+    // DL 済み (ready) のまま待機している間に、さらに新しいリリースが出ていることがある。
+    // ここで取り直さないと、バッジをクリックした時点ですでに古い版を掴んだままになり、
+    // 「再起動するたびに 1 バージョンずつしか上がらない」状態になる。
+    // バッジは出したままにしておきたいので phase は 'ready' から動かさず、裏で差し替える。
+    if (phase === 'ready') {
+      await refreshPendingUpdate(set, get);
+      return;
+    }
+
+    if (phase !== 'idle') return;
 
     set({ updatePhase: 'checking', updateError: null });
     const info = await checkForUpdate();

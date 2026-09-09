@@ -14,6 +14,9 @@ import { listWslDistros } from './lib/wsl';
 import {
   listClaudeSessions,
   matchSessionsToTabs,
+  freshSessions,
+  adoptableTabIds,
+  coveredTabIds,
   collectWslDistros,
   shouldPollWsl,
   type ClaudeSession,
@@ -115,6 +118,25 @@ export async function refreshActiveTranscript(
   }
   const meta = await getTranscriptMeta(session.sessionId, session.cwd, session.distro);
   useAppStore.getState().setClaudeMeta(activeTabId, meta);
+}
+
+/**
+ * この巡回でアクティブタブの会話ログを読み直してよいか。
+ *
+ * refreshActiveTranscript は「セッションが紐づかない = 表示を消す」まで担うため、
+ * **見に行っていない範囲のタブに対して呼ぶと、見えている情報を消してしまう**。
+ * WSL を間引いた tick では WSL タブのセッションが一覧に出ないので、
+ * ステータスバーの表示が数秒ごとに点滅することになる。
+ *
+ * タブが 1 枚も無いとき (null) は「消す」処理そのものが要るので通す。
+ */
+function canReadTranscript(
+  activeTabId: string | null,
+  covered: ReadonlySet<string>,
+  matches: ReadonlyMap<string, unknown>,
+): boolean {
+  if (activeTabId === null) return true;
+  return covered.has(activeTabId) || matches.has(activeTabId);
 }
 
 function App() {
@@ -374,8 +396,11 @@ function App() {
   // 再起動後の resume 対象にでき、(2) タブの状態を画面パターンの推測ではなく
   // Claude 自身が申告した status から決められる。
   //
-  // ファイル読み取りが失敗する環境（Claude 未使用・形式変更）では単に空が返り、
-  // 従来どおり画面パターン判定にフォールバックする。
+  // ファイル読み取りが失敗する環境（Claude 未使用・形式変更）では null が返り、
+  // 何も反映せずに従来どおり画面パターン判定へフォールバックする。
+  // 「取得できて 0 件」（= claude が 1 つも動いていない）とは区別する必要がある。
+  // 後者は「ユーザーが自分で /exit した」という観測であり、反映しないと
+  // 再起動時に終了済みのセッションを復元してしまう。
   useEffect(() => {
     const POLL_INTERVAL_MS = 2000;
     let cancelled = false;
@@ -395,29 +420,52 @@ function App() {
       // `\\wsl.localhost\` へのアクセスは 9P 越しで高く、2 秒ごとに触ると
       // WSL が眠れなくなる。Windows 側だけ 2 秒、WSL 側は 10 秒に 1 回にする。
       const currentTick = tickCount;
-      const distros = shouldPollWsl(currentTick) ? collectWslDistros(tabList) : [];
+      const wslPolled = shouldPollWsl(currentTick);
+      const distros = wslPolled ? collectWslDistros(tabList) : [];
       tickCount += 1;
 
-      const sessions = await listClaudeSessions(distros);
-      if (cancelled || sessions.length === 0) return;
+      const raw = await listClaudeSessions(distros);
+      // 弾くのは取得失敗（null）だけで、0 件（= claude が 1 つも動いていない）は通す。
+      // 0 件で早期 return すると「ユーザーが自分で /exit した」という、
+      // 復元してよいかを決める最重要の観測を取りこぼす（claudeSessionLive が false に落ちない）。
+      // 逆に失敗まで通すと、invoke が一度こけただけで全タブが「消えた」扱いになる。
+      if (cancelled || raw === null) return;
+
+      // 照合の **前に** 亡霊セッションを落とす。WSL では claude が強制終了しても
+      // セッションファイルが消えず、数ヶ月前の死んだ json が残り続けるため、
+      // ここで落とさないと状態ドットの表示も resume の対象も同じだけ引きずられる。
+      const sessions = freshSessions(raw, Date.now());
 
       // await の前後で store が変化しうるので、照合には最新のタブ一覧を使う
       const after = useAppStore.getState();
-      const matches = matchSessionsToTabs(
-        sessions,
-        Object.values(after.tabs).map((t) => ({
-          id: t.id,
-          cwd: t.cwd,
-          args: t.args,
-          claudeSessionId: t.claudeSessionId,
-        })),
-      );
-      after.applyClaudeSessions(matches);
+      const tabsForMatch = Object.values(after.tabs).map((t) => ({
+        id: t.id,
+        cwd: t.cwd,
+        args: t.args,
+        claudeSessionId: t.claudeSessionId,
+        // `-d` を書いていない WSL タブ（既定 distro）を Windows 側と混同しないために要る
+        shell: t.shell,
+      }));
+      const matches = matchSessionsToTabs(sessions, tabsForMatch);
+      // 表示（状態ドット）は従来どおり緩い cwd 一致のまま、
+      // 復元の根拠になる書き込みだけを adoptable で絞る。
+      // covered には「この巡回で実際に見に行った範囲」を渡す。WSL を間引いた tick では
+      // distros が空になるので、見ていない WSL タブを「消えた」と誤判定せずに済む。
+      const covered = coveredTabIds(tabsForMatch, distros);
+      after.applyClaudeSessions(matches, {
+        adoptable: adoptableTabIds(sessions, tabsForMatch, matches),
+        covered,
+      });
 
       // ついでにアクティブタブの会話ログも読む（セッション ID と cwd がここで揃うため）。
       // セッションの巡回より頻度を落とす: モデルや effort はめったに変わらず、
       // WSL タブでは 9P 越しのファイル読み取りになるため。
-      if (shouldPollTranscript(currentTick) && !cancelled) {
+      //
+      // **この巡回で見に行っていないタブでは読み直さない。** WSL を間引いた tick では
+      // WSL タブのセッションが一覧に出ないため、そのまま呼ぶと「セッションが無い」と
+      // 判断して claudeMeta を null にし、ステータスバーのモデル / コンテキスト表示が
+      // 数秒ごとに消える（applyClaudeSessions 側の covered と同じ理屈）。
+      if (shouldPollTranscript(currentTick) && !cancelled && canReadTranscript(after.activeTabId, covered, matches)) {
         const activeTabId = after.activeTabId;
         await refreshActiveTranscript(
           activeTabId,

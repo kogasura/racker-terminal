@@ -179,6 +179,7 @@ export const TabItem = memo(function TabItem({
   const updateTabTitle = useAppStore((s) => s.updateTabTitle);
   const duplicateTab = useAppStore((s) => s.duplicateTab);
   const addFavorite = useAppStore((s) => s.addFavorite);
+  const clearClaudeSession = useAppStore((s) => s.clearClaudeSession);
   const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
 
   // groupId と kind を data に持たせることで onDragEnd で所属グループと D&D 種別を参照できる
@@ -274,16 +275,42 @@ export const TabItem = memo(function TabItem({
 
           <MoveToGroupSubmenu tabId={tabId} currentGroupId={tab.groupId} />
 
+          {/*
+            手動起動 claude の紐付けは cwd 一致という緩い根拠で自動採用されるため、
+            同じフォルダで動いていた別アプリの会話を掴んでしまうことがありうる。
+            そのときにユーザーが打てる唯一の手として、記録を切り離す導線を置く。
+            claudeSessionId を持たないタブには何も出さない（claude を使わない人には
+            存在しないメニュー）。消したあと再び採用されるのは「そのフォルダで
+            実際に claude が 1 つだけ生きている」ときだけなので、消し得にはならない。
+          */}
+          {tab.claudeSessionId !== undefined && (
+            <>
+              <ContextMenu.Separator className="context-menu__separator" />
+
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => clearClaudeSession(tabId)}
+              >
+                Claude セッションの記録を消す
+              </ContextMenu.Item>
+            </>
+          )}
+
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => {
-              // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する
+              // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する。
+              // launchClaude / bypassPermissions も引き継ぐ: ここが抜けていたため、
+              // Claude タブを「お気に入りに追加」すると自動起動しないお気に入りになっていた。
               addFavorite({
                 title: getTabDisplayTitle(tab),
                 shell: tab.shell,
                 cwd: tab.cwd,
                 args: tab.args,    // クローンは addFavorite 内部で行う
                 env: tab.env,
+                launchClaude: tab.launchClaude || undefined,
+                // 権限バイパスは Claude 自動起動が前提。FavoriteDialog の保存と同じ正規化を行う
+                bypassPermissions: (tab.launchClaude && tab.bypassPermissions) || undefined,
               });
             }}
           >

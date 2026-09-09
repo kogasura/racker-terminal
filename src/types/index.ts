@@ -175,15 +175,75 @@ export interface Tab {
   /**
    * true のとき、このタブは spawn 時に Claude Code を自動起動する「Claude タブ」。
    * お気に入りの launchClaude フラグから createTab/spawnFavorite 経由で引き継ぐ。永続化対象。
+   *
+   * false / 未設定でも「手動で `claude` と打ったタブ」は追跡され、
+   * 終了時に claude が動いていれば再起動時に resume される（claudeSessionLive 参照）。
+   * このフラグはあくまで「spawn した瞬間に racker が claude を起動するか」を表す。
    */
   launchClaude?: boolean;
   /**
-   * Claude タブが管理する claude セッションの UUID。
-   * 初回 spawn 時に crypto.randomUUID() で発番して `claude --session-id <id>` で起動し、
-   * 以降（再起動復元・PTY recycle）は `claude --resume <id>` で同一セッションを再開する。
-   * launchClaude=true のタブにのみ設定される。永続化対象。
+   * このタブに結びついた claude セッションの UUID。
+   *
+   * - launchClaude=true のタブ: 初回 spawn 時に crypto.randomUUID() で発番して
+   *   `claude --session-id <id>` で起動し、以降（再起動復元・PTY recycle）は
+   *   `claude --resume <id>` で同一セッションを再開する
+   * - 手動起動タブ: セッションファイルの巡回で検出した ID を採用する
+   *   （applyClaudeSessions。ただし復元の根拠にしてよいと判断できたタブに限る）
+   *
+   * 永続化対象。**ID を持つこと自体は resume の十分条件ではない**
+   * （手動起動タブでは claudeSessionLive / claudeSeenAt / claudeSessionCwd も見る）。
    */
   claudeSessionId?: string;
+  /**
+   * 観測したセッションが申告していた作業ディレクトリ。
+   * Windows 側は `C:\...`、WSL 側は `/home/...` 形式。永続化対象。
+   *
+   * ⚠️ **spawn 先としては絶対に使わない。復元前の整合チェック専用**。
+   * `claude --resume <id>` は cwd が違っても失敗せず「前回の会話を新しい
+   * ディレクトリに対して」継続してしまうため、記録した階層とこれから開く階層が
+   * 食い違ったら復元しない、という判断にだけ使う。
+   *
+   * tab.cwd と分けているのは、resolve_cwd (src-tauri/src/pty.rs) が存在検証をせずに
+   * PathBuf 化して CommandBuilder へ渡すため。WSL の Linux パスを tab.cwd 系に
+   * 混ぜると Windows 側の spawn が失敗して crashed になる。フィールドを分けることで
+   * この事故を型と命名で構造的に禁じている。
+   */
+  claudeSessionCwd?: string;
+  /**
+   * セッションを見つけた WSL distro 名。undefined = Windows 側。永続化対象。
+   * 同じ Linux パス (`/home/me/dev` 等) を持つ別 distro のタブへ
+   * 誤って resume するのを防ぐために記録する。
+   */
+  claudeSessionDistro?: string;
+  /**
+   * 直近の巡回でそのセッションが生きていたか。永続化対象。
+   *
+   * **「racker を閉じた時点で claude が動いていたか」= 自動 resume してよいかの
+   * 唯一の意思表示**。ユーザーが自分で `/exit` すると次の巡回で false に落ちるため、
+   * 「自分で終わらせたタブが再起動で勝手に復活する」ことがない。
+   * false になっても claudeSessionId は残す（1 tick の読み取り失敗で
+   * 会話へ戻れなくなるのを防ぐ）。
+   */
+  claudeSessionLive?: boolean;
+  /**
+   * 最後に生存を観測した epoch ms。永続化対象。
+   * 記録そのものの鮮度判定に使う（racker がクラッシュして
+   * claudeSessionLive=true のまま何ヶ月も放置されたケースの保険）。
+   */
+  claudeSeenAt?: number;
+  /**
+   * 「Claude セッションの記録を消す」で切り離したセッションの ID。
+   *
+   * 記録を消すだけでは、同じフォルダでその claude が動き続けているかぎり
+   * 次の巡回（2 秒後）で同じセッションを採り直してしまい、掴み間違いを
+   * やり直す導線にならない。この ID のセッションだけを採用対象から外す。
+   * 別のセッションを採用した時点で自然に解除されるので、「もう二度と
+   * 追跡しない」という意味にはならない。
+   *
+   * **ランタイム状態のため persist 対象外**（アプリを再起動したら、
+   * そのとき動いているセッションを素直に見ればよい）。
+   */
+  claudeSessionOptOutId?: string;
   /**
    * true のとき、Claude 自動起動コマンドに `--dangerously-skip-permissions` を付与し、
    * 権限プロンプトをバイパスして起動する。launchClaude=true のタブにのみ意味を持つ。永続化対象。
@@ -374,6 +434,14 @@ export interface ClosedTab {
   launchClaude?: boolean;
   /** 閉じる前の claude セッション ID。再オープン時に同一セッションを resume するため保存する。 */
   claudeSessionId?: string;
+  /**
+   * 閉じる前の claude 復帰情報。Ctrl+Shift+T で戻したタブが
+   * 「閉じる前とまったく同じ判断」で resume されるよう、ID と対称に往復させる。
+   */
+  claudeSessionCwd?: string;
+  claudeSessionDistro?: string;
+  claudeSessionLive?: boolean;
+  claudeSeenAt?: number;
   /** 権限バイパス (--dangerously-skip-permissions) フラグを復元するため保存する。 */
   bypassPermissions?: boolean;
 }
@@ -385,7 +453,7 @@ export interface ClosedTab {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, dragId, dragKind, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, bypassPermissions}, favorites, settings, activeGroupId
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, claudeSessionCwd, claudeSessionDistro, claudeSessionLive, claudeSeenAt, bypassPermissions}, favorites, settings, activeGroupId
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

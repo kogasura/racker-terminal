@@ -13,6 +13,7 @@ import {
 import { resizePty } from '../lib/pty';
 import type { PtyEvent } from '../lib/pty';
 import { isWslShell } from '../lib/profileTemplates';
+import { planClaudeLaunch } from '../lib/claudeLaunch';
 import { loadScrollback, RESTORE_BANNER } from '../lib/scrollback';
 import '../styles/terminal.css';
 
@@ -105,6 +106,10 @@ export function sanitizeSessionName(raw: string | null | undefined): string | nu
  * - 新規指定   → `claude --session-id <id> -n <name>`
  * - bypass=true → 末尾に `--dangerously-skip-permissions` を付与（権限バイパス）。
  * 引数 (uuid / sanitizeSessionName 済み name) は injection 安全な前提。テスト用に export する。
+ *
+ * ⚠️ resume の ID は**セッションファイル由来のこともある**（手動起動タブ）。
+ * ここで引用符なしに埋め込んでよいのは、claudeSessions.isSessionId が UUID の形を
+ * 確かめて外れ値を捨てているから。ID の入手経路を増やすときは同じ関門を通すこと。
  */
 export function buildClaudeCommand(
   mode: { resume: string } | { sessionId: string; name: string },
@@ -142,46 +147,63 @@ export function buildWslClaudeArgs(
 }
 
 /**
- * Claude タブの自動起動方法を算出する。
+ * 新しい claude セッションを発番して store に保存し、起動コマンドの材料を返す。
+ *
+ * **`resume` の経路からは絶対に呼ばない**（呼び出し元が plan.kind === 'new' のときだけ
+ * 通す）。手動起動タブの復元は「既に持っている ID を再開する」ことであって、
+ * 新しい会話を勝手に始めてよいわけではないため。この分離により、StrictMode の
+ * effect 二重実行に対する既存の安全性も resume 側では副作用ゼロで自動的に保たれる。
+ *
+ * セッション名は タブ名 → cwd フォルダ名 → 'claude' の順（A 方式: 初回固定。以後のタブ
+ * rename はアプリ表示のみで claude 側名称とは独立。resume は UUID で行うため影響なし）。
+ */
+function issueNewClaudeSession(tabId: string, tab: Tab): { sessionId: string; name: string } {
+  const sessionId = crypto.randomUUID();
+  useAppStore.getState().setClaudeSessionId(tabId, sessionId);
+  const name =
+    sanitizeSessionName(tab.userTitle) ??
+    sanitizeSessionName(cwdBasename(tab.cwd)) ??
+    'claude';
+  return { sessionId, name };
+}
+
+/**
+ * タブの Claude 起動方法を算出する。
  *
  * 戻り値:
  *  - args: spawn に渡す最終的な引数。WSL の Claude タブは「直接 exec 方式」を注入した args、
  *    それ以外は baseArgs をそのまま返す。
  *  - bootstrap: spawn 後にシェルへタイプ送信するコマンド。Windows ネイティブ等の Claude タブのみ
- *    返す（起動が即時で確実に届くため）。WSL の Claude タブ・非 Claude タブは undefined。
+ *    返す（起動が即時で確実に届くため）。WSL の Claude タブ・起動しないタブは undefined。
+ *
+ * **何を起動するかの判断は持たない**。判定は claudeLaunch.planClaudeLaunch に切り出してあり、
+ * ここは「決まった起動コマンドを WSL 方式 / タイプ送信方式のどちらで届けるか」だけを担う。
+ * 分けている理由は claudeLaunch.ts の冒頭コメント参照（新規 UUID の誤発番を構造的に防ぐ）。
  *
  * StrictMode の effect 二重実行でも claudeSessionId が割れないよう、引数の closure ではなく
  * store の最新値 (getState) を読む。1 回目の発番＋保存を 2 回目が観測して再発番しないため、
  * 「起動した id」と「永続化した id」が必ず一致する。
  *
- * - launchClaude でない → args=baseArgs, bootstrap=undefined（自動起動なし）
- * - claudeSessionId 済み（復元・recycle・再オープン）→ `claude --resume <id>`
- * - 未設定（新規 Claude タブ）→ uuid 発番＋保存し、`claude --session-id <id> -n <名前>` で起動。
- *   セッション名は タブ名 → cwd フォルダ名 → 'claude' の順（A 方式: 初回固定。以後のタブ
- *   rename はアプリ表示のみで claude 側名称とは独立。resume は UUID で行うため影響なし）。
- * - bypassPermissions=true → 上記コマンドに `--dangerously-skip-permissions` を付与（権限バイパス）。
+ * launchClaude=true のタブに加えて、**自動起動 OFF でも前回終了時に claude が動いていた
+ * タブ**（手動で `claude` と打っていたケース）はここで `--resume` に倒れる。
  */
 function computeClaudeLaunch(
   tabId: string,
   baseArgs: string[] | undefined,
 ): { args: string[] | undefined; bootstrap: string | undefined } {
+  const noLaunch = { args: baseArgs, bootstrap: undefined };
   const tab = useAppStore.getState().tabs[tabId];
-  if (!tab?.launchClaude) return { args: baseArgs, bootstrap: undefined };
+  if (tab === undefined) return noLaunch;
 
-  // bypassPermissions=true なら権限プロンプトをスキップする (お気に入りの明示 opt-in)。
-  const bypass = tab.bypassPermissions;
-  let claudeCmd: string;
-  if (tab.claudeSessionId) {
-    claudeCmd = buildClaudeCommand({ resume: tab.claudeSessionId }, { bypass });
-  } else {
-    const sessionId = crypto.randomUUID();
-    useAppStore.getState().setClaudeSessionId(tabId, sessionId);
-    const name =
-      sanitizeSessionName(tab.userTitle) ??
-      sanitizeSessionName(cwdBasename(tab.cwd)) ??
-      'claude';
-    claudeCmd = buildClaudeCommand({ sessionId, name }, { bypass });
-  }
+  const plan = planClaudeLaunch(tab, { now: Date.now() });
+  if (plan.kind === 'none') return noLaunch;
+
+  // bypass の有無は plan が決める（launchClaude タブは tab.bypassPermissions を引き継ぎ、
+  // 手動タブの復元では常に false。claudeLaunch.planClaudeLaunch の判定表を参照）。
+  const claudeCmd =
+    plan.kind === 'resume'
+      ? buildClaudeCommand({ resume: plan.sessionId }, { bypass: plan.bypass })
+      : buildClaudeCommand(issueNewClaudeSession(tabId, tab), { bypass: tab.bypassPermissions });
 
   // WSL は「直接 exec 方式」(タイプ送信しない)。それ以外 (Windows ネイティブ nu/pwsh 等) は
   // 従来通りシェルへタイプ送信する (起動が即時で確実に届くため)。

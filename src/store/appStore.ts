@@ -230,58 +230,336 @@ function hasSamePrFields(tab: Tab, next: ReturnType<typeof prFields>): boolean {
   );
 }
 
+/**
+ * 「復元の根拠」としてタブへ書き込むフィールド一式。
+ *
+ * 表示（状態ドット）は緩い cwd 一致で更新してよいが、resume の根拠にした瞬間
+ * 「他所の会話を勝手に開く」という破壊的な結果になりうる。そこで採用してよいと
+ * 判断できたタブ（applyClaudeSessions の adoptable）だけがこの値を受け取る。
+ */
+function adoptedClaudeFields(tab: Tab, session: ClaudeSessionInfo, now: number): ClaudeRecordPatch {
+  return {
+    claudeSessionId: claudeSessionIdFor(tab, session),
+    claudeSessionCwd: session.cwd,
+    claudeSessionDistro: session.distro,
+    claudeSessionLive: true,
+    claudeSeenAt: nextSeenAt(tab, now),
+    // 別のセッションを採用したなら、切り離しの指定はもう関係ない
+    claudeSessionOptOutId: undefined,
+  };
+}
+
+/**
+ * 採用しないタブでも、**記録済みのセッションが観測できなくなったなら live を落とす**。
+ *
+ * live の失効は「そのタブがどのセッションとも照合されなかったとき」
+ * (tabWithClaudeSessionGone) だけに任せていたが、それだと取りこぼす:
+ * 記録済み S を持つタブが、同じフォルダの**別の**セッション S2 に cwd 一致で
+ * 照合され、かつ曖昧さ（同じフォルダに複数のセッション / 複数のタブ）のせいで
+ * adoptable から外れた場合、session !== undefined なので gone 側へ落ちず、
+ * canAdopt=false なので採用もされず、**死んだ S が live=true のまま温存される**。
+ * その状態で再起動すると、ユーザーが自分で `/exit` した会話が復活してしまう。
+ *
+ * 記録済み S が生きていれば matchSessionsToTabs のステージ 1（ID 一致）で必ず
+ * 結びつき adoptable になるので、「別のセッションに照合された」時点で
+ * S はもう観測できていない、と判断してよい。
+ */
+function staleRecordFields(tab: Tab, session: ClaudeSessionInfo): ClaudeRecordPatch | undefined {
+  if (tab.claudeSessionId === undefined) return undefined;
+  if (session.sessionId === tab.claudeSessionId) return undefined;
+  return { claudeSessionLive: false };
+}
+
+/**
+ * ユーザーが「Claude セッションの記録を消す」で切り離したセッションか。
+ *
+ * 記録を消すだけでは、同じフォルダでその claude が動き続けているかぎり
+ * 次の巡回（2 秒後）で同じセッションを採り直してしまい、
+ * 誤った紐付けからの復旧手段にならない。切り離した ID を覚えておいて、
+ * **そのセッションだけ**採用対象から外す。別のセッションが観測されれば
+ * 自然に解除される（adoptedClaudeFields が undefined に戻す）ので、
+ * 「もう二度と追跡しない」にはならない。
+ */
+function isOptedOutSession(tab: Tab, session: ClaudeSessionInfo): boolean {
+  return tab.claudeSessionOptOutId !== undefined
+    && session.sessionId === tab.claudeSessionOptOutId;
+}
+
+/**
+ * このタブに記録する claude セッション ID を決める。
+ *
+ * **タブの種別で優先順位が逆になる。**
+ *
+ * - Claude タブ (launchClaude=true): racker が `--session-id` で発番した ID が正。
+ *   同じフォルダで別の claude が動いていても、そちらへ乗り換えない
+ * - 手動起動タブ: **いま観測できているセッションが正**。ユーザーが `/exit` して
+ *   同じタブで claude を起動し直すと別のセッションになるため、最初に掴んだ ID を
+ *   持ち続けると「死んだ会話を resume する」ことになる（採用の可否は adoptable が
+ *   別途 1 対 1 で判断しているので、ここで乗り換えても他所の会話は掴まない）
+ *
+ * どちらの場合も、セッションが ID を申告していなければ既存の値を残す
+ * （書き込み途中の壊れた json を読んだだけで記録を失わないため）。
+ */
+function claudeSessionIdFor(tab: Tab, session: ClaudeSessionInfo): string | undefined {
+  if (tab.launchClaude === true) return tab.claudeSessionId ?? session.sessionId;
+  return session.sessionId ?? tab.claudeSessionId;
+}
+
+/**
+ * claudeSeenAt を書き直す最小間隔 (ms)。
+ *
+ * 毎 tick 更新すると 2 秒ごとに全 Claude タブの参照が変わり、再レンダーが走る。
+ * かといって「他のフィールドが変わったときだけ」にすると、idle のまま何日も
+ * 動かないタブの seenAt が最初の観測時刻で止まり、記録の鮮度
+ * (claudeLaunch の MANUAL_RESUME_MAX_AGE_MS) を誤って「古い」と判定してしまう。
+ * 1 分に 1 回なら、再レンダーはタブあたり毎分 1 回で済む。
+ */
+const SEEN_AT_REFRESH_MS = 60_000;
+
+/** 前回の観測から SEEN_AT_REFRESH_MS 経っていなければ、前の値をそのまま返す（参照据え置き）。 */
+function nextSeenAt(tab: Tab, now: number): number {
+  const prev = tab.claudeSeenAt;
+  if (prev !== undefined && now - prev < SEEN_AT_REFRESH_MS) return prev;
+  return now;
+}
+
+/** 「復元の根拠」として書き換わりうるフィールド。 */
+const CLAUDE_RECORD_KEYS = [
+  'claudeSessionId',
+  'claudeSessionCwd',
+  'claudeSessionDistro',
+  'claudeSessionLive',
+  'claudeSeenAt',
+  'claudeSessionOptOutId',
+] as const;
+
+/**
+ * タブへ当てる復元用フィールドの差分。
+ * 採用時は全フィールド、失効時は claudeSessionLive だけ、のように**部分**になる。
+ */
+type ClaudeRecordPatch = Partial<Pick<Tab, typeof CLAUDE_RECORD_KEYS[number]>>;
+
+/**
+ * patch が持つフィールドだけを、タブの現在値と突き合わせる。
+ *
+ * claudeSeenAt も比較に含めてよい。nextSeenAt が 1 分未満の再訪では前の値を
+ * そのまま返すため、2 秒ごとの巡回で参照が変わることはない。
+ */
+function hasSameClaudeRecord(tab: Tab, patch: ClaudeRecordPatch | undefined): boolean {
+  if (patch === undefined) return true;  // 触らないなら常に同値
+  return CLAUDE_RECORD_KEYS.every((key) => !(key in patch) || tab[key] === patch[key]);
+}
+
 /** タブの claude セッション関連フィールドが、これから入れる値と一致するか。 */
 function hasSameClaudeSession(
   tab: Tab,
   session: ClaudeSessionInfo,
   nextAgentState: AgentState | undefined,
-  nextSessionId: string | undefined,
+  patch: ClaudeRecordPatch | undefined,
 ): boolean {
   return (
     tab.agentState === nextAgentState &&
     tab.agentStateFromSession === true &&
-    tab.claudeSessionId === nextSessionId &&
     tab.waitingFor === session.waitingFor &&
-    tab.claudeStatus === session.status
+    tab.claudeStatus === session.status &&
+    hasSameClaudeRecord(tab, patch)
   );
+}
+
+/**
+ * セッションが見つからなかったタブへ反映する。
+ *
+ * かつてここには `if (tab.agentStateFromSession !== true) return tab;` という
+ * 早期 return があったが撤去した。このフラグは OSC 21337 (applyTabStatusOsc,
+ * 全タブに登録される) からも書かれるため、Claude 側の機能が有効な環境では
+ * 「OSC が先に false にする → 以後この分岐へ到達しない → claudeSessionLive が
+ * 永久に更新されない」という到達順依存のレースになっていた。
+ *
+ * 代わりに「次の値を計算し、すべて同値なら tab をそのまま返す」形にして
+ * 参照据え置き規約（2 秒ポーリングでの再レンダー抑止）を維持する。
+ * claudeSessionId / Cwd / Distro / SeenAt は**残す** —— セッションファイルは
+ * 書き込み途中で壊れて 1 tick 読み飛ばされることがあり、そこで ID を消すと
+ * 会話ログがディスクに残っているのに二度と戻れなくなるため。
+ */
+function tabWithClaudeSessionGone(tab: Tab): Tab {
+  if (
+    tab.agentStateFromSession === false &&
+    tab.waitingFor === undefined &&
+    tab.claudeStatus === undefined &&
+    tab.claudeSessionLive === false
+  ) {
+    return tab;
+  }
+  return {
+    ...tab,
+    agentStateFromSession: false,
+    waitingFor: undefined,
+    claudeStatus: undefined,
+    // 「前回終了時に claude が動いていたか」= 自動 resume してよいかの意思表示。
+    // ユーザーが自分で /exit したタブはここで false に落ちる。
+    claudeSessionLive: false,
+  };
 }
 
 /**
  * セッション情報 1 件をタブへ反映した結果を返す。
  * 変更が無ければ元の tab をそのまま返すので、呼び出し側は参照比較で変更有無を判定できる。
+ *
+ * @param opts.canAdopt false なら表示（agentState / waitingFor / claudeStatus）だけ
+ *   更新し、復元の根拠になるフィールドには一切触れない
  */
 function tabWithClaudeSession(
   tab: Tab,
   session: ClaudeSessionInfo | undefined,
-  isActive: boolean,
+  opts: { isActive: boolean; canAdopt: boolean; now: number },
 ): Tab {
-  if (session === undefined) {
-    // セッションが見つからない = claude が終了した / 検出できない。
-    // 画面パターン判定へフォールバックできるようフラグを落とす。
-    if (tab.agentStateFromSession !== true) return tab;
-    return {
-      ...tab,
-      agentStateFromSession: false,
-      waitingFor: undefined,
-      claudeStatus: undefined,
-    };
-  }
+  // セッションが見つからない = claude が終了した / 検出できない。
+  // 画面パターン判定へフォールバックできるようフラグを落とす。
+  if (session === undefined) return tabWithClaudeSessionGone(tab);
 
-  const nextAgentState = nextAgentStateFromSession(tab.agentState, session.status, isActive);
-  // 手動起動タブでも resume できるよう、未設定なら検出した ID を採用する。
-  // すでに ID を持つタブ（racker が --session-id で起動した）は上書きしない。
-  const nextSessionId = tab.claudeSessionId ?? session.sessionId;
+  const nextAgentState = nextAgentStateFromSession(tab.agentState, session.status, opts.isActive);
+  // ユーザーが切り離したセッションは、たとえ照合が成立しても採用し直さない
+  const canAdopt = opts.canAdopt && !isOptedOutSession(tab, session);
+  const patch = canAdopt
+    ? adoptedClaudeFields(tab, session, opts.now)
+    : staleRecordFields(tab, session);
 
-  if (hasSameClaudeSession(tab, session, nextAgentState, nextSessionId)) return tab;
+  if (hasSameClaudeSession(tab, session, nextAgentState, patch)) return tab;
 
   return {
     ...tab,
     agentState: nextAgentState,
     agentStateFromSession: true,
-    claudeSessionId: nextSessionId,
     waitingFor: session.waitingFor,
     claudeStatus: session.status,
+    ...patch,
   };
+}
+
+/** clearClaudeSession が消すフィールド。記録の有無判定とクリアで同じ列挙を共有する。 */
+const CLAUDE_SESSION_FIELDS = [
+  'claudeSessionId',
+  'claudeSessionCwd',
+  'claudeSessionDistro',
+  'claudeSessionLive',
+  'claudeSeenAt',
+  'agentStateFromSession',
+  'claudeStatus',
+  'waitingFor',
+] as const;
+
+/** タブに claude セッションの記録が 1 つでも残っているか。 */
+function hasClaudeSessionRecord(tab: Tab): boolean {
+  return CLAUDE_SESSION_FIELDS.some((key) => tab[key] !== undefined);
+}
+
+/**
+ * claude セッションの記録をすべて落としたタブを返す。
+ *
+ * 消した ID は `claudeSessionOptOutId` に退避する。消すだけでは、同じフォルダで
+ * その claude が動き続けているかぎり次の巡回（2 秒後）に同じセッションを
+ * 採り直してしまい、「掴み間違いをやり直す」導線にならないため
+ * (isOptedOutSession 参照)。
+ */
+function tabWithoutClaudeSession(tab: Tab): Tab {
+  const cleared: Tab = { ...tab, claudeSessionOptOutId: tab.claudeSessionId };
+  for (const key of CLAUDE_SESSION_FIELDS) cleared[key] = undefined;
+  return cleared;
+}
+
+/** 復元したタブへ ClosedTab の claude 復帰情報を載せた tabs を返す。 */
+function tabsWithRestoredClaudeSession(
+  tabs: Record<string, Tab>,
+  tabId: string,
+  closed: ClosedTab,
+): Record<string, Tab> {
+  const tab = tabs[tabId];
+  if (!tab) return tabs;
+  return {
+    ...tabs,
+    [tabId]: {
+      ...tab,
+      claudeSessionCwd: closed.claudeSessionCwd,
+      claudeSessionDistro: closed.claudeSessionDistro,
+      claudeSessionLive: closed.claudeSessionLive,
+      claudeSeenAt: closed.claudeSeenAt,
+    },
+  };
+}
+
+/** migrate が扱う「スキーマ確定前」のタブ。必要なフィールドだけを見る。 */
+type PersistedTabLike = { launchClaude?: boolean; claudeSessionId?: string };
+
+/**
+ * persist v6 → v7 の実データ変換: 手動起動タブ (launchClaude !== true) から
+ * claudeSessionId を破棄する。
+ *
+ * v6 までは ID を消す経路が無く、「何ヶ月も前に一度 claude を打っただけ」のタブにも
+ * 古い ID が残り続けていた。v7 からは **ID の有無が復元の起点になる**ため、
+ * 意味の違う値をここで一度だけ捨てないと、更新直後の初回起動で古い会話が一斉に開く。
+ * 捨てても次に手動で claude を起動した時点から改めて追跡される。
+ *
+ * launchClaude=true のタブの ID は racker が --session-id で発番したものなので残す。
+ */
+function dropManualClaudeSessionIds(
+  state: { tabs?: Record<string, PersistedTabLike> } | undefined,
+  version: number,
+): void {
+  if (version >= 7 || !state?.tabs) return;
+  for (const tab of Object.values(state.tabs)) {
+    if (tab.launchClaude !== true) delete tab.claudeSessionId;
+  }
+}
+
+/** applyClaudeSessions が受け取る絞り込みオプション。 */
+export type ApplyClaudeSessionsOptions = {
+  /**
+   * claudeSessionId 等を復元の根拠として採用してよいタブ。
+   * 未指定なら全タブ採用（従来動作）。
+   */
+  adoptable?: ReadonlySet<string>;
+  /**
+   * この巡回で観測できた範囲。範囲外かつ matches にも無いタブは一切触らない。
+   * 未指定なら全タブ観測済みとして扱う（従来動作）。
+   */
+  covered?: ReadonlySet<string>;
+};
+
+/**
+ * この巡回で観測できなかったタブか。
+ *
+ * covered が指定されていて範囲外、かつセッションも見つかっていないタブは
+ * 「消えた」のではなく「見ていない」。WSL は 5 tick に 1 回しか読みに行かないため、
+ * ここで区別しないと WSL タブの状態が 2 秒周期でクリア→復活してちらつき、
+ * claudeSessionLive も誤って false に落ちる。
+ */
+function isOutOfPollScope(
+  tabId: string,
+  matches: Map<string, ClaudeSessionInfo>,
+  covered: ReadonlySet<string> | undefined,
+): boolean {
+  if (covered === undefined) return false;
+  return !covered.has(tabId) && !matches.has(tabId);
+}
+
+/**
+ * applyClaudeSessions の 1 タブぶんの判断。
+ * set コールバックから切り出しているのは complexity 上限 (8) を守るため。
+ */
+function nextTabForClaudeSessions(
+  tab: Tab,
+  tabId: string,
+  matches: Map<string, ClaudeSessionInfo>,
+  ctx: { activeTabId: string | null; now: number; opts: ApplyClaudeSessionsOptions | undefined },
+): Tab {
+  // 観測範囲外。「見えなかった」を「消えた」と読み替えない
+  if (isOutOfPollScope(tabId, matches, ctx.opts?.covered)) return tab;
+  return tabWithClaudeSession(tab, matches.get(tabId), {
+    isActive: tabId === ctx.activeTabId,
+    // adoptable 未指定なら従来どおり全採用（1 引数の呼び出しを壊さない）
+    canAdopt: ctx.opts?.adoptable?.has(tabId) ?? true,
+    now: ctx.now,
+  });
 }
 
 /** groupId が現存すればそれを返す。未指定 / 不在なら undefined。 */
@@ -544,6 +822,18 @@ interface AppActions {
   setClaudeSessionId: (tabId: string, sessionId: string) => void;
 
   /**
+   * タブに記録した claude セッションの情報をすべて消す。
+   *
+   * cwd 一致という緩い根拠で自動 resume する以上、「別の会話を掴んでいる」と
+   * 気付いたユーザーに打つ手を残す必要がある（タブ右クリックの導線から呼ぶ）。
+   * claudeSessionId / Cwd / Distro / Live / SeenAt に加えて表示側の
+   * agentStateFromSession / claudeStatus / waitingFor も落とし、状態ドットも消す。
+   *
+   * 存在しない tabId と、既にクリア済みのタブは参照据え置きの no-op。
+   */
+  clearClaudeSession: (tabId: string) => void;
+
+  /**
    * タブを同一グループ内に複製する。
    * - 元タブの groupId / shell / cwd / args / env を引き継ぐ
    * - title は元 title + " (copy)"
@@ -662,16 +952,23 @@ interface AppActions {
    * Claude Code のセッション一覧との照合結果を一括反映する。
    *
    * ポーリングのたびに全タブぶんの対応表を受け取り、次を行う:
-   * 1. セッション ID 未設定のタブに検出した ID を書き込む
+   * 1. 採用してよいと判断できたタブ (opts.adoptable) に、検出した ID と
+   *    復帰情報 (claudeSessionCwd / Distro / Live / SeenAt) を書き込む
    *    → **手動で `claude` と打ったタブも再起動後に `--resume` できるようになる**
    * 2. Claude が申告した status からタブの状態を更新する
    *    （working → idle の遷移を done に読み替える。nextAgentStateFromSession 参照）
-   * 3. セッションが見つからなかったタブは agentStateFromSession を落とし、
-   *    画面パターン判定へフォールバックさせる
+   * 3. セッションが見つからなかったタブは agentStateFromSession と
+   *    claudeSessionLive を落とし、画面パターン判定へフォールバックさせる
+   *
+   * 「表示に使う紐付け」と「復元の根拠になる紐付け」を分けているのが要点。
+   * 表示が入れ替わるだけなら無害だが、resume の根拠にすると他所の会話を開いてしまう。
    *
    * 変化がまったく無ければ tabs の参照を変えない（毎秒の再レンダーを避ける）。
    */
-  applyClaudeSessions: (matches: Map<string, ClaudeSessionInfo>) => void;
+  applyClaudeSessions: (
+    matches: Map<string, ClaudeSessionInfo>,
+    opts?: ApplyClaudeSessionsOptions,
+  ) => void;
 
   /**
    * OSC 21337 (TAB_STATUS) で受け取った状態を反映する。
@@ -1019,14 +1316,15 @@ export const useAppStore = create<Store>()(
       };
     }),
 
-  applyClaudeSessions: (matches) =>
+  applyClaudeSessions: (matches, opts) =>
     set((state) => {
+      const ctx = { activeTabId: state.activeTabId, now: Date.now(), opts };
       let changed = false;
       const tabs: Record<string, Tab> = {};
 
       for (const [id, tab] of Object.entries(state.tabs)) {
         // 変更が無ければ元の参照が返るので、それで変更有無を判定する
-        const next = tabWithClaudeSession(tab, matches.get(id), id === state.activeTabId);
+        const next = nextTabForClaudeSessions(tab, id, matches, ctx);
         tabs[id] = next;
         if (next !== tab) changed = true;
       }
@@ -1113,6 +1411,12 @@ export const useAppStore = create<Store>()(
         // Claude タブ属性とセッション ID を保持し、再オープンで同一セッションを resume する
         launchClaude: removedTab.launchClaude,
         claudeSessionId: removedTab.claudeSessionId,
+        // 復帰情報も往復させる。手動起動タブは ID だけでは resume の可否を決められず、
+        // これらが欠けると「閉じて開き直したら復元されなくなった」ことになる
+        claudeSessionCwd: removedTab.claudeSessionCwd,
+        claudeSessionDistro: removedTab.claudeSessionDistro,
+        claudeSessionLive: removedTab.claudeSessionLive,
+        claudeSeenAt: removedTab.claudeSeenAt,
         bypassPermissions: removedTab.bypassPermissions,
       };
       const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
@@ -1187,6 +1491,16 @@ export const useAppStore = create<Store>()(
       };
     }),
 
+  clearClaudeSession: (tabId) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return {};                          // 存在しない tabId は no-op
+      if (!hasClaudeSessionRecord(tab)) return {};  // 既にクリア済みなら参照据え置き
+      return {
+        tabs: { ...state.tabs, [tabId]: tabWithoutClaudeSession(tab) },
+      };
+    }),
+
   duplicateTab: (tabId) => {
     // N12: set 外で存在チェックして早期リターン（set コールバック外で読み取り一貫性を確保）
     if (!get().tabs[tabId]) return null;
@@ -1212,8 +1526,10 @@ export const useAppStore = create<Store>()(
         // F-M3: src.args / src.env を shallow clone して参照を独立させる
         args: src.args ? [...src.args] : undefined,
         env: src.env ? { ...src.env } : undefined,
-        // 複製は Claude タブ属性を引き継ぐが、claudeSessionId は引き継がない
-        // (複製先は新しい claude セッションとして --session-id で起動させる)
+        // 複製は Claude タブ属性を引き継ぐが、claudeSessionId と復帰情報
+        // (claudeSessionCwd / Distro / Live / SeenAt) は引き継がない。
+        // 複製先は新しい claude セッションとして --session-id で起動させるべきで、
+        // 記録を写すと 2 枚のタブが同じ会話を resume してしまう
         launchClaude: src.launchClaude,
         bypassPermissions: src.bypassPermissions,
         status: 'spawning',
@@ -1579,14 +1895,21 @@ export const useAppStore = create<Store>()(
       claudeSessionId: closed.claudeSessionId,
       bypassPermissions: closed.bypassPermissions,
     });
-    // 成功後にスタックから pop
-    set((s) => ({ closedTabs: s.closedTabs.slice(1) }));
+    // 成功後にスタックから pop。
+    // 復帰情報は「作成時の入力」ではなく「racker が観測した事実」なので
+    // CreateTabOptions には載せず、作成後のタブへ直接書き戻す
+    // (createTab の入口に増やすと spawnFavorite / spawnAtPath が
+    //  新規タブへ他人の記録を渡せてしまうため、経路を意図的に分けている)。
+    set((s) => ({
+      closedTabs: s.closedTabs.slice(1),
+      tabs: tabsWithRestoredClaudeSession(s.tabs, newTabId, closed),
+    }));
     return newTabId;
   },
     }),
     {
       name: 'racker-terminal',
-      version: 6,
+      version: 7,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -1631,6 +1954,10 @@ export const useAppStore = create<Store>()(
         //   v5 → v6: settings.gpuAcceleration (未設定は有効扱い)
         // いずれも既存データに含まれなくても undefined のままで正常動作する。
 
+        // v6 → v7: 手動起動タブの claudeSessionId を破棄する (v0 → v1 以来はじめての実データ変換)。
+        // 分岐ごと関数に押し込んでいるのは migrate の complexity 上限 (8) を守るため。
+        dropManualClaudeSessionIds(state, version);
+
         return state;
       },
       partialize: (state) => ({
@@ -1648,6 +1975,12 @@ export const useAppStore = create<Store>()(
               env: tab.env,
               launchClaude: tab.launchClaude,       // Claude タブ属性 (復元対象)
               claudeSessionId: tab.claudeSessionId, // claude セッション ID (resume に使用)
+              // 手動起動タブの復帰情報。ここの追記漏れが唯一の致命的なミスになる
+              // (型と migrate だけ足しても「保存されない」という無言の不具合になる)
+              claudeSessionCwd: tab.claudeSessionCwd,       // 復元前の階層チェック用
+              claudeSessionDistro: tab.claudeSessionDistro, // 同上 (WSL distro)
+              claudeSessionLive: tab.claudeSessionLive,     // 終了時に claude が動いていたか
+              claudeSeenAt: tab.claudeSeenAt,               // 記録そのものの鮮度
               bypassPermissions: tab.bypassPermissions, // 権限バイパス設定 (復元対象)
               // status / ptyId / oscTitle / agentState は OFF (ランタイム状態)
             },

@@ -531,10 +531,18 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 onChange={(e) => setLaunchClaude(e.target.checked)}
               />
               <span className="dialog-label">Claude Code を自動起動する</span>
+              {/*
+                OFF でもセッションが復元されることを書いておく。
+                この設定は「新しいタブで claude を起動するか」だけを決めており、
+                再起動時の resume は「終了時に claude が動いていたか」という観測結果で決まる。
+                書かないと「OFF にすれば claude は一切立ち上がらない」と誤解される。
+              */}
               <small className="dialog-hint">
-                ON にすると、このお気に入りから開いたタブで <code>claude</code> を自動起動します。
-                アプリ再起動でタブが復元される際は、前回の claude セッションを自動 resume します
+                ON にすると、このお気に入りから開いたタブで <code>claude</code> を自動起動し、
+                アプリ再起動でタブが復元される際は前回の claude セッションを自動 resume します
                 （<code>claude</code> が PATH にある環境が前提）。
+                OFF でも、自分で <code>claude</code> を起動して使っていたタブは、再起動時に前回の
+                セッションから再開します（自分で <code>/exit</code> していた場合は起動しません）。
               </small>
             </label>
 

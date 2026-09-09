@@ -2040,9 +2040,14 @@ describe('applyClaudeSessions', () => {
     expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('found-session');
   });
 
-  it('racker が発番済みの sessionId は上書きしない', () => {
+  it('racker が発番済みの sessionId は上書きしない（Claude タブ）', () => {
     const g = useAppStore.getState().createGroup('G');
-    const tabId = useAppStore.getState().createTab(g, { claudeSessionId: 'racker-issued' });
+    // 発番するのは launchClaude=true のタブだけ。手動起動タブは逆に
+    // 「いま観測できているセッション」を正とする（別テストで固定）
+    const tabId = useAppStore.getState().createTab(g, {
+      launchClaude: true,
+      claudeSessionId: 'racker-issued',
+    });
 
     useAppStore.getState().applyClaudeSessions(
       new Map([[tabId, { sessionId: 'different', status: 'busy' }]]),
@@ -2119,6 +2124,360 @@ describe('applyClaudeSessions', () => {
     useAppStore.getState().applyClaudeSessions(matches);
 
     expect(useAppStore.getState().tabs).toBe(after);
+  });
+});
+
+// --- applyClaudeSessions: 復元の根拠になる紐付け (adoptable / covered / live) ---
+//
+// 「表示に使う紐付け」と「復元の根拠になる紐付け」を分けているのがこの機能の骨格。
+// 表示が入れ替わるだけなら無害だが、resume の根拠にすると他所の会話を開いてしまう。
+
+describe('applyClaudeSessions — 復元の根拠', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  /** 非アクティブなタブを 1 つ用意する（done 判定はアクティブだと出ないため） */
+  function makeInactiveTab(): string {
+    const g = useAppStore.getState().createGroup('G');
+    const target = useAppStore.getState().createTab(g);
+    const other = useAppStore.getState().createTab(g);
+    useAppStore.getState().setActiveTab(other);
+    return target;
+  }
+
+  /** セッションを 1 件観測させ、復元の根拠として採用させる */
+  function observe(
+    tabId: string,
+    session: {
+      sessionId?: string;
+      status?: string;
+      waitingFor?: string;
+      cwd?: string;
+      distro?: string;
+    },
+  ): void {
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, session]]),
+      { adoptable: new Set([tabId]) },
+    );
+  }
+
+  it('採用したタブに復帰情報 (cwd / distro / live / seenAt) を書き込む', () => {
+    const tabId = makeInactiveTab();
+    const before = Date.now();
+
+    observe(tabId, {
+      sessionId: 'sess-1',
+      status: 'busy',
+      cwd: '/home/me/dev',
+      distro: 'Ubuntu-22.04',
+    });
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionId).toBe('sess-1');
+    expect(tab.claudeSessionCwd).toBe('/home/me/dev');
+    expect(tab.claudeSessionDistro).toBe('Ubuntu-22.04');
+    expect(tab.claudeSessionLive).toBe(true);
+    expect(tab.claudeSeenAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('手動起動タブは、観測したセッションが変わったら ID を差し替える', () => {
+    const tabId = makeInactiveTab();
+
+    // 1 回目のセッション
+    observe(tabId, { sessionId: 'sess-old', status: 'idle', cwd: 'C:\\work' });
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('sess-old');
+
+    // ユーザーが /exit して、同じタブで claude を起動し直した
+    observe(tabId, { sessionId: 'sess-new', status: 'busy', cwd: 'C:\\work' });
+
+    // 古い（もう死んでいる）会話ではなく、いま動いているほうを resume 対象にする
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('sess-new');
+  });
+
+  it('手動起動タブでも、セッションが ID を申告しなければ既存の ID を残す', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'idle', cwd: 'C:\\work' });
+
+    // 書き込み途中の json を読んで sessionId が欠けたケース
+    observe(tabId, { status: 'idle', cwd: 'C:\\work' });
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('sess-1');
+  });
+
+  it('claudeSeenAt は 1 分未満の再訪では更新せず、参照を据え置く', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: 'C:\\work' });
+
+    const first = useAppStore.getState().tabs[tabId];
+    const seenAt = first.claudeSeenAt;
+    expect(seenAt).toBeTypeOf('number');
+
+    // 同じ内容をもう一度観測（2 秒後のポーリング相当）
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: 'C:\\work' });
+
+    const second = useAppStore.getState().tabs[tabId];
+    expect(second.claudeSeenAt).toBe(seenAt);
+    expect(second).toBe(first);   // 参照据え置き（再レンダーを起こさない）
+  });
+
+  it('採用したタブでも racker が発番済みの claudeSessionId は上書きしない', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, {
+      launchClaude: true,
+      claudeSessionId: 'racker-issued',
+    });
+
+    observe(tabId, { sessionId: 'detected', status: 'idle', cwd: 'C:\\work' });
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionId).toBe('racker-issued');
+    // 表示と復帰情報は更新される（ID の優先順位だけが維持される）
+    expect(tab.claudeSessionCwd).toBe('C:\\work');
+    expect(tab.claudeSessionLive).toBe(true);
+  });
+
+  it('adoptable に含まれないタブには復元用フィールドを書かない（表示だけ従来どおり反映する）', () => {
+    const tabId = makeInactiveTab();
+
+    // 同じフォルダで racker 外の claude が複数動いている等、厳密 1:1 が成立しないケース
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' }]]),
+      { adoptable: new Set<string>() },
+    );
+
+    const tab = useAppStore.getState().tabs[tabId];
+    // 状態ドットは従来どおり点く
+    expect(tab.agentState).toBe('working');
+    expect(tab.agentStateFromSession).toBe(true);
+    expect(tab.claudeStatus).toBe('busy');
+    // 復元の根拠にはしない
+    expect(tab.claudeSessionId).toBeUndefined();
+    expect(tab.claudeSessionCwd).toBeUndefined();
+    expect(tab.claudeSessionDistro).toBeUndefined();
+    expect(tab.claudeSessionLive).toBeUndefined();
+    expect(tab.claudeSeenAt).toBeUndefined();
+  });
+
+  it('採用しないタブでも、記録済みとは別のセッションに照合されたら live を落とす', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-mine', status: 'busy', cwd: 'C:\\work' });
+    expect(useAppStore.getState().tabs[tabId].claudeSessionLive).toBe(true);
+
+    // ユーザーが /exit → 記録済み sess-mine はもう観測できない。
+    // 同じフォルダで動いている別の claude に cwd 一致で照合されるが、
+    // 曖昧（複数セッション / 複数タブ）なので adoptable には入らない
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' }]]),
+      { adoptable: new Set<string>() },
+    );
+
+    const tab = useAppStore.getState().tabs[tabId];
+    // ここで live が残ると、自分で終わらせた会話が再起動で復活してしまう
+    expect(tab.claudeSessionLive).toBe(false);
+    // ID 自体は残す（次の巡回で sess-mine が戻ってくれば復帰できる）
+    expect(tab.claudeSessionId).toBe('sess-mine');
+    // 他所のセッションの ID を採用してはいない
+    expect(tab.claudeSessionId).not.toBe('someone-else');
+  });
+
+  it('記録を消したセッションは、次の巡回で採り直さない', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' });
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('someone-else');
+
+    // ユーザーが「Claude セッションの記録を消す」を実行
+    useAppStore.getState().clearClaudeSession(tabId);
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBeUndefined();
+
+    // 2 秒後の巡回。その claude はまだ同じフォルダで動いている
+    observe(tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' });
+
+    const tab = useAppStore.getState().tabs[tabId];
+    // 採り直したら「記録を消す」導線が無意味になる
+    expect(tab.claudeSessionId).toBeUndefined();
+    expect(tab.claudeSessionLive).toBeUndefined();
+    // 状態表示は従来どおり動く
+    expect(tab.agentState).toBe('working');
+  });
+
+  it('切り離した後に別のセッションが動き出せば、そちらは普通に追跡する', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' });
+    useAppStore.getState().clearClaudeSession(tabId);
+
+    // そのタブで自分で claude を起動し直した
+    observe(tabId, { sessionId: 'sess-mine', status: 'busy', cwd: 'C:\\work' });
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionId).toBe('sess-mine');
+    expect(tab.claudeSessionLive).toBe(true);
+    // 切り離しの指定は用済みなので解除される
+    expect(tab.claudeSessionOptOutId).toBeUndefined();
+  });
+
+  it('セッションが消えたら claudeSessionLive=false になり、ID / cwd / distro は残る', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me', distro: 'Ubuntu' });
+
+    // ユーザーが自分で /exit した
+    useAppStore.getState().applyClaudeSessions(new Map());
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionLive).toBe(false);
+    // ID を消すと、会話ログが残っているのに二度と戻れなくなる（1 tick の読み取り失敗対策）
+    expect(tab.claudeSessionId).toBe('sess-1');
+    expect(tab.claudeSessionCwd).toBe('/home/me');
+    expect(tab.claudeSessionDistro).toBe('Ubuntu');
+  });
+
+  it('agentStateFromSession が既に false でも claudeSessionLive を false に更新する', () => {
+    // 撤去した早期 return (`if (tab.agentStateFromSession !== true) return tab;`) の回帰テスト。
+    // OSC 21337 が先にフラグを落とすと、以前は live が永久に更新されなくなっていた。
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy' });
+
+    useAppStore.getState().applyTabStatusOsc(tabId, null);
+    expect(useAppStore.getState().tabs[tabId].agentStateFromSession).toBe(false);
+    expect(useAppStore.getState().tabs[tabId].claudeSessionLive).toBe(true);
+
+    useAppStore.getState().applyClaudeSessions(new Map());
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionLive).toBe(false);
+  });
+
+  it('落とすものが無いタブはセッション消失でも参照が変わらない（参照据え置き）', () => {
+    const tabId = makeInactiveTab();
+    // 1 回目で agentStateFromSession=false / claudeSessionLive=false まで落ちる
+    useAppStore.getState().applyClaudeSessions(new Map());
+    const tabsAfter = useAppStore.getState().tabs;
+    const tabAfter = tabsAfter[tabId];
+
+    useAppStore.getState().applyClaudeSessions(new Map());
+
+    expect(useAppStore.getState().tabs).toBe(tabsAfter);
+    expect(useAppStore.getState().tabs[tabId]).toBe(tabAfter);
+  });
+
+  it('covered に含まれないタブは matches に無くても一切変化しない（WSL 間引き tick）', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me' });
+    const tabsBefore = useAppStore.getState().tabs;
+
+    // WSL を見に行かなかった tick。「見えなかった」を「消えた」と読み替えてはいけない
+    useAppStore.getState().applyClaudeSessions(new Map(), { covered: new Set<string>() });
+
+    expect(useAppStore.getState().tabs).toBe(tabsBefore);
+    expect(useAppStore.getState().tabs[tabId].claudeSessionLive).toBe(true);
+  });
+
+  it('covered に含まれるタブはセッション消失が従来どおり反映される', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy' });
+
+    useAppStore.getState().applyClaudeSessions(new Map(), { covered: new Set([tabId]) });
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionLive).toBe(false);
+  });
+
+  it('claudeSeenAt は比較に含めないので、他が同値なら参照ごと据え置く', () => {
+    // 毎 tick 変わる seenAt を比較に入れると、2 秒ごとに全 Claude タブが再レンダーされる
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me' });
+    const tabsAfter = useAppStore.getState().tabs;
+    const seenAt = tabsAfter[tabId].claudeSeenAt;
+
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me' });
+
+    expect(useAppStore.getState().tabs).toBe(tabsAfter);
+    expect(useAppStore.getState().tabs[tabId].claudeSeenAt).toBe(seenAt);
+  });
+
+  it('セッションの cwd が変わったら復帰情報を更新する', () => {
+    const tabId = makeInactiveTab();
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me/a' });
+
+    observe(tabId, { sessionId: 'sess-1', status: 'busy', cwd: '/home/me/b' });
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionCwd).toBe('/home/me/b');
+  });
+});
+
+// --- clearClaudeSession (誤った紐付けを訂正する導線) ---
+
+describe('clearClaudeSession', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it('claude セッションの記録と表示状態をすべて消す', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g);
+    const other = useAppStore.getState().createTab(g);
+    useAppStore.getState().setActiveTab(other);
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, {
+        sessionId: 'sess-1',
+        status: 'waiting',
+        waitingFor: 'input needed',
+        cwd: '/home/me',
+        distro: 'Ubuntu-22.04',
+      }]]),
+      { adoptable: new Set([tabId]) },
+    );
+
+    useAppStore.getState().clearClaudeSession(tabId);
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionId).toBeUndefined();
+    expect(tab.claudeSessionCwd).toBeUndefined();
+    expect(tab.claudeSessionDistro).toBeUndefined();
+    expect(tab.claudeSessionLive).toBeUndefined();
+    expect(tab.claudeSeenAt).toBeUndefined();
+    expect(tab.agentStateFromSession).toBeUndefined();
+    expect(tab.claudeStatus).toBeUndefined();
+    expect(tab.waitingFor).toBeUndefined();
+  });
+
+  it('記録を消したタブでは画面パターン判定が再び効くようになる', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g);
+    const other = useAppStore.getState().createTab(g);
+    useAppStore.getState().setActiveTab(other);
+    useAppStore.getState().applyClaudeSessions(new Map([[tabId, { status: 'idle' }]]));
+
+    useAppStore.getState().clearClaudeSession(tabId);
+    useAppStore.getState().setTabAgentState(tabId, 'blocked');
+
+    expect(useAppStore.getState().tabs[tabId].agentState).toBe('blocked');
+  });
+
+  it('存在しない tabId は no-op（例外なし）', () => {
+    expect(() => useAppStore.getState().clearClaudeSession('nope')).not.toThrow();
+  });
+
+  it('記録が無いタブでは参照ごと据え置く', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g);
+    const tabsBefore = useAppStore.getState().tabs;
+
+    useAppStore.getState().clearClaudeSession(tabId);
+
+    expect(useAppStore.getState().tabs).toBe(tabsBefore);
+  });
+
+  it('2 回続けて呼んでも 2 回目は参照ごと据え置く', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, { claudeSessionId: 'sess-1' });
+    useAppStore.getState().clearClaudeSession(tabId);
+    const tabsAfter = useAppStore.getState().tabs;
+
+    useAppStore.getState().clearClaudeSession(tabId);
+
+    expect(useAppStore.getState().tabs).toBe(tabsAfter);
   });
 });
 
@@ -3531,6 +3890,163 @@ describe('closedTabs / restoreLastClosedTab', () => {
       ) as { tabs: Record<string, { bypassPermissions?: boolean }> };
       expect(result.tabs[tabId].bypassPermissions).toBe(true);
     });
+
+    // --- 手動起動タブの復帰情報 (claudeSessionCwd / Distro / Live / SeenAt) ---
+
+    /** セッションを 1 件観測させ、復帰情報まで書き込ませたタブを作る */
+    function makeAdoptedTab(): string {
+      const groupId = useAppStore.getState().createGroup('G');
+      const tabId = useAppStore.getState().createTab(groupId, { userTitle: 'Manual' });
+      const other = useAppStore.getState().createTab(groupId);
+      useAppStore.getState().setActiveTab(other);
+      useAppStore.getState().applyClaudeSessions(
+        new Map([[tabId, {
+          sessionId: 'manual-sess',
+          status: 'busy',
+          cwd: '/home/me/dev',
+          distro: 'Ubuntu-22.04',
+        }]]),
+        { adoptable: new Set([tabId]) },
+      );
+      return tabId;
+    }
+
+    it('removeTab → restoreLastClosedTab で復帰情報が往復する', () => {
+      const tabId = makeAdoptedTab();
+      const seenAt = useAppStore.getState().tabs[tabId].claudeSeenAt;
+
+      useAppStore.getState().removeTab(tabId);
+      const closed = useAppStore.getState().closedTabs[0];
+      expect(closed.claudeSessionCwd).toBe('/home/me/dev');
+      expect(closed.claudeSessionDistro).toBe('Ubuntu-22.04');
+      expect(closed.claudeSessionLive).toBe(true);
+      expect(closed.claudeSeenAt).toBe(seenAt);
+
+      const restoredId = useAppStore.getState().restoreLastClosedTab();
+      const restored = useAppStore.getState().tabs[restoredId!];
+      // 閉じる前とまったく同じ判断で resume できること
+      expect(restored.claudeSessionId).toBe('manual-sess');
+      expect(restored.claudeSessionCwd).toBe('/home/me/dev');
+      expect(restored.claudeSessionDistro).toBe('Ubuntu-22.04');
+      expect(restored.claudeSessionLive).toBe(true);
+      expect(restored.claudeSeenAt).toBe(seenAt);
+    });
+
+    it('duplicateTab: 復帰情報は引き継がない（複製先は新しい会話を始める）', () => {
+      const tabId = makeAdoptedTab();
+
+      const dupId = useAppStore.getState().duplicateTab(tabId);
+
+      const dup = useAppStore.getState().tabs[dupId!];
+      expect(dup.claudeSessionId).toBeUndefined();
+      expect(dup.claudeSessionCwd).toBeUndefined();
+      expect(dup.claudeSessionDistro).toBeUndefined();
+      expect(dup.claudeSessionLive).toBeUndefined();
+      expect(dup.claudeSeenAt).toBeUndefined();
+    });
+
+    it('partialize: 復帰情報 4 フィールドが永続化対象に含まれる', () => {
+      // ここの追記漏れが唯一の致命的なミス（型と migrate だけ足しても保存されない）
+      const tabId = makeAdoptedTab();
+      const seenAt = useAppStore.getState().tabs[tabId].claudeSeenAt;
+
+      const result = useAppStore.persist.getOptions().partialize!(
+        useAppStore.getState(),
+      ) as {
+        tabs: Record<string, {
+          claudeSessionCwd?: string;
+          claudeSessionDistro?: string;
+          claudeSessionLive?: boolean;
+          claudeSeenAt?: number;
+        }>;
+      };
+      expect(result.tabs[tabId].claudeSessionCwd).toBe('/home/me/dev');
+      expect(result.tabs[tabId].claudeSessionDistro).toBe('Ubuntu-22.04');
+      expect(result.tabs[tabId].claudeSessionLive).toBe(true);
+      expect(result.tabs[tabId].claudeSeenAt).toBe(seenAt);
+    });
+
+    it('partialize: 切り離し指定 (claudeSessionOptOutId) は保存しない', () => {
+      // 「このセッションは採らない」はいま動いているセッションに対する指定なので、
+      // 再起動をまたいで持ち越す意味がない（次の起動では素直に観測し直す）
+      const tabId = makeAdoptedTab();
+      useAppStore.getState().clearClaudeSession(tabId);
+      expect(useAppStore.getState().tabs[tabId].claudeSessionOptOutId).toBeDefined();
+
+      const result = useAppStore.persist.getOptions().partialize!(
+        useAppStore.getState(),
+      ) as { tabs: Record<string, Record<string, unknown>> };
+      expect(result.tabs[tabId]).not.toHaveProperty('claudeSessionOptOutId');
+    });
+
+    it('partialize: セッション由来のランタイム状態は保存しない', () => {
+      // claudeStatus / waitingFor / agentStateFromSession は毎回引き直すので保存対象外
+      const tabId = makeAdoptedTab();
+
+      const result = useAppStore.persist.getOptions().partialize!(
+        useAppStore.getState(),
+      ) as { tabs: Record<string, Record<string, unknown>> };
+      expect(result.tabs[tabId].claudeStatus).toBeUndefined();
+      expect(result.tabs[tabId].waitingFor).toBeUndefined();
+      expect(result.tabs[tabId].agentStateFromSession).toBeUndefined();
+      expect(result.tabs[tabId].agentState).toBeUndefined();
+    });
+  });
+});
+
+// --- persist migrate v6 → v7 ---
+//
+// v6 までは claudeSessionId を消す経路が無く、「何ヶ月も前に一度 claude を打っただけ」の
+// タブにも古い ID が残っていた。v7 からは ID の有無が復元の起点になるため、
+// ここで一度だけ捨てないと更新直後の初回起動で古い会話が一斉に開いてしまう。
+
+describe('persist migrate v6 → v7', () => {
+  type MigratedState = {
+    tabs?: Record<string, { launchClaude?: boolean; claudeSessionId?: string }>;
+  };
+
+  it('手動起動タブ (launchClaude !== true) の claudeSessionId だけを捨てる', () => {
+    const opts = useAppStore.persist.getOptions();
+    const state = {
+      tabs: {
+        a: { claudeSessionId: 'x' },
+        b: { launchClaude: true, claudeSessionId: 'y' },
+      },
+    };
+
+    const migrated = opts.migrate!(state, 6) as MigratedState;
+
+    expect(migrated.tabs!.a.claudeSessionId).toBeUndefined();
+    // racker が --session-id で発番した ID は従来どおり resume に使う
+    expect(migrated.tabs!.b.claudeSessionId).toBe('y');
+  });
+
+  it('launchClaude=false を明示したタブも捨てる', () => {
+    const opts = useAppStore.persist.getOptions();
+    const state = { tabs: { a: { launchClaude: false, claudeSessionId: 'x' } } };
+
+    const migrated = opts.migrate!(state, 6) as MigratedState;
+
+    expect(migrated.tabs!.a.claudeSessionId).toBeUndefined();
+  });
+
+  it('version 7 のデータでは claudeSessionId に触れない', () => {
+    const opts = useAppStore.persist.getOptions();
+    const state = { tabs: { a: { claudeSessionId: 'x' } } };
+
+    const migrated = opts.migrate!(state, 7) as MigratedState;
+
+    expect(migrated.tabs!.a.claudeSessionId).toBe('x');
+  });
+
+  it('tabs を持たない古いデータでも例外にならない', () => {
+    const opts = useAppStore.persist.getOptions();
+
+    expect(() => opts.migrate!({ groups: [] }, 0)).not.toThrow();
+  });
+
+  it('persist の version が 7 であること', () => {
+    expect(useAppStore.persist.getOptions().version).toBe(7);
   });
 });
 

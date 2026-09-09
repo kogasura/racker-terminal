@@ -64,7 +64,8 @@ export function fitToConvergence(term: XTerm, fitAddon: FitAddon, maxIter = 5): 
 /**
  * xterm に WebGL renderer を attach する。
  * - new WebglAddon() / term.loadAddon() で失敗した場合は Canvas fallback (warn ログ)
- * - GPU context loss 時は WebglAddon を dispose して Canvas fallback (warn ログ + xterm 内通知)
+ * - GPU context loss 時は WebglAddon を dispose して DOM renderer へフォールバック
+ *   (warn ログのみ。画面には書き込まない)
  * - onContextLoss の IDisposable を保持し、dispose 時に解除
  *
  * 注意: WebView2/Chromium の WebGL context 上限は 16 個 (デフォルト)。
@@ -82,13 +83,18 @@ export function setupWebglRenderer(term: XTerm, tabId: string): WebglRendererHan
     webglAddon = new WebglAddon();
     // onContextLoss は IEvent<void> を返す。IDisposable を保持して dispose で解除
     ctxLossSub = webglAddon.onContextLoss(() => {
+      // ここで term.write して画面に通知しないこと。term.write は PTY データと同じ
+      // 書き込みキュー (TerminalPane の handlePtyEvent → 本ファイルの writeOutput) に
+      // 割り込むため、
+      //  - 全画面 TUI (Claude Code 等) の画面を 2 行ずらして描画を崩す
+      //  - PTY チャンクの境界がエスケープシーケンスの途中だと、注入した文字列が
+      //    そのシーケンスの一部として解釈される
+      //  - onWriteParsed が発火して agent 状態が 'working' に誤検知される
+      // という副作用がある。fallback 後も xterm は DOM renderer で描き続け、
+      // ユーザーが取れる対処も無いので通知はログだけに留める。
       console.warn(
-        `[terminalRegistry] WebGL context lost for tab ${tabId}, falling back to Canvas`,
+        `[terminalRegistry] WebGL context lost for tab ${tabId}, falling back to the DOM renderer`,
       );
-      // xterm 内に視覚通知
-      try {
-        term.write('\r\n\x1b[33m[Renderer fell back to Canvas]\x1b[0m\r\n');
-      } catch {}
       // context は既にロスト済みなので loseContext は不要。addon を dispose して null 化する。
       webglAddon?.dispose();
       // 注: webglAddon = null とすることで以降の dispose() 内 webglAddon?.dispose() を no-op 化
@@ -442,13 +448,6 @@ export interface TerminalRuntime {
   sleepWebgl(): void;
 
   /**
-   * WebGL のグリフキャッシュ（TextureAtlas）をクリアする（#5）。
-   * truecolor 出力で無制限に増える (glyph,fg,bg) キャッシュを定期的にリセットして
-   * JS ヒープの単調増加を抑える。DOM renderer では no-op。
-   */
-  clearGlyphCache(): void;
-
-  /**
    * 子プロセスが自然終了/エラー終了したとき、Rust 側 PTY セッションを即時解放する（#6）。
    * Rust の PtyManager は kill 経由でしか sessions から remove しないため、ここで解放しないと
    * exited タブを開いたままにすると未 join スレッドハンドルを含むセッションが残留する。
@@ -500,6 +499,18 @@ export interface TerminalRuntime {
    * dispose 済みの場合は空文字を返す。
    */
   serializeScreen(): string;
+
+  /**
+   * 前回の問い合わせ以降にこの端末へ書き込みがあったかを返し、フラグを false に戻す。
+   *
+   * 定期保存で「内容が変わっていないタブの serialize を丸ごと省く」ために使う。
+   * serialize は 1 タブあたり数 ms かかり、タブ数ぶん同期で回すと UI が止まる。
+   *
+   * 読むと消える (consume) 形にしているのは、判定と消費が離れると「消し忘れて毎回
+   * 保存する」「消しっぱなしで二度と保存しない」のどちらにも倒れるため。
+   * 生成直後は true で、一度も出力が無いタブでも最低 1 回は保存の機会を持つ。
+   */
+  consumeScreenDirty(): boolean;
 
   /**
    * WebLinksAddon のライフサイクルハンドル。
@@ -938,11 +949,26 @@ export function createRuntime(
     scheduleAgentSettle();
   });
 
+  /**
+   * 前回の保存以降に画面へ書き込みがあったか（定期保存の対象判定に使う）。
+   *
+   * 初期値 true: 復元内容の書き戻しや、ここで把握できていない書き込み経路があっても
+   * 最低 1 回は保存されるようにする。空画面なら serialize が空文字を返すので、
+   * 余計なファイルが書かれることはない。
+   */
+  let screenDirty = true;
+
   // 画面書き込みのパース完了を購読して「出力が動いている」ことを検知する。
   // PTY データは TerminalPane 側の handlePtyEvent から term.write() されるため、
   // 書き込み元に依存しないこのイベントで捕捉する。
+  // あわせて定期保存の dirty 判定にも使う（購読が 2 つの役目を持つ）。
   const writeParsedSub = term.onWriteParsed(() => {
-    if (isDisposed || !agentDetectionEnabled) return;
+    if (isDisposed) return;
+    // 定期保存の dirty 判定。writeOutput (PTY 出力) だけを見ると、復元内容の書き戻し
+    // (TerminalPane) のような term.write 直呼びを取りこぼす。xterm の write は最終的に
+    // 必ずこのイベントを通るので、書き込み元を数え上げずにここ 1 箇所で拾う。
+    screenDirty = true;
+    if (!agentDetectionEnabled) return;
     // 出力が動いている = 実行中とみなす暫定表示。AGENT_SETTLE_MS 後に確定判定で上書きされる。
     reportAgentState('working');
     scheduleAgentSettle();
@@ -970,13 +996,25 @@ export function createRuntime(
     return false;
   });
 
-  // v0.5 改善: OSC 10/11 (default foreground/background color 設定) を無視する。
-  // nushell / PowerShell 等のシェルが起動時に背景色を OSC 11 で設定すると、
-  // 我々の theme.background (transparency 設定) が上書きされて不透明になってしまう。
-  // true を返すことで xterm のデフォルト処理を抑止し、ユーザーの transparency 設定を保護する。
-  const osc10Sub = term.parser.registerOscHandler(10, () => true);
-  const osc11Sub = term.parser.registerOscHandler(11, () => true);
-  // OSC 110/111 (reset default fg/bg) も同様に無視 (リセット後 shell preference に戻されるのを防ぐ)
+  // OSC 10/11 (default foreground/background color): 「設定」だけを抑止し、「クエリ」は通す。
+  //
+  // 抑止する理由 (v0.5 からの意図): nushell / PowerShell 等が起動時に OSC 11 で背景色を
+  // 設定すると、我々の theme.background (transparency 設定) が上書きされて不透明になる。
+  //
+  // 一方 ESC ] 11 ; ? BEL は「背景色を教えて」という問い合わせで、vim / neovim 等が
+  // background=dark|light の判定に使う。ここを一律 true で潰すと応答が返らず、
+  // 明るい背景と誤認して見づらい配色を選ばれたり、応答待ちで起動が遅れたりする。
+  // クエリだけ false を返して xterm の setOrReportFgColor / setOrReportBgColor に委ね、
+  // ESC ] 11 ; rgb:1a1a/1b1b/2626 ST を PTY へ返させる。
+  const osc10Sub = term.parser.registerOscHandler(10, (data) => !isSpecialColorQuery(data));
+  const osc11Sub = term.parser.registerOscHandler(11, (data) => !isSpecialColorQuery(data));
+
+  // OSC 110/111 (reset default fg/bg) は抑止のまま。ただし理由は「shell preference に
+  // 戻されるから」ではない: xterm の復元先は ThemeService が theme 設定時に取った我々自身の
+  // スナップショットで、上記のとおり set を抑止している限り復元しても値は変わらない。
+  // にもかかわらず restoreColor は必ず onChangeColors を発火し、WebglRenderer は
+  // charAtlas 再取得 + 全画面再構築を走らせる。得るものが無いのにコストだけ払う形なので
+  // 通さない。110/111 は payload を持たずクエリ形式も無いので、応答待ちも起きない。
   const osc110Sub = term.parser.registerOscHandler(110, () => true);
   const osc111Sub = term.parser.registerOscHandler(111, () => true);
 
@@ -1057,6 +1095,13 @@ export function createRuntime(
       }
     },
 
+    consumeScreenDirty() {
+      // dispose 済みなら保存する意味が無い（serialize しても空文字が返るだけ）
+      if (isDisposed || !screenDirty) return false;
+      screenDirty = false;
+      return true;
+    },
+
     writeInput(data: string) {
       if (isDisposed) return;
       if (ptyHandle) {
@@ -1092,15 +1137,6 @@ export function createRuntime(
 
     sleepWebgl() {
       sleepWebglLocal();
-    },
-
-    clearGlyphCache() {
-      if (isDisposed) return;
-      try {
-        term.clearTextureAtlas();
-      } catch (e) {
-        console.warn('[terminalRegistry] clearTextureAtlas failed:', e);
-      }
     },
 
     reclaimPty() {
@@ -1301,26 +1337,111 @@ export function getRuntimeScreen(tabId: string): string | null {
 }
 
 /**
- * WebGL グリフキャッシュ（TextureAtlas）をクリアする（#5）。
- * truecolor 出力で無制限に増える (glyph,fg,bg) キャッシュを定期的にリセットして
- * 長時間運用での JS ヒープ単調増加を抑える。App.tsx から一定間隔で呼ぶ。
+ * 前回の保存以降に書き込みがあったタブだけ、画面内容をシリアライズして返す。
+ * 変化していなければ serialize すら行わずに null を返す。定期保存が重い原因は
+ * serialize なので、ここで弾けることが目的。
  *
- * **アトラスは端末どうしで共有される。** xterm の `acquireTextureAtlas` は
- * フォント・テーマ・セル寸法が同じ端末へ同一インスタンスを配る作りで、
- * racker は全タブが同じ設定なので実体は 1 つしかない。
- *
- * そのため全 runtime に対して呼んではいけない: 同じアトラスへクリアが連続で走り、
- * 他タブが描画中だとページ管理が壊れてグリフ化け（文字が空白になる / 別の字になる）を
- * 誘発する。WebGL を持っているタブ 1 つに対してだけ呼べば、共有相手にも行き渡る。
- *
- * WebGL を使っているタブが 1 つも無ければ（全タブ sleep / 透明 / GPU 描画 OFF）
- * クリア対象のアトラスも存在しないので no-op。
+ * dirty フラグは問い合わせた時点で落ちる。保存の invoke が失敗しても再試行しないが、
+ * 保存は付加機能であり、失敗しても前回のファイルが残る（1 世代古い内容が復元される
+ * だけ）ので、リトライの仕組みは持たない。
  */
-export function clearAllTextureAtlases(): void {
-  // 末尾 = most-recently-used。表示中のタブなので、クリア後の再構築が最も自然に進む。
-  const targetId = webglLru[webglLru.length - 1];
-  if (targetId === undefined) return;
-  runtimes.get(targetId)?.runtime.clearGlyphCache();
+export function getRuntimeScreenIfDirty(tabId: string): string | null {
+  const runtime = runtimes.get(tabId)?.runtime;
+  if (!runtime || !runtime.consumeScreenDirty()) return null;
+  return getRuntimeScreen(tabId);
+}
+
+/**
+ * アトラス作り直しの手順を決める純関数。テスト用に export する。
+ *
+ * **必ず新しい配列を返す**のが肝。sleepWebgl は dropFromWebglLru 経由で webglLru を
+ * その場で splice するため、webglLru を舐めながら sleep すると要素を飛ばす。
+ *
+ * wake は表示中のタブを優先し、居なければ MRU（末尾）にする。通常はアクティブ化の
+ * たびに wakeWebgl → promoteWebglLru が走るので両者は一致するが、一致を前提にしない。
+ */
+export function planAtlasRecycle(
+  lru: readonly string[],
+  activeTabId: string | null,
+): { sleepIds: string[]; wakeId: string | null } {
+  if (lru.length === 0) return { sleepIds: [], wakeId: null };
+  const sleepIds = [...lru];
+  const wakeId =
+    activeTabId !== null && sleepIds.includes(activeTabId)
+      ? activeTabId
+      : sleepIds[sleepIds.length - 1];
+  return { sleepIds, wakeId };
+}
+
+/**
+ * WebGL の共有グリフアトラス（TextureAtlas）を作り直す（#5）。App.tsx から一定間隔で呼ぶ。
+ *
+ * **なぜクリアではなく作り直しなのか。**
+ * アトラスは端末どうしで共有される（xterm の acquireTextureAtlas はフォント・テーマ・
+ * セル寸法が同じ端末へ同一インスタンスを配る作りで、racker は全タブ同設定なので実体は
+ * 1 つしかない）。以前はこの共有物を term.clearTextureAtlas() で外から突いていたが、
+ * これはアトラスのページを原点から詰め直す一方で、モデルと頂点バッファを捨てて全画面
+ * 再描画を予約するのは**呼んだ端末だけ**。しかも clearTexture はページ結合と違って
+ * 「全端末のモデルを捨てさせる」フラグ (_requestClearModel) を立てないため、他タブは
+ * 古い UV を指したまま残り、同じ座標に別の字が焼かれた瞬間にその字に化ける。
+ * 共有アトラスを無防備に無効化できる経路はここだけで、報告されている
+ * 「文字が空白になる / 別の字になる」と機構が一致する。
+ * （なお対象を全タブにしても 1 タブにしても化けは報告されており、真因がこれだけである
+ * 確証まではコードからは取れない。だからこそ「突く」のをやめる。）
+ *
+ * そこで sleep/wake で renderer ごと捨てる。最後の owner が抜けた時点で xterm が
+ * アトラスを charAtlasCache から外すので、clearTexture では残っていたグリフのメタデータ
+ * （AtlasPage の _glyphs / _usedPixels）やページ canvas まで丸ごと GC 対象になり、回収量は
+ * クリアより多い。ページ結合で一度 true になると戻らない _requestClearModel（立つと共有
+ * 相手の全タブが毎フレーム全画面再描画に落ちる）も、新しいインスタンスなのでリセットされる。
+ * 何より全タブの renderer がゼロから作り直されるので、**原因が何であれ化けた状態は
+ * 定期的に必ず治る**。context loss でハンドルが残ったまま WebGL に戻れなくなったタブ
+ * （setupWebglRenderer の onContextLoss は webglHandle も LRU も戻さない）も、ここの
+ * sleep が stale なハンドルを捨てるので同時に復帰する。
+ *
+ * **sleep と wake を別タスクに分けてはいけない。** xterm の renderer 差し替えは同期で、
+ * 再描画は rAF デバウンス越しに走る。1 タスク内で sleep→wake すれば途中の DOM renderer は
+ * 一度も描画されないのでちらつかない。分けると DOM renderer で 1 フレーム描いてしまう。
+ * 逆順（新しい addon を先に load してから旧を dispose）も不可: WebglAddon の dispose は
+ * 必ず renderService を DOM renderer に戻すため、新しい renderer が上書きされて悪化する。
+ *
+ * アクティブタブを落として即座に作り直すのは、LRU eviction では起きない新しい経路
+ * （reserveWebglLru はアクティブタブを victim にしない）。上記の同期差し替えが根拠で、
+ * GPU 描画設定を切り替えたときの全タブ sleep は既に同じ密度で出荷している。
+ *
+ * WebGL を使っているタブが 1 つも無ければ（全タブ sleep / 透明 / GPU 描画 OFF）no-op。
+ *
+ * @param activeTabId 表示中のタブ。作り直した後にここだけ即座に起こし直す。
+ * @param lru 対象の LRU。既定はモジュール内の webglLru で、引数はテスト用の継ぎ目。
+ */
+export function recycleTextureAtlas(
+  activeTabId: string | null = null,
+  lru: readonly string[] = webglLru,
+): void {
+  const { sleepIds, wakeId } = planAtlasRecycle(lru, activeTabId);
+  // 全 WebGL タブを sleep させる。最後の owner が抜けた時点で共有アトラスが解放される。
+  for (const id of sleepIds) runRecycleStep(id, 'sleepWebgl');
+  // 表示中のタブだけその場で起こし直す（DOM renderer に落ちたままにしない）。
+  // ここで新しいアトラスが 1 つ作られ、他タブは次にアクティブ化されたときに合流する。
+  // 生成に失敗しても握り潰される（setupWebglRenderer 参照）が、次の周期の sleep で
+  // ハンドルが捨てられて再挑戦されるので、最長 1 周期で復帰する。
+  if (wakeId !== null) runRecycleStep(wakeId, 'wakeWebgl');
+}
+
+/**
+ * recycleTextureAtlas の 1 手を実行する。
+ *
+ * 個別に例外を握るのは、1 タブの失敗で残りの sleep と wake を巻き添えにしないため。
+ * 全員 sleep できなければアトラスは解放されないが、その回を諦めるだけで次の周期に
+ * 再挑戦できる。一方 wake まで飛ばすと表示中のタブが DOM renderer に落ちたまま
+ * 次の周期まで戻らない。
+ */
+function runRecycleStep(tabId: string, step: 'sleepWebgl' | 'wakeWebgl'): void {
+  try {
+    runtimes.get(tabId)?.runtime[step]();
+  } catch (e) {
+    console.warn(`[terminalRegistry] ${step} failed during atlas recycle:`, e);
+  }
 }
 
 /**
@@ -1380,17 +1501,27 @@ export function hexToRgba(hex: string, alpha: number): string {
 
 /**
  * 透明度と base hex から xterm theme.background 値を計算する純関数。
- * - alpha < 1.0: 完全透明 ('rgba(0,0,0,0)') を返す
- *   理由: 親の .terminal-pane が var(--terminal-bg) で半透明背景を描画しているため、
+ * - alpha < 1.0: RGB は baseHex のまま alpha だけ 0 にした 'rgba(26, 27, 38, 0)' を返す。
+ *   透明にする理由: 親の .terminal-pane が var(--terminal-bg) で半透明背景を描画しているため、
  *   xterm 自身も rgba(R,G,B,alpha) で塗ると 2 重描画になり実効不透明度が上がる
  *   (例: 0.7 + 0.7 → 0.91 で sidebar の 0.7 より不透明に見える)。
+ *   RGB を捨てない理由: xterm は theme.background の RGB を描画以外にも流用する。
+ *   OSC 11 のクエリ応答、反転表示 (inverse) の文字色 (color.opaque(background))、
+ *   選択色・カーソル色のブレンド (color.blend(background, ...)) がそれで、'rgba(0,0,0,0)' だと
+ *   「背景は真っ黒」と名乗ることになり、これらが黒基準で計算されて見づらくなる。
+ *   実際に見えているのは親が塗る baseHex なので、alpha だけ 0 にして RGB は正直に残す。
+ *   alpha=0 なので合成結果 (見た目の背景) は従来と同じ。
  * - alpha >= 1.0: baseHex をそのまま返す（不透明 hex）
  *
  * F-S1 テスト用に export する。F-M4: DEFAULT_BG をデフォルト値として使用。
  * Phase 4 P-B-2 で追加。
  */
 export function computeBackground(alpha: number, baseHex: string = DEFAULT_BG): string {
-  return alpha < 1.0 ? 'rgba(0, 0, 0, 0)' : baseHex;
+  if (alpha >= 1.0) return baseHex;
+  const transparent = hexToRgba(baseHex, 0);
+  // hexToRgba は #rrggbb 以外を素通しする。不透明値をそのまま返すと 2 重描画になるので、
+  // その場合だけ従来の完全透明へ倒す（現状の呼び出しは DEFAULT_BG のみなので保険）。
+  return transparent === baseHex ? 'rgba(0, 0, 0, 0)' : transparent;
 }
 
 /**
@@ -1414,4 +1545,27 @@ export function sanitizeOscTitle(title: string): string {
     //   LRI (U+2066), RLI (U+2067), FSI (U+2068), PDI (U+2069)
     .replace(/[‎‏‪-‮⁦-⁩]/g, '')
     .slice(0, 256);
+}
+
+/**
+ * OSC 10/11 の payload が「全パートが色の問い合わせ (?)」かを判定する純関数。
+ *
+ * xterm は payload を ';' で分割し、スロットごとに「'?' なら報告 / それ以外なら設定」を
+ * 1 回のハンドラ呼び出しでまとめて処理する。ハンドラの戻り値は payload 単位の
+ * all-or-nothing なので「クエリ部分だけ xterm に任せる」ことはできない。
+ * 委譲できるのは全パートが '?' のときだけで、設定が 1 つでも混ざる
+ * (ESC ] 10 ; ? ; #ff0000 ST) なら抑止側に倒す ── 混在は実在のシェル / TUI がまず送らない形で、
+ * 透過設定を守る方を優先する。
+ *
+ * 判定は xterm と同じ厳密比較 ('?' そのもの) にして解釈のズレを作らない。
+ * payload 空 (ESC ] 11 ST) は設定でもクエリでもないので false。xterm 側も空文字では
+ * 何もしないため、抑止しても挙動は変わらない。
+ *
+ * テスト容易性のためモジュール外から import できる形で export する。
+ */
+export function isSpecialColorQuery(data: string): boolean {
+  // 特殊色は fg/bg/cursor の 3 つだけなので意味のある最長は '?;?;?' (5 文字)。
+  // OSC payload の上限は 10MB なので、長い文字列を split しないよう先に長さで弾く。
+  if (data.length === 0 || data.length > 8) return false;
+  return data.split(';').every((slot) => slot === '?');
 }

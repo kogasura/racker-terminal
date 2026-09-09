@@ -6,10 +6,14 @@ import {
   forceDisposeAll,
   recyclePty,
   getAllRuntimes,
-  clearAllTextureAtlases,
+  recycleTextureAtlas,
+  planAtlasRecycle,
   getRuntimeCount,
   getRefs,
+  getRuntimeScreen,
+  getRuntimeScreenIfDirty,
   sanitizeOscTitle,
+  isSpecialColorQuery,
   setupWebglRenderer,
   parseOsc7Path,
   attachImeCompositionGuard,
@@ -102,10 +106,10 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     writeInput: vi.fn(),
 
     serializeScreen: vi.fn(() => ''),
+    consumeScreenDirty: vi.fn(() => true),
     writeOutput: vi.fn(),
     wakeWebgl: vi.fn(),
     sleepWebgl: vi.fn(),
-    clearGlyphCache: vi.fn(),
     reclaimPty: vi.fn(),
     dispose: disposeFn,
     get disposeCallCount() { return disposeCallCount; },
@@ -276,10 +280,10 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     writeInput: vi.fn(),
 
     serializeScreen: vi.fn(() => ''),
+    consumeScreenDirty: vi.fn(() => true),
     writeOutput: vi.fn(),
     wakeWebgl: vi.fn(),
     sleepWebgl: vi.fn(),
-    clearGlyphCache: vi.fn(),
     reclaimPty: vi.fn(),
     dispose: vi.fn(() => { callOrder.push('dispose'); }),
     get callOrder() { return callOrder; },
@@ -353,10 +357,10 @@ describe('applySettings', () => {
       writeInput: vi.fn(),
 
       serializeScreen: vi.fn(() => ''),
+      consumeScreenDirty: vi.fn(() => true),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),
-      clearGlyphCache: vi.fn(),
       reclaimPty: vi.fn(),
       dispose() {
         disposed = true;
@@ -436,10 +440,10 @@ describe('titleSub dispose', () => {
       writeInput: vi.fn(),
 
       serializeScreen: vi.fn(() => ''),
+      consumeScreenDirty: vi.fn(() => true),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),
-      clearGlyphCache: vi.fn(),
       reclaimPty: vi.fn(),
       dispose: () => {
         sub.dispose();
@@ -584,10 +588,10 @@ describe('memory leak', () => {
         writeInput: vi.fn(),
 
         serializeScreen: vi.fn(() => ''),
+        consumeScreenDirty: vi.fn(() => true),
         writeOutput: vi.fn(),
         wakeWebgl: vi.fn(),
         sleepWebgl: vi.fn(),
-        clearGlyphCache: vi.fn(),
         reclaimPty: vi.fn(),
         dispose: disposeMock,
       };
@@ -709,10 +713,10 @@ describe('IME compositionAbort (2.13)', () => {
       writeInput: vi.fn(),
 
       serializeScreen: vi.fn(() => ''),
+      consumeScreenDirty: vi.fn(() => true),
       writeOutput: vi.fn(),
       wakeWebgl: vi.fn(),
       sleepWebgl: vi.fn(),
-      clearGlyphCache: vi.fn(),
       reclaimPty: vi.fn(),
       dispose() {
         sub.dispose();
@@ -968,8 +972,9 @@ describe('setupWebglRenderer (P-C1)', () => {
     expect(ctxLossDispose).toHaveBeenCalledTimes(1);
   });
 
-  it('onContextLoss 発火 → addon.dispose() が呼ばれて null 化、term.write で通知', () => {
+  it('onContextLoss 発火 → addon.dispose() が呼ばれて null 化、画面には書き込まない', () => {
     const term = { loadAddon: vi.fn(), write: vi.fn() } as any;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const handle = setupWebglRenderer(term, 'tab-1');
     const addon = (term.loadAddon as ReturnType<typeof vi.fn>).mock.calls[0][0] as any;
@@ -978,12 +983,17 @@ describe('setupWebglRenderer (P-C1)', () => {
     addon.__triggerContextLoss();
 
     expect(addon.dispose).toHaveBeenCalledTimes(1);
-    expect(term.write).toHaveBeenCalled();
+    // 全画面 TUI の描画を壊す (PTY 出力に割り込む) ので端末には書き込まない。
+    // 通知は warn ログのみ。
+    expect(term.write).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
 
     // handle.dispose() を呼んでも addon.dispose() が 2 回目に呼ばれないこと
     // (webglAddon = null 化により no-op になる)
     handle.dispose();
     expect(addon.dispose).toHaveBeenCalledTimes(1); // 増えない
+
+    warn.mockRestore();
   });
 
   it('term.loadAddon が throw した場合、例外を投げずに Canvas fallback になる', () => {
@@ -1140,15 +1150,20 @@ describe('hexToRgba', () => {
 // --- computeBackground (F-S1: applySettings transparency 連続変更テスト) ---
 //
 // v0.5 仕様変更 (PR #25):
-//   alpha < 1.0 のとき xterm theme.background は 'rgba(0, 0, 0, 0)' (完全透明) を返す。
+//   alpha < 1.0 のとき xterm theme.background は alpha=0 を返す。
 //   理由: 親要素 .terminal-pane が var(--terminal-bg) で半透明背景を描画しており、
 //   xterm が rgba(R,G,B,alpha) で再塗りすると二重描画になって実効不透明度が上がるため。
 //   (例: alpha=0.7 を xterm と親の両方で適用すると 0.91 相当の不透明度になる)
+//
+//   ただし RGB は baseHex を保つ (alpha だけ 0 にする)。xterm は theme.background の RGB を
+//   OSC 11 のクエリ応答・反転表示の文字色・選択色のブレンドにも流用するため、
+//   'rgba(0,0,0,0)' だと「背景は真っ黒」と名乗ることになりこれらが黒基準で計算されて
+//   見づらくなる。alpha=0 なので見た目の背景は従来と同じ。
 
 describe('computeBackground', () => {
-  it('alpha < 1.0: 二重描画回避のため完全透明 rgba(0,0,0,0) を返す', () => {
+  it('alpha < 1.0: 二重描画回避のため alpha=0 を返す (RGB は baseHex のまま)', () => {
     // 親の .terminal-pane が半透明背景を描画するため xterm 自身は透明にする
-    expect(computeBackground(0.8, '#1a1b26')).toBe('rgba(0, 0, 0, 0)');
+    expect(computeBackground(0.8, '#1a1b26')).toBe('rgba(26, 27, 38, 0)');
   });
 
   it('alpha = 1.0: baseHex をそのまま返す（不透明 hex）', () => {
@@ -1159,23 +1174,23 @@ describe('computeBackground', () => {
     expect(computeBackground(1.5, '#1a1b26')).toBe('#1a1b26');
   });
 
-  it('1.0 → 0.8 → 0.7 と変えても alpha < 1.0 は常に rgba(0,0,0,0)', () => {
+  it('1.0 → 0.8 → 0.7 と変えても alpha < 1.0 は常に alpha=0', () => {
     // computeBackground は純関数のため、各 alpha で独立して計算できる
     const bg1 = computeBackground(1.0, '#1a1b26');
     expect(bg1).toBe('#1a1b26');  // 1.0 は hex のまま
 
-    // alpha < 1.0 では二重描画回避のため完全透明を返す（baseHex は使わない）
+    // alpha < 1.0 では二重描画回避のため alpha=0 を返す（RGB は baseHex を保つ）
     const bg2 = computeBackground(0.8, '#1a1b26');
-    expect(bg2).toBe('rgba(0, 0, 0, 0)');
+    expect(bg2).toBe('rgba(26, 27, 38, 0)');
 
     const bg3 = computeBackground(0.7, '#1a1b26');
-    expect(bg3).toBe('rgba(0, 0, 0, 0)');
+    expect(bg3).toBe('rgba(26, 27, 38, 0)');
   });
 
   it('0.8 → 1.0 で hex に戻る', () => {
-    // alpha < 1.0 は完全透明（二重描画回避）
+    // alpha < 1.0 は alpha=0（二重描画回避）
     const bgSemi = computeBackground(0.8, '#1a1b26');
-    expect(bgSemi).toBe('rgba(0, 0, 0, 0)');
+    expect(bgSemi).toBe('rgba(26, 27, 38, 0)');
 
     // alpha = 1.0 に戻ると baseHex が返る
     const bgOpaque = computeBackground(1.0, '#1a1b26');
@@ -1183,8 +1198,8 @@ describe('computeBackground', () => {
   });
 
   it('baseHex 省略時は DEFAULT_BG (#1a1b26) を使用する', () => {
-    // alpha < 1.0 は完全透明（baseHex は参照されない）
-    expect(computeBackground(0.9)).toBe('rgba(0, 0, 0, 0)');
+    // alpha < 1.0 は alpha=0（RGB は DEFAULT_BG を保つ）
+    expect(computeBackground(0.9)).toBe('rgba(26, 27, 38, 0)');
     expect(computeBackground(1.0)).toBe('#1a1b26');
   });
 });
@@ -1246,23 +1261,91 @@ describe('computeWebglDesired', () => {
   });
 });
 
-describe('clearAllTextureAtlases (#5)', () => {
-  // TextureAtlas は端末どうしで共有されるため、全 runtime に対してクリアを呼ぶと
-  // 同じアトラスへ連続でクリアが走り、グリフ化けを誘発する。WebGL context を
-  // 持っているタブ (webglLru) にだけ呼ぶのが仕様。
-  it('WebGL を持つタブが無ければ 1 つも clearGlyphCache を呼ばない', () => {
+describe('planAtlasRecycle (#5)', () => {
+  it('WebGL タブが 1 つも無ければ何もしない（共有アトラスの実体が無い）', () => {
+    expect(planAtlasRecycle([], 'a')).toEqual({ sleepIds: [], wakeId: null });
+  });
+
+  it('LRU 全件を sleep 対象にする（1 つでも owner が残るとアトラスが解放されない）', () => {
+    const plan = planAtlasRecycle(['a', 'b', 'c'], 'b');
+    expect(plan.sleepIds).toEqual(['a', 'b', 'c']);
+  });
+
+  it('wake は表示中のタブ', () => {
+    expect(planAtlasRecycle(['a', 'b', 'c'], 'b').wakeId).toBe('b');
+  });
+
+  it('表示中のタブが LRU に居なければ MRU(末尾) を起こす', () => {
+    expect(planAtlasRecycle(['a', 'b', 'c'], 'zzz').wakeId).toBe('c');
+    expect(planAtlasRecycle(['a', 'b', 'c'], null).wakeId).toBe('c');
+  });
+
+  it('入力の LRU を破壊しない（sleep は webglLru を splice するため必ずコピーが要る）', () => {
+    const lru = ['a', 'b'];
+    const plan = planAtlasRecycle(lru, 'a');
+    expect(plan.sleepIds).not.toBe(lru);
+    plan.sleepIds.length = 0;
+    expect(lru).toEqual(['a', 'b']);
+  });
+});
+
+describe('recycleTextureAtlas (#5)', () => {
+  it('全タブを sleep させてから、表示中のタブだけを wake する', () => {
     const a = makeRuntime();
     const b = makeRuntime();
-    acquireRuntime('atlas-none-a', () => a);
-    acquireRuntime('atlas-none-b', () => b);
+    acquireRuntime('recycle-a', () => a);
+    acquireRuntime('recycle-b', () => b);
 
-    clearAllTextureAtlases();
+    recycleTextureAtlas('recycle-b', ['recycle-a', 'recycle-b']);
 
-    expect(a.clearGlyphCache).not.toHaveBeenCalled();
-    expect(b.clearGlyphCache).not.toHaveBeenCalled();
+    expect(a.sleepWebgl).toHaveBeenCalledTimes(1);
+    expect(b.sleepWebgl).toHaveBeenCalledTimes(1);
+    // wake は 1 件だけ。全員 sleep してアトラスが解放されてから取り直すのが肝なので、
+    // 「最後の sleep より後に wake される」ことを呼び出し順で固定する。
+    expect(a.wakeWebgl).not.toHaveBeenCalled();
+    expect(b.wakeWebgl).toHaveBeenCalledTimes(1);
+    const lastSleep = Math.max(
+      (a.sleepWebgl as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
+      (b.sleepWebgl as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
+    );
+    expect((b.wakeWebgl as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
+      .toBeGreaterThan(lastSleep);
 
-    forceDisposeRuntime('atlas-none-a');
-    forceDisposeRuntime('atlas-none-b');
+    forceDisposeRuntime('recycle-a');
+    forceDisposeRuntime('recycle-b');
+  });
+
+  it('1 タブの sleep が throw しても残りの sleep と wake は続く', () => {
+    const a = makeRuntime();
+    const b = makeRuntime();
+    a.sleepWebgl = vi.fn(() => { throw new Error('boom'); });
+    acquireRuntime('recycle-throw-a', () => a);
+    acquireRuntime('recycle-throw-b', () => b);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() =>
+      recycleTextureAtlas('recycle-throw-b', ['recycle-throw-a', 'recycle-throw-b']),
+    ).not.toThrow();
+
+    expect(b.sleepWebgl).toHaveBeenCalledTimes(1);
+    expect(b.wakeWebgl).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+    forceDisposeRuntime('recycle-throw-a');
+    forceDisposeRuntime('recycle-throw-b');
+  });
+
+  it('WebGL を持つタブが無ければ sleep も wake も呼ばない', () => {
+    const a = makeRuntime();
+    acquireRuntime('recycle-none', () => a);
+
+    recycleTextureAtlas('recycle-none', []);
+
+    expect(a.sleepWebgl).not.toHaveBeenCalled();
+    expect(a.wakeWebgl).not.toHaveBeenCalled();
+
+    forceDisposeRuntime('recycle-none');
   });
 });
 
@@ -1314,5 +1397,102 @@ describe('nextPauseState (#4)', () => {
     // デフォルト引数でも動作する
     expect(nextPauseState(WRITE_HIGH_WATERMARK, false)).toBe(true);
     expect(nextPauseState(WRITE_LOW_WATERMARK, true)).toBe(false);
+  });
+});
+
+// --- isSpecialColorQuery (OSC 10/11 のクエリ判定) ---
+//
+// 「色の設定」は抑止して transparency 設定を守り、「色の問い合わせ」は xterm に委譲して
+// 応答させる。委譲しないと vim/neovim 等が背景の明暗を判定できず見づらい配色を選ぶ。
+
+describe('isSpecialColorQuery', () => {
+  it('単独クエリ ? は true（xterm に委譲して応答させる）', () => {
+    expect(isSpecialColorQuery('?')).toBe(true);
+  });
+
+  it('連鎖クエリ ?;? / ?;?;? も true', () => {
+    expect(isSpecialColorQuery('?;?')).toBe(true);
+    expect(isSpecialColorQuery('?;?;?')).toBe(true);
+  });
+
+  it('色の設定は false（抑止して transparency 設定を守る）', () => {
+    expect(isSpecialColorQuery('#ff0000')).toBe(false);
+    expect(isSpecialColorQuery('rgb:00/00/00')).toBe(false);
+  });
+
+  it('クエリと設定の混在は false（xterm は payload 単位でしか委譲できない）', () => {
+    expect(isSpecialColorQuery('?;#ff0000')).toBe(false);
+    expect(isSpecialColorQuery('#ff0000;?')).toBe(false);
+  });
+
+  it('payload 空は false（設定でもクエリでもない）', () => {
+    expect(isSpecialColorQuery('')).toBe(false);
+  });
+
+  it('xterm と同じ厳密比較: 空白付きや ?x は false', () => {
+    expect(isSpecialColorQuery('? ')).toBe(false);
+    expect(isSpecialColorQuery('?x')).toBe(false);
+  });
+
+  it('意味のある最長 (?;?;?) を超える長さは false', () => {
+    expect(isSpecialColorQuery('?;?;?;?;?')).toBe(false);
+  });
+});
+
+// --- getRuntimeScreenIfDirty (定期保存の対象絞り込み) ---
+//
+// 定期保存が重い原因は serialize そのものなので、「変化していないタブでは
+// serialize を呼ばない」ことが本質。戻り値だけでなく未呼び出しを検証する。
+
+describe('getRuntimeScreenIfDirty', () => {
+  it('dirty なら serialize した内容を返す', () => {
+    const runtime = makeRuntime();
+    runtime.consumeScreenDirty = vi.fn(() => true);
+    runtime.serializeScreen = vi.fn(() => 'screen');
+    acquireRuntime('dirty-yes', () => runtime);
+
+    expect(getRuntimeScreenIfDirty('dirty-yes')).toBe('screen');
+    expect(runtime.serializeScreen).toHaveBeenCalledTimes(1);
+
+    forceDisposeRuntime('dirty-yes');
+  });
+
+  it('dirty でなければ null を返し、serialize を呼ばない', () => {
+    const runtime = makeRuntime();
+    runtime.consumeScreenDirty = vi.fn(() => false);
+    runtime.serializeScreen = vi.fn(() => 'screen');
+    acquireRuntime('dirty-no', () => runtime);
+
+    expect(getRuntimeScreenIfDirty('dirty-no')).toBeNull();
+    expect(runtime.serializeScreen).not.toHaveBeenCalled();
+
+    forceDisposeRuntime('dirty-no');
+  });
+
+  it('dirty でも内容が空なら null（空で上書きしない既存の約束を維持）', () => {
+    const runtime = makeRuntime();
+    runtime.consumeScreenDirty = vi.fn(() => true);
+    runtime.serializeScreen = vi.fn(() => '');
+    acquireRuntime('dirty-empty', () => runtime);
+
+    expect(getRuntimeScreenIfDirty('dirty-empty')).toBeNull();
+
+    forceDisposeRuntime('dirty-empty');
+  });
+
+  it('未登録の tabId は null', () => {
+    expect(getRuntimeScreenIfDirty('dirty-missing')).toBeNull();
+  });
+
+  it('getRuntimeScreen は dirty を消費しない（終了時の全タブ保存が影響を受けない）', () => {
+    const runtime = makeRuntime();
+    runtime.consumeScreenDirty = vi.fn(() => true);
+    runtime.serializeScreen = vi.fn(() => 'screen');
+    acquireRuntime('dirty-untouched', () => runtime);
+
+    expect(getRuntimeScreen('dirty-untouched')).toBe('screen');
+    expect(runtime.consumeScreenDirty).not.toHaveBeenCalled();
+
+    forceDisposeRuntime('dirty-untouched');
   });
 });

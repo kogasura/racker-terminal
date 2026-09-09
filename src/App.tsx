@@ -3,7 +3,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useAppStore } from './store/appStore';
-import { getAllRuntimes, clearAllTextureAtlases, getRuntimeScreen } from './lib/terminalRegistry';
+import {
+  getAllRuntimes,
+  recycleTextureAtlas,
+  getRuntimeScreen,
+  getRuntimeScreenIfDirty,
+} from './lib/terminalRegistry';
 import { saveScrollback, pruneScrollback } from './lib/scrollback';
 import { listWslDistros } from './lib/wsl';
 import {
@@ -195,16 +200,31 @@ function App() {
     };
   }, []);
 
-  // #5: WebGL グリフキャッシュ(TextureAtlas)の無制限肥大を抑えるため、一定間隔で全 runtime の
-  // アトラスをクリアする。truecolor 出力で (glyph,fg,bg,ext) の組が無限に溜まり JS ヒープが
-  // 単調増加するのを防ぐ。クリア後は次フレームでアトラスが再構築されるだけ（表示中タブで
-  // 数 ms のコスト、sleep 中/透明タブは DOM renderer なので no-op）。
+  // #5: WebGL のグリフキャッシュ (TextureAtlas) は全タブで共有されており、外からクリアすると
+  // 他タブの頂点バッファが古い座標を指したままになって文字が化ける。クリアではなく
+  // sleep/wake で renderer ごと作り直し、アトラスを解放・再生成する
+  // （なぜそうするかの詳細は terminalRegistry の recycleTextureAtlas を参照）。
+  //
+  // 作り直しは 1 回あたり数十 ms メインスレッドを止める。10 分に一度なので均せば無視できるが、
+  // 出力の最中に当たるとフレーム落ちが見えるのでアイドル時間へ寄せる。timeout は付けない:
+  // 付けると「出力が続いていてアイドルが来ない」= いちばん避けたい状況で必ず割り込んでしまう。
+  // アイドルが来なければその回は見送り、次の周期で改めて予約する。
   useEffect(() => {
-    const GLYPH_CACHE_CLEAR_INTERVAL_MS = 10 * 60 * 1000; // 10 分
+    const RECYCLE_INTERVAL_MS = 10 * 60 * 1000; // 10 分
+    let idleId: number | null = null;
+
     const id = setInterval(() => {
-      clearAllTextureAtlases();
-    }, GLYPH_CACHE_CLEAR_INTERVAL_MS);
-    return () => clearInterval(id);
+      if (idleId !== null) return; // 前回の予約がまだ捌けていない
+      idleId = requestIdleCallback(() => {
+        idleId = null;
+        recycleTextureAtlas(useAppStore.getState().activeTabId);
+      });
+    }, RECYCLE_INTERVAL_MS);
+
+    return () => {
+      clearInterval(id);
+      if (idleId !== null) cancelIdleCallback(idleId);
+    };
   }, []);
 
   // タブの画面内容を定期的に保存する。
@@ -217,6 +237,23 @@ function App() {
   useEffect(() => {
     const SAVE_INTERVAL_MS = 30_000;
 
+    // 定期保存の対象は「前回の保存以降に出力があったタブ」だけにする。
+    // serialize は 1 タブあたり数 ms かかるため、全タブを同期で回すとタブ数に比例して
+    // UI スレッドが止まる。出力が無いタブは内容が変わっておらず、保存し直しても
+    // ファイルの中身は同じなので丸ごと飛ばしてよい。
+    const saveDirtyTabs = () => {
+      for (const tabId of Object.keys(useAppStore.getState().tabs)) {
+        const content = getRuntimeScreenIfDirty(tabId);
+        if (content !== null) void saveScrollback(tabId, content);
+      }
+    };
+
+    // dirty 判定を通さない全タブ保存。cleanup 用。
+    //
+    // 注意: これは「終了時の保険」にはなっていない。ウィンドウを閉じる経路に
+    // close-requested / beforeunload のフックが無く、プロセスがそのまま落ちるため、
+    // 本番でこの cleanup が走るのは実質 dev の HMR だけ。実際の保存粒度は
+    // 上の 30 秒間隔がすべてで、それは変更前から変わらない。
     const saveAll = () => {
       for (const tabId of Object.keys(useAppStore.getState().tabs)) {
         const content = getRuntimeScreen(tabId);
@@ -232,10 +269,11 @@ function App() {
     if (useAppStore.persist.hasHydrated()) pruneOnce();
     else useAppStore.persist.onFinishHydration(pruneOnce);
 
-    const id = setInterval(saveAll, SAVE_INTERVAL_MS);
+    const id = setInterval(saveDirtyTabs, SAVE_INTERVAL_MS);
     return () => {
       clearInterval(id);
-      // アンマウント（＝アプリ終了）時にも一度保存して、直前の内容を残す
+      // ここだけは dirty を無視して全タブ保存する（dirty は「返した＝保存した」と
+      // みなして落とすため）。ただし上記のとおり本番ではまず走らない。
       saveAll();
     };
   }, []);

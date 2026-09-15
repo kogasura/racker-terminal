@@ -1,0 +1,31 @@
+[package]
+name = "racker-explorer-command"
+version = "1.9.12"
+description = "Windows 11 の新コンテキストメニューに「Racker Terminal で開く」を出す shell extension"
+authors = ["yokubo"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+# sparse package の AppxManifest.xml が Path="racker_explorer_command.dll" で
+# 参照する名前。変えるならマニフェスト側も合わせること。
+name = "racker_explorer_command"
+crate-type = ["cdylib"]
+
+[lints.clippy]
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+
+[dependencies]
+windows-core = "0.61"
+
+# 本体クレート (tauri 経由) が既に 0.61 系を使っているので、
+# バージョンを揃えればビルドへの追加コストはほぼない。
+[dependencies.windows]
+version = "0.61"
+features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Shell",
+]

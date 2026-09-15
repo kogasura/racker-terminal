@@ -39,3 +39,10 @@ coverage/
 .env
 .env.release
 .env.*.local
+
+# コンテキストメニュー用 sparse package の生成物
+# (src-tauri/appx/AppxManifest.xml はテンプレートなのでコミットする)
+src-tauri/appx/RackerTerminal.msix
+src-tauri/appx/racker_explorer_command.dll
+src-tauri/appx/Square150x150Logo.png
+src-tauri/appx/Square44x44Logo.png

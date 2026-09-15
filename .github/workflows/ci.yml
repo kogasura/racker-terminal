@@ -50,6 +50,11 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # tauri.conf.json の bundle.resources が src-tauri/appx/ の生成物を要求するため、
+      # cargo を動かす前にコンテキストメニュー用 sparse package をビルドしておく。
+      # (Windows SDK の makeappx.exe を使う。windows ランナーには同梱されている)
+      - run: npm run build:context-menu
+
       # toolchain と rustfmt / clippy コンポーネントは rust-toolchain.toml が担保する
       - uses: Swatinem/rust-cache@v2
         with:
@@ -61,8 +66,8 @@ jobs:
 
       - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace

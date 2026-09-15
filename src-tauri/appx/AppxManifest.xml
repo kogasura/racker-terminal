@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows 11 の新コンテキストメニュー用 sparse package のテンプレート。
+
+  「sparse」= 実体 (DLL・アイコン・本体 exe) をパッケージに同梱せず、
+  インストール先 (ExternalLocation) に置いたまま参照する形式。これにより
+  アプリ本体は従来どおり NSIS でインストールしつつ、コンテキストメニューの
+  拡張だけを MSIX として登録できる。<uap10:AllowExternalContent> がその宣言。
+
+  パス解決の基準はすべて ExternalLocation (= インストール先 $INSTDIR) からの
+  相対パス。`..` は使えないので、参照するファイルは必ず $INSTDIR 配下に置くこと。
+
+  {{VERSION}} と {{PUBLISHER}} は scripts/build-context-menu.mjs が置換する。
+  Publisher は署名に使う証明書のサブジェクトと完全一致していないと登録に失敗する。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap10 rescap desktop4 desktop5 desktop6 com">
+
+  <Identity
+    Name="yokubo.RackerTerminal"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="neutral" />
+
+  <Properties>
+    <DisplayName>Racker Terminal</DisplayName>
+    <PublisherDisplayName>yokubo</PublisherDisplayName>
+    <Logo>appx\Square150x150Logo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+    <!--
+      パッケージ化された COM サーバーは既定でレジストリ / ファイルの書き込みが
+      仮想化される。この拡張から起動する racker-terminal.exe には、従来どおり
+      素の %APPDATA% やレジストリを見てほしいので両方切る
+      (仮想化されるとお気に入りやセッションの保存先がずれる)。
+    -->
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+
+  <Resources>
+    <Resource Language="ja-jp" />
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <!--
+      新コンテキストメニュー自体が Windows 11 (10.0.22000) 以降の機能。
+      Windows 10 では登録しても何も起きないため、インストーラ側で 11 判定をして
+      登録をスキップしている (installer-hooks.nsh)。
+    -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+
+  <Applications>
+    <!--
+      AppListEntry="none" でスタートメニューには出さない。ここで宣言している
+      Application は、あくまで COM サーバーとコンテキストメニューの入れ物。
+      RuntimeBehavior="win32App" + TrustLevel="mediumIL" により、拡張は
+      AppContainer に閉じ込められない通常の win32 プロセスとして動く。
+    -->
+    <Application
+      Id="RackerTerminal"
+      Executable="racker-terminal.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="Racker Terminal"
+        Description="フォルダを Racker Terminal で開く"
+        BackgroundColor="transparent"
+        Square150x150Logo="appx\Square150x150Logo.png"
+        Square44x44Logo="appx\Square44x44Logo.png">
+      </uap:VisualElements>
+      <Extensions>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <!-- フォルダそのものを右クリック -->
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="OpenInRackerTerminal" Clsid="A93945CD-211A-4C38-A9AE-67F2B4C84E42" />
+            </desktop5:ItemType>
+            <!-- フォルダ内の背景 (何もない部分) を右クリック -->
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="OpenInRackerTerminal" Clsid="A93945CD-211A-4C38-A9AE-67F2B4C84E42" />
+            </desktop5:ItemType>
+            <!--
+              ItemType に指定できるのは `*` / `.拡張子` / `Directory` /
+              `Directory\Background` だけ (スキーマの pattern 制約)。
+              旧メニューで対応できる `Drive` はここでは書けないので、
+              ドライブ直下の右クリックは installer-hooks.nsh 側の登録に任せる。
+            -->
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="Racker Terminal">
+              <com:Class
+                Id="A93945CD-211A-4C38-A9AE-67F2B4C84E42"
+                Path="appx\racker_explorer_command.dll"
+                ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

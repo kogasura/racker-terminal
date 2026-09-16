@@ -19,14 +19,19 @@ import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { createMachine, type Machine } from '../../architecture/machine';
 import { DRAG_KIND } from '../../lib/dndResolve';
 import { useAppStore } from '../../store/appStore';
+import { dominantAgentState } from '../../types';
 import { createEffectRunner, type EffectDeps } from './effects';
 import type { TabsEvent } from './events';
 import { initialState, transition, type TabsEffect, type TabsState } from './machine';
 import {
+  selectFavorites,
+  selectGroup,
   selectMoveTargets,
   selectSidebar,
   selectTabBar,
   selectTabItem,
+  type FavoritesViewModel,
+  type GroupViewModel,
   type MoveTargetViewModel,
   type SidebarViewModel,
   type TabBarViewModel,
@@ -69,6 +74,48 @@ export function useTabItemView(tabId: string): TabItemViewModel {
   // boolean だけ subscribe することで、自分以外の editingId 変化では再描画されない
   const isEditing = useAppStore((s) => s.editingId === tabId);
   return useMemo(() => selectTabItem(tab, isEditing), [tab, isEditing]);
+}
+
+/**
+ * お気に入り一覧の描画パラメータ。
+ *
+ * 一覧はサイドバーに 1 つしか無いので、tabId のように引数で絞る必要はない。
+ */
+export function useFavoritesView(): FavoritesViewModel {
+  const favorites = useAppStore(useShallow((s) => s.favorites));
+  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
+  return useMemo(() => selectFavorites(favorites, defaultFavoriteId), [favorites, defaultFavoriteId]);
+}
+
+/**
+ * グループ 1 行ぶんの描画パラメータ。
+ *
+ * タブと同じく groupId で引く。一覧ぶんをまとめて配ると、1 グループの変化で
+ * 全グループが描き直されるため。
+ */
+export function useGroupView(groupId: string): GroupViewModel {
+  // 必要なフィールドだけ抽出する (他グループの変化で描き直されないように)
+  const snapshot = useAppStore(
+    useShallow((s) => {
+      const g = s.groups.find((x) => x.id === groupId);
+      if (!g) return null;
+      return {
+        title: g.title,
+        tabCount: g.tabIds.length,
+        agentState: dominantAgentState(g.tabIds.map((id) => s.tabs[id]?.agentState)),
+        isActive: s.activeGroupId === groupId,
+      };
+    }),
+  );
+  // boolean だけ subscribe することで、自分以外の editingId 変化では描き直されない
+  const isEditing = useAppStore((s) => s.editingId === groupId);
+  const groupCount = useAppStore((s) => s.groups.length);
+  const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
+
+  return useMemo(
+    () => selectGroup(snapshot, isEditing, groupCount, isDraggingTab),
+    [snapshot, isEditing, groupCount, isDraggingTab],
+  );
 }
 
 /**

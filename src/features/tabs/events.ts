@@ -7,6 +7,7 @@
  */
 
 import type { ChainEvent } from '../../architecture/chain';
+import type { Favorite } from '../../types';
 
 /** タブの移動方向。 */
 export type NavigateDirection = 'next' | 'prev';
@@ -62,7 +63,31 @@ export type TabsPointerIntent =
       readonly toGroupId: string;
     }
   /** 新しいグループを作ってそこへ移す */
-  | { readonly type: 'tabs/tab-move-to-new-group-requested'; readonly tabId: string };
+  | { readonly type: 'tabs/tab-move-to-new-group-requested'; readonly tabId: string }
+  /** グループ行をクリックして選んだ */
+  | { readonly type: 'tabs/group-activated'; readonly groupId: string }
+  /** グループ名の編集を始める */
+  | { readonly type: 'tabs/group-rename-started'; readonly groupId: string }
+  /** グループ名の編集を確定した */
+  | { readonly type: 'tabs/group-renamed'; readonly groupId: string; readonly title: string }
+  /** グループを閉じる */
+  | { readonly type: 'tabs/group-close-requested'; readonly groupId: string }
+  /** 指定グループに新しいタブを足す (グループの右クリックメニュー) */
+  | { readonly type: 'tabs/tab-create-in-group-requested'; readonly groupId: string }
+  /** お気に入りからタブを開く */
+  | { readonly type: 'tabs/favorite-spawn-requested'; readonly favoriteId: string }
+  /** お気に入りを削除する */
+  | { readonly type: 'tabs/favorite-remove-requested'; readonly favoriteId: string }
+  /** 既定のお気に入りを切り替える (既定なら解除、そうでなければ設定) */
+  | { readonly type: 'tabs/favorite-default-toggled'; readonly favoriteId: string }
+  /** お気に入りを新規登録する */
+  | { readonly type: 'tabs/favorite-added'; readonly favorite: Omit<Favorite, 'id'> }
+  /** お気に入りの内容を書き換える */
+  | {
+      readonly type: 'tabs/favorite-updated';
+      readonly favoriteId: string;
+      readonly favorite: Omit<Favorite, 'id'>;
+    };
 
 /**
  * 入力モードの変化。

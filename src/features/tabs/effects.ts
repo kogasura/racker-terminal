@@ -93,6 +93,32 @@ const handlers: HandlerMap = {
     state.moveTab(effect.tabId, groupId, 0);
   },
 
+  'activate-group': (state, effect) => state.setActiveGroup(effect.groupId),
+
+  'start-editing-group': (state, effect) => state.startEditing(effect.groupId),
+
+  'rename-group': (state, effect) => state.updateGroupTitle(effect.groupId, effect.title),
+
+  'close-group': (state, effect) => state.removeGroup(effect.groupId),
+
+  'create-tab-in-group': (state, effect) => state.createTab(effect.groupId),
+
+  'spawn-favorite-by-id': (state, effect) => state.spawnFavorite(effect.favoriteId),
+
+  'remove-favorite': (state, effect) => state.removeFavorite(effect.favoriteId),
+
+  'toggle-default-favorite': (state, effect) => {
+    // 既定なら解除、そうでなければ設定
+    const isDefault = state.settings.defaultFavoriteId === effect.favoriteId;
+    state.setDefaultFavorite(isDefault ? null : effect.favoriteId);
+  },
+
+  'add-favorite': (state, effect) => {
+    state.addFavorite(effect.favorite);
+  },
+
+  'update-favorite': (state, effect) => state.updateFavorite(effect.favoriteId, effect.favorite),
+
   'create-group': (state) => {
     // 連番の付け直しはここで決める。削除 → 追加で番号が崩れないようにするため、
     // 既存タイトルの最大値を見る必要がある (nextNewGroupTitle)。

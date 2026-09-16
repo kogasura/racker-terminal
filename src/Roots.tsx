@@ -11,7 +11,10 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { BootstrapRoot } from './features/bootstrap/BootstrapRoot';
+import { ClaudeSessionsRoot } from './features/claudeSessions/ClaudeSessionsRoot';
 import { ClaudeStatusRoot } from './features/claudeStatus/ClaudeStatusRoot';
+import { LaunchRoot } from './features/launch/LaunchRoot';
 import { NotificationsRoot } from './features/notifications/NotificationsRoot';
 import { PrStatusRoot } from './features/prStatus/PrStatusRoot';
 import { SettingsRoot } from './features/settings/SettingsRoot';
@@ -34,11 +37,17 @@ export function Roots({ children }: { children: ReactNode }) {
       <SettingsRoot>
         <TabsRoot>
           <ClaudeStatusRoot>
-            <TerminalUpkeepRoot>
-              <PrStatusRoot>
-                <NotificationsRoot>{children}</NotificationsRoot>
-              </PrStatusRoot>
-            </TerminalUpkeepRoot>
+            <ClaudeSessionsRoot>
+              <TerminalUpkeepRoot>
+                <PrStatusRoot>
+                  <NotificationsRoot>
+                    <BootstrapRoot>
+                      <LaunchRoot>{children}</LaunchRoot>
+                    </BootstrapRoot>
+                  </NotificationsRoot>
+                </PrStatusRoot>
+              </TerminalUpkeepRoot>
+            </ClaudeSessionsRoot>
           </ClaudeStatusRoot>
         </TabsRoot>
       </SettingsRoot>

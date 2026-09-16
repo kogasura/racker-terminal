@@ -140,8 +140,9 @@ store の `dragId` / `dragKind` という 2 つのフラグをやめて Mediator
 （「id はあるが kind が無い」の組み合わせが作れなくなった）。落とし先の解決は
 effects が持つ。
 
-**View から store 参照が消えた。** 残るのは `App.tsx` 10 と
-`TerminalPane` 12（うち 7 は例外）。`Roots.tsx` の 3 は hydration 待ちで、
+**View からも `App.tsx` からも store 参照が消えた。** `App.tsx` は 45 行の
+構成だけになり、副作用はすべて機能ごとの Root が持つ。残るのは
+`TerminalPane` 12（うち 7 は例外）だけ。`Roots.tsx` の 3 は hydration 待ちで、
 Root 自身の仕事。
 
 ### 状態を持たない Root

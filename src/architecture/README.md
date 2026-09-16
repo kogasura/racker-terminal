@@ -127,12 +127,23 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 |---|---|
 | `features/updater/` | 完了。状態もデータも Mediator が持つ |
 | `features/claudeStatus/` | 完了。`StatusBar` は store 参照 0 の Passive View。プラン利用量のポーリングも Root が持つ |
-| `features/tabs/` | キーコマンドの裁定と、コンテキストメニューによる抑止。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
+| `features/tabs/` | キーコマンドの裁定、コンテキストメニューによる抑止、`TabBar` / `Sidebar` の View モデル。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
 | それ以外 | 未着手。`useAppStore` を直接参照する従来の形 |
+
+Passive View になったもの: `StatusBar` / `TabBar` / `Sidebar` / updater の View 群。
 
 store 参照の残数（多い順）: `App.tsx` 23 / `DragDropProvider` 18 / `TabItem` 14 /
 `TerminalPane` 12（うち 7 は例外）/ `GroupSection` 10 / `FavoritesSection` 8 /
-`Sidebar` 6 / `TitleBar` 5 / `TabBar` 5。
+`TitleBar` 5。
+
+### コマンドの出どころで扱いが変わる
+
+キーボード由来の操作（`TabsIntent`）は、コンテキストメニューが開いている間は
+Mediator が捨てます。メニュー表示中でもキーイベントはターミナルまで届くためです。
+
+ポインタ由来の操作（`TabsPointerIntent`）は止めません。メニューが開いているときに
+ボタンを押せば、まずメニューが閉じてからクリックが届くので、誤爆の経路がそもそも
+ありません。**止める理由がないものを止めると、それは仕様変更になります。**
 
 残っている大きな塊は、`TerminalPane` の起動シーケンス（Claude セッションの採番、
 起動プランの算出、spawn タイムアウトの失敗判定）です。`spawning → live / crashed` は

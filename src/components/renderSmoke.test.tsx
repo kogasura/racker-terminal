@@ -13,6 +13,9 @@ import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
+import { TabBar } from './TabBar';
+import { Sidebar } from './Sidebar';
+import { DragDropProvider } from './DragDropProvider';
 
 // Tauri の invoke / plugin はテスト環境に存在しないのでスタブする。
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
@@ -231,6 +234,38 @@ describe('コンポーネントのレンダリング', () => {
           onSubmit={() => {}}
           onClose={() => {}}
         />,
+      ),
+    ).not.toThrow();
+  });
+
+  // TabBar / Sidebar は D&D のコンテキスト (DndContext) も要るため、
+  // DragDropProvider ごと包んで描画する。
+  it('TabBar が描画できる', () => {
+    expect(() =>
+      render(
+        <DragDropProvider>
+          <TabBar />
+        </DragDropProvider>,
+      ),
+    ).not.toThrow();
+  });
+
+  it('TabBar: グループが無ければバーごと消える', () => {
+    useAppStore.setState({ activeGroupId: null });
+    const { container } = render(
+      <DragDropProvider>
+        <TabBar />
+      </DragDropProvider>,
+    );
+    expect(container.querySelector('.tab-bar')).toBeNull();
+  });
+
+  it('Sidebar が描画できる', () => {
+    expect(() =>
+      render(
+        <DragDropProvider>
+          <Sidebar />
+        </DragDropProvider>,
       ),
     ).not.toThrow();
   });

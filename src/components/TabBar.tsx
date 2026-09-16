@@ -1,7 +1,8 @@
 import { memo } from 'react';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import { useTabsView } from '../features/tabs/TabsRoot';
+import type { TabsEvent } from '../features/tabs/events';
 import { TabItem } from './TabItem';
 import '../styles/tab-bar.css';
 
@@ -17,26 +18,19 @@ import '../styles/tab-bar.css';
  * ドロップしたときのグループ間移動は Provider 側が解決する。
  */
 export const TabBar = memo(function TabBar() {
-  const activeGroupId = useAppStore((s) => s.activeGroupId);
-  const activeTabId = useAppStore((s) => s.activeTabId);
-  const createTab = useAppStore((s) => s.createTab);
+  const { tabBar } = useTabsView();
+  const emit = useEmit<TabsEvent>();
+  const { visible, tabIds, activeTabId } = tabBar;
 
-  // 選択中グループの tabIds のみ subscribe する。
-  // 他グループのタブ増減やタイトル変更では再レンダーされない。
-  const tabIds = useAppStore(
-    useShallow((s) => s.groups.find((g) => g.id === activeGroupId)?.tabIds ?? []),
-  );
-
-  // グループが 1 つも選択されていない（= グループ自体が無い）ときは何も出さない。
-  // App の初期化がグループを必ず 1 つ作るため、通常は起動直後の一瞬だけ。
-  if (activeGroupId === null) return null;
+  // 出すかどうかは View モデルが決めている。
+  if (!visible) return null;
 
   return (
     <div className="tab-bar" role="tablist">
       <div className="tab-bar__tabs">
         <SortableContext
           id="tabs-sortable"
-          items={tabIds}
+          items={tabIds as string[]}
           strategy={horizontalListSortingStrategy}
         >
           {tabIds.map((tabId) => (
@@ -54,7 +48,7 @@ export const TabBar = memo(function TabBar() {
       <button
         type="button"
         className="tab-bar__new-btn"
-        onClick={() => createTab(activeGroupId)}
+        onClick={() => emit({ type: 'tabs/tab-create-requested' })}
         title="新しいタブ"
         aria-label="新しいタブ"
       >

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { useAppStore } from '../store/appStore';
+import { useTerminalPanesView } from '../features/tabs/TabsRoot';
 import { TerminalPane } from './TerminalPane';
 import '../styles/terminal.css';
 
@@ -12,21 +12,14 @@ function EmptyPlaceholder() {
 }
 
 export const TerminalPaneContainer = memo(function TerminalPaneContainer() {
-  const tabs = useAppStore((s) => s.tabs);
-  const activeTabId = useAppStore((s) => s.activeTabId);
-  const tabList = Object.values(tabs);
+  const { isEmpty, panes } = useTerminalPanesView();
 
-  if (tabList.length === 0) return <EmptyPlaceholder />;
+  if (isEmpty) return <EmptyPlaceholder />;
 
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-      {tabList.map((tab) => (
-        <TerminalPane
-          key={tab.id}
-          tabId={tab.id}
-          tab={tab}
-          isActive={tab.id === activeTabId}
-        />
+      {panes.map(({ tab, isActive }) => (
+        <TerminalPane key={tab.id} tabId={tab.id} tab={tab} isActive={isActive} />
       ))}
     </div>
   );

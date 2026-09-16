@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import type { TabsEvent } from '../features/tabs/events';
 
 interface InlineEditProps {
-  /** 編集対象の ID（tabId または groupId） */
-  id: string;
+  /**
+   * 編集モードか。
+   *
+   * 以前はここで store の editingId を見ていたが、呼び出し元 (TabItem /
+   * GroupSection) が同じ値を View モデルとして既に持っている。二重に購読せず、
+   * 渡してもらう。
+   */
+  isEditing: boolean;
   /** 現在のタイトル */
   title: string;
   /** 確定時に呼ばれるコールバック。新タイトルを渡す（空文字列の場合は元タイトル維持） */
@@ -22,9 +29,9 @@ interface InlineEditProps {
  * - 確定: Enter / blur / 外クリック → onCommit(value) + stopEditing
  * - キャンセル: Escape → stopEditing のみ（元タイトル維持）
  */
-export function InlineEdit({ id, title, onCommit, className }: InlineEditProps) {
-  const isEditing = useAppStore((s) => s.editingId === id);
-  const stopEditing = useAppStore((s) => s.stopEditing);
+export function InlineEdit({ isEditing, title, onCommit, className }: InlineEditProps) {
+  const emit = useEmit<TabsEvent>();
+  const stopEditing = () => emit({ type: 'tabs/edit-stopped' });
 
   const [value, setValue] = useState(title);
   const isComposingRef = useRef(false);

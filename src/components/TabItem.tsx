@@ -187,7 +187,7 @@ function TabItemView({
           <span className={vm.statusClass} title={vm.statusTooltip} />
 
           <InlineEdit
-            id={tabId}
+            isEditing={vm.isEditing}
             title={vm.title}
             onCommit={(title) => emit({ type: 'tabs/tab-renamed', tabId, title })}
             className="tab-item__title"

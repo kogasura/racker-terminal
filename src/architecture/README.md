@@ -140,9 +140,16 @@ store の `dragId` / `dragKind` という 2 つのフラグをやめて Mediator
 （「id はあるが kind が無い」の組み合わせが作れなくなった）。落とし先の解決は
 effects が持つ。
 
-store 参照の残数: `App.tsx` 23 / `TerminalPane` 12（うち 7 は例外）/
-`TerminalPaneContainer` `SettingsDialog` `OpenFolderButton` `InlineEdit` 各 3 /
-`FavoriteDialog` 2。
+**View から store 参照が消えた。** 残るのは `App.tsx` 21（副作用の巣）と
+`TerminalPane` 12（うち 7 は例外）の 2 つだけ。`Roots.tsx` の 3 は
+hydration 待ちで、Root 自身の仕事。
+
+### I/O は View に持たせない
+
+「フォルダを選んで開く」は、以前 View がフォルダ選択ダイアログを開いて結果から
+タブを作っていた。いまは View が「どのシェルで開きたいか」を流すだけで、
+ダイアログの表示も effects の担当。View に I/O が残ると、そこだけテストで
+踏めなくなる。
 
 ### 一覧の中の View モデル
 

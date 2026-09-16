@@ -7,6 +7,7 @@
  */
 
 import { prBadgeKind, prTooltip } from '../../lib/prStatus';
+import { buildProfileTemplates } from '../../lib/profileTemplates';
 import {
   getTabDisplayTitle,
   AGENT_STATE_LABEL,
@@ -164,6 +165,36 @@ export function selectFavorites(
     })),
     isEmpty: favorites.length === 0,
   };
+}
+
+/** ターミナル面の並び。 */
+export interface TerminalPanesViewModel {
+  /** 1 つも無ければプレースホルダを出す。 */
+  readonly isEmpty: boolean;
+  readonly panes: readonly { readonly tab: Tab; readonly isActive: boolean }[];
+}
+
+export function selectTerminalPanes(
+  tabs: Readonly<Record<string, Tab>>,
+  activeTabId: string | null,
+): TerminalPanesViewModel {
+  const list = Object.values(tabs);
+  return {
+    isEmpty: list.length === 0,
+    panes: list.map((tab) => ({ tab, isActive: tab.id === activeTabId })),
+  };
+}
+
+/** フォルダを選んで開くメニューの 1 行。 */
+export interface FolderTemplateViewModel {
+  readonly templateId: string;
+  readonly label: string;
+}
+
+export function selectFolderTemplates(
+  wslDistros: readonly string[],
+): readonly FolderTemplateViewModel[] {
+  return buildProfileTemplates(wslDistros).map((t) => ({ templateId: t.id, label: t.label }));
 }
 
 /** ドラッグ中に body へ Portal 描画するプレビュー。 */

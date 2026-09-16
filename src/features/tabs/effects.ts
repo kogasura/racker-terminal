@@ -15,6 +15,9 @@ import {
   resolveDropTarget,
 } from '../../lib/dndResolve';
 import { getTabDisplayTitle } from '../../types';
+import { open as pickFolder } from '@tauri-apps/plugin-dialog';
+import { buildProfileTemplates } from '../../lib/profileTemplates';
+import { buildFolderLaunch } from '../../lib/openFolder';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
 import type { TabsEffect } from './machine';
@@ -172,6 +175,35 @@ const handlers: HandlerMap = {
   'update-favorite': (state, effect) => state.updateFavorite(effect.favoriteId, effect.favorite),
 
   'stop-editing': (state) => state.stopEditing(),
+
+  'open-folder': (state, effect) => {
+    const template = buildProfileTemplates(state.wslDistros).find((t) => t.id === effect.templateId);
+    if (!template) return;
+
+    void (async () => {
+      let selected: string | string[] | null;
+      try {
+        selected = await pickFolder({
+          directory: true,
+          multiple: false,
+          title: `${template.label} で開くフォルダを選択`,
+        });
+      } catch (e) {
+        console.warn('[open-folder] フォルダ選択ダイアログの表示に失敗:', e);
+        return;
+      }
+      // キャンセル時は null。multiple:false なので文字列で返る。
+      if (typeof selected !== 'string' || selected.length === 0) return;
+
+      const launch = buildFolderLaunch(template, selected);
+      state.createTab(undefined, {
+        userTitle: launch.title,
+        shell: launch.shell,
+        cwd: launch.cwd,
+        args: launch.args,
+      });
+    })();
+  },
 
   'apply-drop': (state, effect) => {
     if (effect.dragKind === DRAG_KIND.GROUP) {

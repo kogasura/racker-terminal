@@ -10,6 +10,7 @@ import { SettingsDialog } from './SettingsDialog';
 import { UpdaterRoot } from '../features/updater/UpdaterRoot';
 import { TabsRoot } from '../features/tabs/TabsRoot';
 import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
+import { SettingsRoot } from '../features/settings/SettingsRoot';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
@@ -39,10 +40,12 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue
 function AppRoots({ children }: { children: ReactNode }) {
   return (
     <UpdaterRoot ready={false}>
-      <TabsRoot>
-        {/* fetchUsage={null} でプラン利用量のポーリングを止める（テストで通信させない） */}
-        <ClaudeStatusRoot fetchUsage={null}>{children}</ClaudeStatusRoot>
-      </TabsRoot>
+      <SettingsRoot>
+        <TabsRoot>
+          {/* fetchUsage={null} でプラン利用量のポーリングを止める（テストで通信させない） */}
+          <ClaudeStatusRoot fetchUsage={null}>{children}</ClaudeStatusRoot>
+        </TabsRoot>
+      </SettingsRoot>
     </UpdaterRoot>
   );
 }

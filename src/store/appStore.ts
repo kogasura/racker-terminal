@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AgentState, AppState, ClosedTab, DragKind, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import type { AgentState, AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
 import { applyIdleTransition } from '../types';
 import { newId } from '../lib/id';
 import {
@@ -965,11 +965,6 @@ interface AppActions {
    */
   setActiveGroup: (groupId: string) => void;
 
-  /**
-   * D&D の進行状態を記録する。DragDropProvider の onDragStart / onDragEnd から呼ぶ。
-   * ドラッグ終了時は (null, null) を渡す。
-   */
-  setDragState: (dragId: string | null, dragKind: DragKind | null) => void;
 
   /**
    * 最後に閉じたタブを復元する。Ctrl+Shift+T から呼ぶ。
@@ -991,8 +986,6 @@ export const useAppStore = create<Store>()(
   activeTabId: null,
   activeGroupId: null,
   lastActiveTabByGroup: {},
-  dragId: null,
-  dragKind: null,
   editingId: null,
   settings: defaultSettings,
   wslDistros: [],
@@ -1129,8 +1122,6 @@ export const useAppStore = create<Store>()(
     // activeGroupId / lastActiveTabByGroup の更新と done のクリアは setActiveTab に委ねる
     get().setActiveTab(tabId);
   },
-
-  setDragState: (dragId, dragKind) => set({ dragId, dragKind }),
 
   applyPrStatus: (tabIds, pr) =>
     set((state) => {
@@ -1755,8 +1746,6 @@ export const useAppStore = create<Store>()(
 
         // ランタイム状態は復元しない
         state.editingId = null;
-        state.dragId = null;
-        state.dragKind = null;
 
         // closedTabs は永続化対象外のため再起動時に明示初期化する
         state.closedTabs = [];

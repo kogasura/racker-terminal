@@ -447,7 +447,7 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, dragId, dragKind, editingId, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
+ * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, editingId, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, claudeSessionCwd, claudeSessionDistro, claudeSessionLive, claudeSeenAt, bypassPermissions}, favorites, settings, activeGroupId
  */
 export interface AppState {
@@ -478,15 +478,6 @@ export interface AppState {
    * ランタイム状態のため persist 対象外。
    */
   lastActiveTabByGroup: Record<string, string>;
-  /**
-   * D&D でドラッグ中の要素 ID と種別。ドラッグしていないときは null。
-   *
-   * DndContext は App 直下に置かれ、Sidebar と TabBar の両方を包む。
-   * 両者が「いまタブをドラッグ中か」を知る必要があるため、React context ではなく
-   * store に置いて購読できるようにしている。ランタイム状態のため persist 対象外。
-   */
-  dragId: string | null;
-  dragKind: DragKind | null;
   /**
    * 現在インライン編集中の ID（tabId または groupId）。
    * 右クリック「リネーム」と InlineEdit のダブルクリックで共有される。

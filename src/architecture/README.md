@@ -135,9 +135,14 @@ Passive View になったもの: `TitleBar` / `StatusBar` / `TabBar` / `Sidebar`
 **画面の枠 (タイトルバー・サイドバー・タブバー・ステータスバー) は、
 これで全部 View モデル経由になった。**
 
-store 参照の残数: `App.tsx` 23 / `DragDropProvider` 18 /
-`TerminalPane` 12（うち 7 は例外）。残りは表示ではなく、副作用・D&D の解決・
-起動シーケンスで、性質が違う。
+D&D も移した。ドラッグは「掴んでいる / いない」という状態そのものなので、
+store の `dragId` / `dragKind` という 2 つのフラグをやめて Mediator の状態にした
+（「id はあるが kind が無い」の組み合わせが作れなくなった）。落とし先の解決は
+effects が持つ。
+
+store 参照の残数: `App.tsx` 23 / `TerminalPane` 12（うち 7 は例外）/
+`TerminalPaneContainer` `SettingsDialog` `OpenFolderButton` `InlineEdit` 各 3 /
+`FavoriteDialog` 2。
 
 ### 一覧の中の View モデル
 

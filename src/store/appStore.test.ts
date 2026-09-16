@@ -1533,8 +1533,6 @@ function makeState(
     activeTabId,
     activeGroupId: null,
     lastActiveTabByGroup: {},
-    dragId: null,
-    dragKind: null,
     editingId: null,
     wslDistros: [],
     closedTabs: [],
@@ -1804,8 +1802,6 @@ describe('グループ選択 (activeGroupId)', () => {
       activeTabId: null,
       activeGroupId: null,
       lastActiveTabByGroup: {},
-      dragId: null,
-      dragKind: null,
       editingId: null,
       closedTabs: [],
     });
@@ -1961,16 +1957,6 @@ describe('グループ選択 (activeGroupId)', () => {
     expect(useAppStore.getState().activeGroupId).toBe(g1);
     expect(useAppStore.getState().lastActiveTabByGroup[g1]).toBe(copy);
   });
-
-  it('setDragState はドラッグ中の id と kind を保持し、終了時にクリアできる', () => {
-    useAppStore.getState().setDragState('tab-1', 'tab');
-    expect(useAppStore.getState().dragId).toBe('tab-1');
-    expect(useAppStore.getState().dragKind).toBe('tab');
-
-    useAppStore.getState().setDragState(null, null);
-    expect(useAppStore.getState().dragId).toBeNull();
-    expect(useAppStore.getState().dragKind).toBeNull();
-  });
 });
 
 // --- applyClaudeSessions (Claude セッションとの照合結果の反映) ---
@@ -1984,8 +1970,6 @@ describe('applyClaudeSessions', () => {
       activeTabId: null,
       activeGroupId: null,
       lastActiveTabByGroup: {},
-      dragId: null,
-      dragKind: null,
       editingId: null,
       closedTabs: [],
     });

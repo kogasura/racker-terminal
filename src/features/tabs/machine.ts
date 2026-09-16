@@ -18,7 +18,7 @@
  */
 
 import type { Step, TransitionFn } from '../../architecture/machine';
-import type { Favorite } from '../../types';
+import type { DragKind, Favorite } from '../../types';
 import type { NavigateDirection, TabsEvent } from './events';
 
 export interface TabsState {
@@ -27,6 +27,14 @@ export interface TabsState {
    * コンテキストメニューが開いている間は `suspended` になる。
    */
   readonly input: 'accepting' | 'suspended';
+  /**
+   * D&D で何かを掴んでいるか。掴んでいなければ null。
+   *
+   * 以前は store の `dragId` / `dragKind` という 2 つのフラグだった。
+   * 「id はあるが kind が無い」のような組み合わせを作れてしまっていたので、
+   * 1 つの状態に畳んでいる。
+   */
+  readonly drag: { readonly dragId: string; readonly kind: DragKind | null } | null;
 }
 
 /** 裁定を通ったコマンド。実行は effects.ts の担当。 */
@@ -57,12 +65,22 @@ export type TabsEffect =
       readonly favoriteId: string;
       readonly favorite: Omit<Favorite, 'id'>;
     }
+  /** 掴み始めたら、編集中の入力を確定 / 取り消しして D&D を優先する。 */
+  | { readonly kind: 'stop-editing' }
+  /** 落とした先を解決して反映する。 */
+  | {
+      readonly kind: 'apply-drop';
+      readonly dragId: string;
+      readonly dragKind: DragKind | null;
+      readonly overId: string;
+      readonly fromGroupId: string | undefined;
+    }
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
   | { readonly kind: 'spawn-favorite'; readonly index: number };
 
-export const initialState: TabsState = { input: 'accepting' };
+export const initialState: TabsState = { input: 'accepting', drag: null };
 
 /** 状態を変えずに効果だけ出す (コマンドは状態を持たない)。 */
 function dispatch(state: TabsState, effect: TabsEffect): Step<TabsState, TabsEffect> {
@@ -82,12 +100,41 @@ function accepting(state: TabsState): boolean {
 }
 
 const handlers: HandlerMap = {
+  // --- D&D ------------------------------------------------------------------
+  'tabs/drag-started': (state, event) => ({
+    state: { ...state, drag: { dragId: event.dragId, kind: event.kind } },
+    // InlineEdit が編集中なら確定 or キャンセルして D&D を優先する
+    effects: [{ kind: 'stop-editing' }],
+  }),
+
+  'tabs/drag-ended': (state, event) => {
+    const drag = state.drag;
+    const cleared: TabsState = { ...state, drag: null };
+    if (!drag) return { state: cleared };
+
+    // どこにも落とさなかった / 同じものの上で離した場合は移動しない
+    if (event.overId === null || event.overId === drag.dragId) return { state: cleared };
+
+    return {
+      state: cleared,
+      effects: [
+        {
+          kind: 'apply-drop',
+          dragId: drag.dragId,
+          dragKind: drag.kind,
+          overId: event.overId,
+          fromGroupId: event.fromGroupId,
+        },
+      ],
+    };
+  },
+
   // --- 入力モード -----------------------------------------------------------
   'tabs/context-menu-opened': (state) =>
-    state.input === 'suspended' ? null : { state: { input: 'suspended' } },
+    state.input === 'suspended' ? null : { state: { ...state, input: 'suspended' } },
 
   'tabs/context-menu-closed': (state) =>
-    state.input === 'accepting' ? null : { state: { input: 'accepting' } },
+    state.input === 'accepting' ? null : { state: { ...state, input: 'accepting' } },
 
   // --- コマンド -------------------------------------------------------------
   'tabs/close-active-requested': (state) =>

@@ -4,7 +4,7 @@ import type { TabsEvent } from './events';
 
 // コマンドを通すかどうかの裁定。純粋関数なのでそのまま踏める。
 
-const suspended: TabsState = { input: 'suspended' };
+const suspended: TabsState = { ...initialState, input: 'suspended' };
 
 /** 発行された効果を取り出す。裁定で落ちたら null。 */
 function effectsOf(state: TabsState, event: TabsEvent) {
@@ -69,6 +69,65 @@ describe('tabs machine', () => {
       for (const command of COMMANDS) {
         expect(transition(initialState, command)?.state).toBe(initialState);
       }
+    });
+  });
+
+  describe('D&D', () => {
+    const started = transition(initialState, {
+      type: 'tabs/drag-started',
+      dragId: 't1',
+      kind: 'tab',
+    });
+
+    it('掴むと状態に残り、編集中の入力を確定させる', () => {
+      expect(started?.state.drag).toEqual({ dragId: 't1', kind: 'tab' });
+      // InlineEdit が編集中なら確定 or キャンセルして D&D を優先する
+      expect(started?.effects).toEqual([{ kind: 'stop-editing' }]);
+    });
+
+    it('離すと状態が消え、落とし先の解決を出す', () => {
+      const step = transition(started!.state, {
+        type: 'tabs/drag-ended',
+        overId: 'g2',
+        fromGroupId: 'g1',
+      });
+      expect(step?.state.drag).toBeNull();
+      expect(step?.effects).toEqual([
+        { kind: 'apply-drop', dragId: 't1', dragKind: 'tab', overId: 'g2', fromGroupId: 'g1' },
+      ]);
+    });
+
+    it('どこにも落とさなければ移動しない', () => {
+      const step = transition(started!.state, {
+        type: 'tabs/drag-ended',
+        overId: null,
+        fromGroupId: 'g1',
+      });
+      expect(step?.state.drag).toBeNull();
+      expect(step?.effects ?? []).toEqual([]);
+    });
+
+    it('同じものの上で離しても動かさない', () => {
+      const step = transition(started!.state, {
+        type: 'tabs/drag-ended',
+        overId: 't1',
+        fromGroupId: 'g1',
+      });
+      expect(step?.effects ?? []).toEqual([]);
+    });
+
+    it('掴んでいないのに離しても壊れない', () => {
+      const step = transition(initialState, {
+        type: 'tabs/drag-ended',
+        overId: 'g2',
+        fromGroupId: 'g1',
+      });
+      expect(step?.effects ?? []).toEqual([]);
+    });
+
+    it('ドラッグ中でも入力モードは保たれる', () => {
+      const step = transition(suspended, { type: 'tabs/drag-started', dragId: 't1', kind: 'tab' });
+      expect(step?.state.input).toBe('suspended');
     });
   });
 

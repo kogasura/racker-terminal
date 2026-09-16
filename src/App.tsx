@@ -1,17 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useAppStore } from './store/appStore';
 import { useEmit } from './architecture/chain';
 import type { ClaudeStatusEvent } from './features/claudeStatus/events';
-import {
-  getAllRuntimes,
-  recycleTextureAtlas,
-  getRuntimeScreen,
-  getRuntimeScreenIfDirty,
-} from './lib/terminalRegistry';
-import { saveScrollback, pruneScrollback } from './lib/scrollback';
 import { listWslDistros } from './lib/wsl';
 import {
   listClaudeSessions,
@@ -28,9 +20,6 @@ import {
   shouldPollTranscript,
   type ClaudeTranscriptMeta,
 } from './lib/claudeMeta';
-import { shouldNotify, notifyAgentState } from './lib/notifications';
-import { getPrStatus, groupTabsByCwd, shouldPollPr } from './lib/prStatus';
-import { getTabDisplayTitle, type AgentState, type Tab, type Settings } from './types';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { DragDropProvider } from './components/DragDropProvider';
@@ -44,54 +33,6 @@ import './styles/title-bar.css';
 import './styles/dropdown-menu.css';
 import './styles/update-dialog.css';
 import './styles/status-bar.css';
-
-/** 通知判定に必要な store の断片。 */
-interface NotifyState {
-  tabs: Record<string, Tab>;
-  settings: Settings;
-  activeTabId: string | null;
-}
-
-/**
- * agentState が変わったタブについて、必要なら通知を出す。
- * prevStates は呼び出し側が持つ「直前の状態」の控えで、ここで最新値に更新する。
- *
- * テストのため export している（App 本体は描画を伴うので直接は回しにくい）。
- */
-export function notifyChangedTabs(
-  state: NotifyState,
-  prevStates: Map<string, AgentState | undefined>,
-): void {
-  for (const [id, tab] of Object.entries(state.tabs)) {
-    const prev = prevStates.get(id);
-    if (prev === tab.agentState) continue;
-    prevStates.set(id, tab.agentState);
-
-    // 設定は通知の直前に読む。effect を張り直さずに ON/OFF を反映するため。
-    if (state.settings.notificationsEnabled === false) continue;
-
-    const kind = shouldNotify(prev, tab.agentState, id === state.activeTabId);
-    if (kind !== null) {
-      void notifyAgentState(kind, getTabDisplayTitle(tab), tab.waitingFor);
-    }
-  }
-}
-
-/**
- * 閉じられたタブを控えから外す。
- * タブ ID が再利用されることはないが、長時間の運用で Map が単調増加するのを防ぐ。
- *
- * テストのため export している。
- */
-export function pruneClosedTabs(
-  prevStates: Map<string, AgentState | undefined>,
-  tabs: Record<string, Tab>,
-): void {
-  if (prevStates.size <= Object.keys(tabs).length) return;
-  for (const id of prevStates.keys()) {
-    if (!(id in tabs)) prevStates.delete(id);
-  }
-}
 
 /**
  * アクティブタブで動いている Claude の会話ログを読み、モデル / effort /
@@ -168,186 +109,6 @@ function App() {
     // hydration 完了時に初期化する
     const unsub = useAppStore.persist.onFinishHydration(() => {
       initIfEmpty();
-    });
-    return unsub;
-  }, []);
-
-  // Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
-  // subscribeWithSelector middleware は導入せず、前回値比較で settings の参照変化のみに反応させる。
-  useEffect(() => {
-    let prev = useAppStore.getState().settings;
-    const unsub = useAppStore.subscribe((state) => {
-      if (state.settings === prev) return;
-      prev = state.settings;
-      for (const r of getAllRuntimes()) r.applySettings(state.settings);
-    });
-    return unsub;
-  }, []);
-
-  // #5: WebGL のグリフキャッシュ (TextureAtlas) は全タブで共有されており、外からクリアすると
-  // 他タブの頂点バッファが古い座標を指したままになって文字が化ける。クリアではなく
-  // sleep/wake で renderer ごと作り直し、アトラスを解放・再生成する
-  // （なぜそうするかの詳細は terminalRegistry の recycleTextureAtlas を参照）。
-  //
-  // 作り直しは 1 回あたり数十 ms メインスレッドを止める。10 分に一度なので均せば無視できるが、
-  // 出力の最中に当たるとフレーム落ちが見えるのでアイドル時間へ寄せる。timeout は付けない:
-  // 付けると「出力が続いていてアイドルが来ない」= いちばん避けたい状況で必ず割り込んでしまう。
-  // アイドルが来なければその回は見送り、次の周期で改めて予約する。
-  useEffect(() => {
-    const RECYCLE_INTERVAL_MS = 10 * 60 * 1000; // 10 分
-    let idleId: number | null = null;
-
-    const id = setInterval(() => {
-      if (idleId !== null) return; // 前回の予約がまだ捌けていない
-      idleId = requestIdleCallback(() => {
-        idleId = null;
-        recycleTextureAtlas(useAppStore.getState().activeTabId);
-      });
-    }, RECYCLE_INTERVAL_MS);
-
-    return () => {
-      clearInterval(id);
-      if (idleId !== null) cancelIdleCallback(idleId);
-    };
-  }, []);
-
-  // タブの画面内容を定期的に保存する。
-  //
-  // PTY のスクロールバックはプロセスと一蓮托生なので、再起動すると中身が失われる。
-  // 定期的にシリアライズして保存しておき、復元時に書き戻す（TerminalPane 側）。
-  //
-  // 保存は「直前の作業が見える」ことが目的なので、間隔は粗くてよい。
-  // 短くするとシリアライズのコストが毎回かかる。
-  useEffect(() => {
-    const SAVE_INTERVAL_MS = 30_000;
-
-    // 定期保存の対象は「前回の保存以降に出力があったタブ」だけにする。
-    // serialize は 1 タブあたり数 ms かかるため、全タブを同期で回すとタブ数に比例して
-    // UI スレッドが止まる。出力が無いタブは内容が変わっておらず、保存し直しても
-    // ファイルの中身は同じなので丸ごと飛ばしてよい。
-    const saveDirtyTabs = () => {
-      for (const tabId of Object.keys(useAppStore.getState().tabs)) {
-        const content = getRuntimeScreenIfDirty(tabId);
-        if (content !== null) void saveScrollback(tabId, content);
-      }
-    };
-
-    // dirty 判定を通さない全タブ保存。cleanup 用。
-    //
-    // 注意: これは「終了時の保険」にはなっていない。ウィンドウを閉じる経路に
-    // close-requested / beforeunload のフックが無く、プロセスがそのまま落ちるため、
-    // 本番でこの cleanup が走るのは実質 dev の HMR だけ。実際の保存粒度は
-    // 上の 30 秒間隔がすべてで、それは変更前から変わらない。
-    const saveAll = () => {
-      for (const tabId of Object.keys(useAppStore.getState().tabs)) {
-        const content = getRuntimeScreen(tabId);
-        if (content !== null) void saveScrollback(tabId, content);
-      }
-    };
-
-    // 起動時に、もう存在しないタブの保存ファイルを掃除する
-    // （クラッシュ等で削除できなかったぶんが残り続けるため）
-    const pruneOnce = () => {
-      void pruneScrollback(Object.keys(useAppStore.getState().tabs));
-    };
-    if (useAppStore.persist.hasHydrated()) pruneOnce();
-    else useAppStore.persist.onFinishHydration(pruneOnce);
-
-    const id = setInterval(saveDirtyTabs, SAVE_INTERVAL_MS);
-    return () => {
-      clearInterval(id);
-      // ここだけは dirty を無視して全タブ保存する（dirty は「返した＝保存した」と
-      // みなして落とすため）。ただし上記のとおり本番ではまず走らない。
-      saveAll();
-    };
-  }, []);
-
-  // タブの作業ディレクトリに対応する GitHub PR の状態を定期的に引く。
-  //
-  // 「Claude に作らせた PR がマージされたか」がタブを見るだけで分かるようにする。
-  // gh はネットワークを伴うので間隔は長め、かつ cwd 単位で 1 回だけ叩く。
-  useEffect(() => {
-    const POLL_INTERVAL_MS = 30_000;
-    let cancelled = false;
-    // 前回の実行が終わるまで次を出さない。gh が遅いときに要求が積み上がるのを防ぐ。
-    let running = false;
-    // ウィンドウが前面にあるか。裏に回っている間は引かない（shouldPollPr 参照）。
-    // 初期値 true は「フォーカスイベントが来る前でも 1 回目は引く」ため。
-    let focused = true;
-    let hasEverPolled = false;
-    let unlistenFocus: (() => void) | null = null;
-
-    const tick = async () => {
-      if (running) return;
-      if (!shouldPollPr(focused, hasEverPolled)) return;
-      running = true;
-      hasEverPolled = true;
-      try {
-        const tabList = Object.values(useAppStore.getState().tabs);
-        for (const [cwd, tabIds] of groupTabsByCwd(tabList)) {
-          if (cancelled) return;
-          const pr = await getPrStatus(cwd);
-          if (cancelled) return;
-          useAppStore.getState().applyPrStatus(tabIds, pr);
-        }
-      } finally {
-        running = false;
-      }
-    };
-
-    // フォーカスの変化を追う。裏に回っている間は引かず、戻ってきた時点で
-    // すぐ引き直す（次の 30 秒を待たずにバッジを最新にするため）。
-    void (async () => {
-      try {
-        const win = getCurrentWebviewWindow();
-        const fn = await win.onFocusChanged(({ payload }) => {
-          const wasFocused = focused;
-          focused = payload;
-          if (!wasFocused && focused) void tick();
-        });
-        if (cancelled) fn();
-        else unlistenFocus = fn;
-      } catch (e) {
-        // フォーカスを追えない環境では、従来どおり常に引く方へ倒す
-        // （バッジが更新されないより、余分に引くほうがまし）
-        console.warn('[App] onFocusChanged failed, PR polling stays always-on:', e);
-        focused = true;
-      }
-    })();
-
-    void tick();
-    const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-      unlistenFocus?.();
-    };
-  }, []);
-
-  // Claude タブの状態変化をデスクトップ通知で知らせる。
-  //
-  // サイドバーのステータスドットは racker のウィンドウを見ていないと意味がない。
-  // 別のアプリで作業している間に Claude が応答待ちで止まっていることに気付けるよう、
-  // 応答待ち / 完了になった瞬間だけトーストを出す。
-  useEffect(() => {
-    // 直前の状態。差分が出たタブだけを通知対象にする。
-    const prevStates = new Map<string, AgentState | undefined>();
-    let initialized = false;
-
-    const unsub = useAppStore.subscribe((state) => {
-      // 初回は現在の状態を控えるだけにする。
-      // 起動直後は全タブが「未検出 → 何か」の遷移に見えるため、
-      // これをしないと復元したタブの数だけ通知が飛ぶ。
-      if (!initialized) {
-        for (const [id, tab] of Object.entries(state.tabs)) {
-          prevStates.set(id, tab.agentState);
-        }
-        initialized = true;
-        return;
-      }
-
-      notifyChangedTabs(state, prevStates);
-      pruneClosedTabs(prevStates, state.tabs);
     });
     return unsub;
   }, []);

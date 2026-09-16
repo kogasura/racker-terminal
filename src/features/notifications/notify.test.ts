@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { notifyChangedTabs, pruneClosedTabs } from './App';
-import { notifyAgentState } from './lib/notifications';
-import type { AgentState, Tab, Settings } from './types';
+import { notifyChangedTabs, pruneClosedTabs } from './notify';
+import { notifyAgentState } from '../../lib/notifications';
+import type { AgentState, Tab, Settings } from '../../types';
 
 // 通知の送信そのものは notifications 側のテストで見ているので、ここでは
 // 「呼ばれたか / 呼ばれなかったか」だけを見る。
-vi.mock('./lib/notifications', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./lib/notifications')>();
+vi.mock('../../lib/notifications', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/notifications')>();
   return { ...actual, notifyAgentState: vi.fn() };
 });
 

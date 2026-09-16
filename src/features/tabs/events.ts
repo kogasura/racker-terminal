@@ -37,6 +37,6 @@ export type TabsModeChange =
 
 export type TabsEvent = TabsIntent | TabsModeChange;
 
-/** チェーンに流せることを型で確かめておく。 */
-const _assertChainEvent: ChainEvent = { type: 'tabs/restore-requested' } satisfies TabsEvent;
-void _assertChainEvent;
+/** チェーンに流せる形であることを型で確かめておく (実行時のコードは生まない)。 */
+type _AssertChainEvent = TabsEvent extends ChainEvent ? true : never;
+export type { _AssertChainEvent };

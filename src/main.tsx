@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Roots } from "./Roots";
 import "./styles.css";
 
 // Phase 2 Unit H で StrictMode を復活。
@@ -10,7 +11,9 @@ import "./styles.css";
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <Roots>
+        <App />
+      </Roots>
     </ErrorBoundary>
   </StrictMode>,
 );

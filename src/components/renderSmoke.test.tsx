@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act } from 'react';
 import { render as rtlRender, cleanup } from '@testing-library/react';
-import type { ReactElement, ReactNode } from 'react';
+import { useEffect, type ReactElement, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { GroupSection } from './GroupSection';
@@ -9,6 +9,9 @@ import { FavoriteDialog } from './FavoriteDialog';
 import { SettingsDialog } from './SettingsDialog';
 import { UpdaterRoot } from '../features/updater/UpdaterRoot';
 import { TabsRoot } from '../features/tabs/TabsRoot';
+import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
+import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
+import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
 
 // Tauri の invoke / plugin はテスト環境に存在しないのでスタブする。
@@ -33,7 +36,10 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue
 function AppRoots({ children }: { children: ReactNode }) {
   return (
     <UpdaterRoot ready={false}>
-      <TabsRoot>{children}</TabsRoot>
+      <TabsRoot>
+        {/* fetchUsage={null} でプラン利用量のポーリングを止める（テストで通信させない） */}
+        <ClaudeStatusRoot fetchUsage={null}>{children}</ClaudeStatusRoot>
+      </TabsRoot>
     </UpdaterRoot>
   );
 }
@@ -44,6 +50,32 @@ function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
 
 function renderSettings(onClose: () => void = () => {}) {
   return render(<SettingsDialog onClose={onClose} />);
+}
+
+/**
+ * Mediator に状態を流し込むためのテスト用コンポーネント。
+ *
+ * ステータスバーの状態は store ではなく Mediator が持つので、
+ * 実際の経路（チェーン → Mediator → View モデル）で注入する。
+ */
+function EmitOnMount({ events }: { events: readonly ClaudeStatusEvent[] }) {
+  const emit = useEmit<ClaudeStatusEvent>();
+  useEffect(() => {
+    for (const e of events) emit(e);
+    // events はテストごとに固定なので初回だけでよい
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
+/** ステータスバーを、与えた状態で描画する。 */
+function renderStatusBar(events: readonly ClaudeStatusEvent[]) {
+  return render(
+    <>
+      <EmitOnMount events={events} />
+      <StatusBar />
+    </>,
+  );
 }
 
 describe('コンポーネントのレンダリング', () => {
@@ -59,8 +91,6 @@ describe('コンポーネントのレンダリング', () => {
       favorites: [],
       editingId: null,
       wslDistros: [],
-      claudeMeta: null,
-      claudeUsage: null,
       // ステータスバーの表示設定はテスト間で持ち越さない（既定 = 有効に戻す）
       settings: { ...useAppStore.getState().settings, statusBarEnabled: undefined },
     });
@@ -313,20 +343,22 @@ describe('コンポーネントの操作', () => {
   });
 
   it('StatusBar: 出す情報が何も無ければ帯ごと消える', () => {
-    useAppStore.setState({ claudeMeta: null, claudeUsage: null });
-    const { container } = render(<StatusBar />);
+    const { container } = renderStatusBar([]);
     expect(container.querySelector('.status-bar')).toBeNull();
   });
 
   it('StatusBar: モデル・effort・コンテキスト量・利用量を出す', () => {
-    useAppStore.setState({
-      claudeMeta: {
+    const { container } = renderStatusBar([
+      {
+        type: 'claude-status/meta-observed',
         tabId: 't1',
         meta: { model: 'claude-opus-5', effort: 'high', contextTokens: 55_002 },
       },
-      claudeUsage: { fiveHourPercent: 13, sevenDayPercent: 22 },
-    });
-    const { container } = render(<StatusBar />);
+      {
+        type: 'claude-status/usage-observed',
+        usage: { fiveHourPercent: 13, sevenDayPercent: 22 },
+      },
+    ]);
     const text = container.textContent ?? '';
     expect(text).toContain('Opus 5');
     expect(text).toContain('high');
@@ -336,21 +368,25 @@ describe('コンポーネントの操作', () => {
   });
 
   it('StatusBar: 別タブの情報は出さない（切り替え直後に前のタブの値を残さない）', () => {
-    useAppStore.setState({
-      claudeMeta: { tabId: 'other', meta: { model: 'claude-opus-5', contextTokens: 1000 } },
-      claudeUsage: { fiveHourPercent: 13 },
-    });
-    const { container } = render(<StatusBar />);
+    const { container } = renderStatusBar([
+      {
+        type: 'claude-status/meta-observed',
+        tabId: 'other',
+        meta: { model: 'claude-opus-5', contextTokens: 1000 },
+      },
+      { type: 'claude-status/usage-observed', usage: { fiveHourPercent: 13 } },
+    ]);
     expect(container.textContent).not.toContain('Opus 5');
     expect(container.textContent).toContain('5h 13%');
   });
 
   it('StatusBar: 設定で無効にすると描画しない', () => {
     useAppStore.setState({
-      claudeUsage: { fiveHourPercent: 13 },
       settings: { ...useAppStore.getState().settings, statusBarEnabled: false },
     });
-    const { container } = render(<StatusBar />);
+    const { container } = renderStatusBar([
+      { type: 'claude-status/usage-observed', usage: { fiveHourPercent: 13 } },
+    ]);
     expect(container.querySelector('.status-bar')).toBeNull();
   });
 

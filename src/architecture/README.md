@@ -13,6 +13,8 @@ store のアクションに落ちます（`effects.ts` が唯一の接点）。�
 ### 1. すべてのコンポーネントは Root の配下に置く
 
 機能ごとに Root を 1 つ持ち、その機能に属する View は必ずその内側に置きます。
+Root は `src/Roots.tsx` でまとめて敷き、**`App` を含むすべてのコンポーネント**が
+その配下に入ります（`App` 自身も副作用の中からイベントを流すため）。
 Root が持つのは次の 3 つだけです。
 
 - Mediator（ステートマシン）の生成と保持
@@ -124,8 +126,13 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 | 機能 | 状態 |
 |---|---|
 | `features/updater/` | 完了。状態もデータも Mediator が持つ |
+| `features/claudeStatus/` | 完了。`StatusBar` は store 参照 0 の Passive View。プラン利用量のポーリングも Root が持つ |
 | `features/tabs/` | キーコマンドの裁定と、コンテキストメニューによる抑止。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
 | それ以外 | 未着手。`useAppStore` を直接参照する従来の形 |
+
+store 参照の残数（多い順）: `App.tsx` 23 / `DragDropProvider` 18 / `TabItem` 14 /
+`TerminalPane` 12（うち 7 は例外）/ `GroupSection` 10 / `FavoritesSection` 8 /
+`Sidebar` 6 / `TitleBar` 5 / `TabBar` 5。
 
 残っている大きな塊は、`TerminalPane` の起動シーケンス（Claude セッションの採番、
 起動プランの算出、spawn タイムアウトの失敗判定）です。`spawning → live / crashed` は

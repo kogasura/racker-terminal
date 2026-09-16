@@ -47,8 +47,6 @@ export type UpdaterOutcome =
 
 export type UpdaterEvent = UpdaterIntent | UpdaterOutcome;
 
-/** チェーンに流せることを型で確かめておく。 */
-const _assertChainEvent: ChainEvent = {
-  type: 'updater/badge-clicked',
-} satisfies UpdaterEvent;
-void _assertChainEvent;
+/** チェーンに流せる形であることを型で確かめておく (実行時のコードは生まない)。 */
+type _AssertChainEvent = UpdaterEvent extends ChainEvent ? true : never;
+export type { _AssertChainEvent };

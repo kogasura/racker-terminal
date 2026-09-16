@@ -8,7 +8,6 @@ import {
   type ClaudeSession as ClaudeSessionInfo,
 } from '../lib/claudeSessions';
 import type { PrInfo as PrInfoValue } from '../lib/prStatus';
-import type { ClaudeTranscriptMeta, ClaudeUsageLimits } from '../lib/claudeMeta';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
 export const CLOSED_TABS_MAX = 10;
 
@@ -897,22 +896,6 @@ interface AppActions {
    */
   setWslDistros: (distros: string[]) => void;
 
-  /**
-   * アクティブタブの Claude 実行情報（モデル / effort / コンテキスト量）を差し替える。
-   *
-   * `meta === null` は「読めなかった」= 表示を消す。tabId を伴って渡すのは、
-   * ポーリングの往復中にタブが切り替わったとき、前のタブの値を
-   * 新しいタブの情報として出さないため（表示側で tabId を突き合わせる）。
-   *
-   * 値が変わっていなければ参照を据え置く（数秒ごとの再レンダーを避ける）。
-   */
-  setClaudeMeta: (tabId: string, meta: ClaudeTranscriptMeta | null) => void;
-
-  /**
-   * プラン利用量（5 時間 / 週次）を差し替える。
-   * `usage === null` は取得できなかったことを表し、表示を消す。
-   */
-  setClaudeUsage: (usage: ClaudeUsageLimits | null) => void;
 
   /**
    * タブのエージェント状態を設定する。
@@ -1013,8 +996,6 @@ export const useAppStore = create<Store>()(
   editingId: null,
   settings: defaultSettings,
   wslDistros: [],
-  claudeMeta: null,
-  claudeUsage: null,
   closedTabs: [],
 
   addFavorite: (fav) => {
@@ -1610,43 +1591,6 @@ export const useAppStore = create<Store>()(
   },
 
   setWslDistros: (distros) => set({ wslDistros: distros }),
-
-  setClaudeMeta: (tabId, meta) =>
-    set((state) => {
-      const prev = state.claudeMeta;
-      if (meta === null) {
-        return prev === null ? {} : { claudeMeta: null };
-      }
-      // 同じタブで同じ値なら参照ごと据え置く（数秒ごとの再レンダーを防ぐ）
-      if (
-        prev !== null &&
-        prev.tabId === tabId &&
-        prev.meta.model === meta.model &&
-        prev.meta.effort === meta.effort &&
-        prev.meta.contextTokens === meta.contextTokens
-      ) {
-        return {};
-      }
-      return { claudeMeta: { tabId, meta } };
-    }),
-
-  setClaudeUsage: (usage) =>
-    set((state) => {
-      const prev = state.claudeUsage;
-      if (usage === null) {
-        return prev === null ? {} : { claudeUsage: null };
-      }
-      if (
-        prev !== null &&
-        prev.fiveHourPercent === usage.fiveHourPercent &&
-        prev.sevenDayPercent === usage.sevenDayPercent &&
-        prev.fiveHourResetsAt === usage.fiveHourResetsAt &&
-        prev.sevenDayResetsAt === usage.sevenDayResetsAt
-      ) {
-        return {};
-      }
-      return { claudeUsage: usage };
-    }),
 
   setTabAgentState: (tabId, agentState) =>
     set((state) => {

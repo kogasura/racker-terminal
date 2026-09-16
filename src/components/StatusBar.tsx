@@ -1,4 +1,4 @@
-import { useAppStore } from '../store/appStore';
+import { useStatusBarView } from '../features/claudeStatus/ClaudeStatusRoot';
 import {
   contextLimitFor,
   shortModelName,
@@ -6,7 +6,6 @@ import {
   formatPercent,
   formatResetAt,
   severityOf,
-  hasAnythingToShow,
   type ClaudeTranscriptMeta,
   type ClaudeUsageLimits,
 } from '../lib/claudeMeta';
@@ -100,18 +99,11 @@ function UsageSection({ usage }: { usage: ClaudeUsageLimits }) {
 }
 
 export function StatusBar() {
-  // 未設定は有効として扱う（notificationsEnabled と同じ扱い）
-  const enabled = useAppStore((s) => s.settings.statusBarEnabled !== false);
-  const activeTabId = useAppStore((s) => s.activeTabId);
-  const claudeMeta = useAppStore((s) => s.claudeMeta);
-  const usage = useAppStore((s) => s.claudeUsage);
+  // 出すかどうか、何を出すかは View モデルが決めている。
+  // (設定での無効化、タブ切り替え中の取り違え、空の帯の抑止まで含めて)
+  const { visible, meta, usage } = useStatusBarView();
 
-  if (!enabled) return null;
-
-  // ポーリングの往復中にタブが切り替わったとき、前のタブの値を出さない
-  const meta = claudeMeta?.tabId === activeTabId ? claudeMeta.meta : null;
-  // 出すものが何も無ければ帯ごと消す（空の 1 行を残さない）
-  if (!hasAnythingToShow(meta, usage)) return null;
+  if (!visible) return null;
 
   return (
     <div className="status-bar">

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useAppStore } from './store/appStore';
+import { useEmit } from './architecture/chain';
+import type { ClaudeStatusEvent } from './features/claudeStatus/events';
 import {
   getAllRuntimes,
   recycleTextureAtlas,
@@ -23,9 +25,8 @@ import {
 } from './lib/claudeSessions';
 import {
   getTranscriptMeta,
-  getUsageLimits,
   shouldPollTranscript,
-  shouldFetchUsage,
+  type ClaudeTranscriptMeta,
 } from './lib/claudeMeta';
 import { shouldNotify, notifyAgentState } from './lib/notifications';
 import { getPrStatus, groupTabsByCwd, shouldPollPr } from './lib/prStatus';
@@ -36,8 +37,6 @@ import { DragDropProvider } from './components/DragDropProvider';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import { StatusBar } from './components/StatusBar';
-import { UpdaterRoot } from './features/updater/UpdaterRoot';
-import { TabsRoot } from './features/tabs/TabsRoot';
 import { useFileDropToTerminal } from './hooks/useFileDropToTerminal';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import './styles/variables.css';
@@ -96,7 +95,7 @@ export function pruneClosedTabs(
 
 /**
  * アクティブタブで動いている Claude の会話ログを読み、モデル / effort /
- * コンテキスト量をステータスバーへ反映する。
+ * コンテキスト量を返す。ステータスバーへ渡すのは呼び出し側。
  *
  * アクティブタブぶんしか読まない。会話ログは 50MB を超えることがあり、
  * 全タブぶんを数秒ごとに読むのは割に合わない（見えていないタブの
@@ -107,24 +106,18 @@ export function pruneClosedTabs(
  *
  * テストのため export している。
  */
-export async function refreshActiveTranscript(
-  activeTabId: string | null,
+export async function readActiveTranscript(
   session: ClaudeSession | undefined,
-): Promise<void> {
-  if (activeTabId === null) return;
-
-  if (session?.sessionId === undefined) {
-    useAppStore.getState().setClaudeMeta(activeTabId, null);
-    return;
-  }
-  const meta = await getTranscriptMeta(session.sessionId, session.cwd, session.distro);
-  useAppStore.getState().setClaudeMeta(activeTabId, meta);
+): Promise<ClaudeTranscriptMeta | null> {
+  // セッションが紐づかない (claude を起動していない・終了した) なら表示を消す
+  if (session?.sessionId === undefined) return null;
+  return getTranscriptMeta(session.sessionId, session.cwd, session.distro);
 }
 
 /**
  * この巡回でアクティブタブの会話ログを読み直してよいか。
  *
- * refreshActiveTranscript は「セッションが紐づかない = 表示を消す」まで担うため、
+ * readActiveTranscript は「セッションが紐づかない = null (表示を消す)」を返すため、
  * **見に行っていない範囲のタブに対して呼ぶと、見えている情報を消してしまう**。
  * WSL を間引いた tick では WSL タブのセッションが一覧に出ないので、
  * ステータスバーの表示が数秒ごとに点滅することになる。
@@ -142,6 +135,12 @@ function canReadTranscript(
 
 function App() {
   const { isDragging } = useFileDropToTerminal();
+
+  // 会話ログを読めた結果をステータスバーへ流す。巡回は長命な effect の中で回るので、
+  // 最新の emit を ref 越しに読む (依存に入れると巡回ごと張り直しになる)。
+  const emit = useEmit<ClaudeStatusEvent>();
+  const emitRef = useRef(emit);
+  emitRef.current = emit;
 
   useEffect(() => {
     // persist の rehydrate 完了を待ってから自動初期化する。
@@ -184,15 +183,6 @@ function App() {
     });
     return unsub;
   }, []);
-
-  // persist の hydration 完了。updater の初回チェックはこれを待ってから走らせる
-  // (復元前に走らせると、まだ何も無い状態で更新ダイアログだけが出ることがある)。
-  const [hydrated, setHydrated] = useState(() => useAppStore.persist.hasHydrated());
-  useEffect(() => {
-    if (hydrated) return;
-    const unsub = useAppStore.persist.onFinishHydration(() => setHydrated(true));
-    return unsub;
-  }, [hydrated]);
 
   // #5: WebGL のグリフキャッシュ (TextureAtlas) は全タブで共有されており、外からクリアすると
   // 他タブの頂点バッファが古い座標を指したままになって文字が化ける。クリアではなく
@@ -382,6 +372,32 @@ function App() {
     // 1 回に数秒かかることがあり、2 秒間隔だと要求が積み上がってしまう。
     let running = false;
 
+    /**
+     * アクティブタブの会話ログを読んでステータスバーへ流す。
+     *
+     * セッションの巡回より頻度を落とす: モデルや effort はめったに変わらず、
+     * WSL タブでは 9P 越しのファイル読み取りになるため。
+     *
+     * **この巡回で見に行っていないタブでは読み直さない。** WSL を間引いた tick では
+     * WSL タブのセッションが一覧に出ないため、そのまま呼ぶと「セッションが無い」と
+     * 判断して表示を消してしまい、モデル / コンテキスト表示が数秒ごとに消える
+     * （applyClaudeSessions 側の covered と同じ理屈）。
+     */
+    const pollTranscript = async (
+      currentTick: number,
+      activeTabId: string | null,
+      covered: ReadonlySet<string>,
+      matches: Map<string, ClaudeSession>,
+    ) => {
+      if (activeTabId === null) return;
+      if (!shouldPollTranscript(currentTick)) return;
+      if (cancelled || !canReadTranscript(activeTabId, covered, matches)) return;
+
+      const meta = await readActiveTranscript(matches.get(activeTabId));
+      if (cancelled) return;
+      emitRef.current({ type: 'claude-status/meta-observed', tabId: activeTabId, meta });
+    };
+
     const pollOnce = async () => {
       const before = useAppStore.getState();
       const tabList = Object.values(before.tabs);
@@ -429,21 +445,8 @@ function App() {
         covered,
       });
 
-      // ついでにアクティブタブの会話ログも読む（セッション ID と cwd がここで揃うため）。
-      // セッションの巡回より頻度を落とす: モデルや effort はめったに変わらず、
-      // WSL タブでは 9P 越しのファイル読み取りになるため。
-      //
-      // **この巡回で見に行っていないタブでは読み直さない。** WSL を間引いた tick では
-      // WSL タブのセッションが一覧に出ないため、そのまま呼ぶと「セッションが無い」と
-      // 判断して claudeMeta を null にし、ステータスバーのモデル / コンテキスト表示が
-      // 数秒ごとに消える（applyClaudeSessions 側の covered と同じ理屈）。
-      if (shouldPollTranscript(currentTick) && !cancelled && canReadTranscript(after.activeTabId, covered, matches)) {
-        const activeTabId = after.activeTabId;
-        await refreshActiveTranscript(
-          activeTabId,
-          activeTabId === null ? undefined : matches.get(activeTabId),
-        );
-      }
+      // ついでにアクティブタブの会話ログも読み、ステータスバーへ流す。
+      await pollTranscript(currentTick, after.activeTabId, covered, matches);
     };
 
     const tick = async () => {
@@ -461,66 +464,6 @@ function App() {
     return () => {
       cancelled = true;
       clearInterval(id);
-    };
-  }, []);
-
-  // プランの利用量（5 時間ウィンドウ / 週次）を定期的に引く。
-  //
-  // 「あと何割使えるか」を Claude Code の中で調べるには `/usage` を打つ必要があり、
-  // そのたびに会話が中断する。racker はタブの外にいるので、黙って出しておける。
-  //
-  // Anthropic の API を叩くため、間隔は分単位で十分に長く取る（利用率は
-  // 分単位でしか動かない）。裏に回っているあいだは引かず、前面に戻ったときは
-  // 引き直すが、最小間隔を置く（ウィンドウを行き来するだけで叩き続けないため）。
-  useEffect(() => {
-    const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 分
-    let cancelled = false;
-    let running = false;
-    // 初期値 true は「フォーカスイベントが来る前でも 1 回目は引く」ため（PR 取得と同じ）
-    let focused = true;
-    let hasEverPolled = false;
-    let lastFetchedAt = 0;
-    let unlistenFocus: (() => void) | null = null;
-
-    const tick = async () => {
-      if (running) return;
-      if (!shouldFetchUsage(focused, hasEverPolled, Date.now() - lastFetchedAt)) return;
-      running = true;
-      hasEverPolled = true;
-      try {
-        const usage = await getUsageLimits();
-        if (!cancelled) useAppStore.getState().setClaudeUsage(usage);
-      } finally {
-        lastFetchedAt = Date.now();
-        running = false;
-      }
-    };
-
-    // 前面に戻ってきたら引き直す。裏にいるあいだに使った分を反映するため
-    // （別のウィンドウで動かしている Claude Code の消費もここに乗る）。
-    void (async () => {
-      try {
-        const win = getCurrentWebviewWindow();
-        const fn = await win.onFocusChanged(({ payload }) => {
-          const wasFocused = focused;
-          focused = payload;
-          if (!wasFocused && focused) void tick();
-        });
-        if (cancelled) fn();
-        else unlistenFocus = fn;
-      } catch (e) {
-        // フォーカスを追えない環境では、5 分間隔の定期取得だけに任せる
-        console.warn('[App] onFocusChanged failed, usage polling stays interval-only:', e);
-        focused = true;
-      }
-    })();
-
-    void tick();
-    const id = setInterval(() => void tick(), POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-      unlistenFocus?.();
     };
   }, []);
 
@@ -603,10 +546,6 @@ function App() {
   }, []);
 
   return (
-    // updater 機能の Root。バッジ (タイトルバー内) と設定セクション (設定ダイアログ内) が
-    // 離れた場所に出るため、両方を含む位置でコンテキストの親になる必要がある。
-    <UpdaterRoot ready={hydrated}>
-    <TabsRoot>
     <div className="app-root">
       <TitleBar />
       <div className="app-body">
@@ -624,8 +563,6 @@ function App() {
       {/* サイドバーの下まで通す全幅の 1 行。出すものが無いときは自身で消える */}
       <StatusBar />
     </div>
-    </TabsRoot>
-    </UpdaterRoot>
   );
 }
 

@@ -26,12 +26,14 @@ import { initialState, transition, type TabsEffect, type TabsState } from './mac
 import {
   selectFavorites,
   selectGroup,
+  selectNewTabMenu,
   selectMoveTargets,
   selectSidebar,
   selectTabBar,
   selectTabItem,
   type FavoritesViewModel,
   type GroupViewModel,
+  type NewTabMenuViewModel,
   type MoveTargetViewModel,
   type SidebarViewModel,
   type TabBarViewModel,
@@ -85,6 +87,16 @@ export function useFavoritesView(): FavoritesViewModel {
   const favorites = useAppStore(useShallow((s) => s.favorites));
   const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
   return useMemo(() => selectFavorites(favorites, defaultFavoriteId), [favorites, defaultFavoriteId]);
+}
+
+/** タイトルバーの新規タブメニュー。 */
+export function useNewTabMenuView(): NewTabMenuViewModel {
+  const favorites = useAppStore(useShallow((s) => s.favorites));
+  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
+  return useMemo(
+    () => selectNewTabMenu(favorites, defaultFavoriteId),
+    [favorites, defaultFavoriteId],
+  );
 }
 
 /**

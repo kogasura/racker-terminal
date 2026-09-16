@@ -166,6 +166,40 @@ export function selectFavorites(
   };
 }
 
+/** タイトルバーの新規タブメニューの 1 行。 */
+export interface NewTabMenuItemViewModel {
+  readonly favoriteId: string;
+  readonly title: string;
+  /** 既定のお気に入りだけ塗りつぶしの星にする。 */
+  readonly icon: string;
+  /** ショートカットの表示。割り当てが無ければ undefined。 */
+  readonly shortcut: string | undefined;
+}
+
+export interface NewTabMenuViewModel {
+  /** お気に入りが 0 件ならセパレータごと出さない。 */
+  readonly hasFavorites: boolean;
+  readonly items: readonly NewTabMenuItemViewModel[];
+}
+
+/** ショートカットが割り当たるのは先頭 9 件まで (Ctrl+Shift+1..9)。 */
+const SHORTCUT_LIMIT = 9;
+
+export function selectNewTabMenu(
+  favorites: readonly Favorite[],
+  defaultFavoriteId: string | null | undefined,
+): NewTabMenuViewModel {
+  return {
+    hasFavorites: favorites.length > 0,
+    items: favorites.map((fav, index) => ({
+      favoriteId: fav.id,
+      title: fav.title,
+      icon: fav.id === defaultFavoriteId ? '⭐' : '★',
+      shortcut: index < SHORTCUT_LIMIT ? `Ctrl+Shift+${index + 1}` : undefined,
+    })),
+  };
+}
+
 /** グループ 1 行ぶんの描画パラメータ。 */
 export interface GroupViewModel {
   /** グループが実在するか。削除直後などに false になる。 */

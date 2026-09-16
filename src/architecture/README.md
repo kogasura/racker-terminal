@@ -130,12 +130,14 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 | `features/tabs/` | キーコマンドの裁定、コンテキストメニューによる抑止、`TabBar` / `Sidebar` の View モデル。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
 | それ以外 | 未着手。`useAppStore` を直接参照する従来の形 |
 
-Passive View になったもの: `StatusBar` / `TabBar` / `Sidebar` / `TabItem` /
-`GroupSection` / `FavoritesSection` / updater の View 群。
-**サイドバーとタブバーの表示は、これで全部 View モデル経由になった。**
+Passive View になったもの: `TitleBar` / `StatusBar` / `TabBar` / `Sidebar` /
+`TabItem` / `GroupSection` / `FavoritesSection` / updater の View 群。
+**画面の枠 (タイトルバー・サイドバー・タブバー・ステータスバー) は、
+これで全部 View モデル経由になった。**
 
-store 参照の残数（多い順）: `App.tsx` 23 / `DragDropProvider` 18 /
-`TerminalPane` 12（うち 7 は例外）/ `TitleBar` 5。
+store 参照の残数: `App.tsx` 23 / `DragDropProvider` 18 /
+`TerminalPane` 12（うち 7 は例外）。残りは表示ではなく、副作用・D&D の解決・
+起動シーケンスで、性質が違う。
 
 ### 一覧の中の View モデル
 

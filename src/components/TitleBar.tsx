@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Window } from '@tauri-apps/api/window';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import { useNewTabMenuView } from '../features/tabs/TabsRoot';
+import type { TabsEvent } from '../features/tabs/events';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateBadgeView } from '../features/updater/views/UpdateBadgeView';
 
@@ -21,11 +22,9 @@ export function TitleBar() {
   // F-S2: Window.getCurrent() は描画ごとに呼ばれないよう useMemo でメモ化する
   const win = useMemo(() => Window.getCurrent(), []);
 
-  // favorites と defaultFavoriteId を subscribe (useShallow で参照比較の最適化)
-  const favorites = useAppStore(useShallow((s) => s.favorites));
-  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
-  const spawnDefaultOrNew = useAppStore((s) => s.spawnDefaultOrNew);
-  const spawnFavorite = useAppStore((s) => s.spawnFavorite);
+  // 新規タブメニュー。並べるもの (星の種類・ショートカット表示) は View モデルが決める。
+  const newTabMenu = useNewTabMenuView();
+  const emit = useEmit<TabsEvent>();
 
   // 自動更新バッジ。状態は updater の Root から View モデルとして降ってくる。
   const { badge } = useUpdaterView();
@@ -59,7 +58,7 @@ export function TitleBar() {
         <button
           type="button"
           className="title-bar__btn--new-tab"
-          onClick={() => spawnDefaultOrNew()}
+          onClick={() => emit({ type: 'tabs/default-tab-open-requested' })}
           aria-label="新しいタブ"
           title="新しいタブ (Ctrl+T)"
         >
@@ -87,35 +86,34 @@ export function TitleBar() {
               {/* 「新しいタブ (既定)」 */}
               <DropdownMenu.Item
                 className="dropdown-menu__item"
-                onSelect={() => spawnDefaultOrNew()}
+                onSelect={() => emit({ type: 'tabs/default-tab-open-requested' })}
               >
                 新しいタブ (既定)
                 <span className="dropdown-menu__shortcut">Ctrl+T</span>
               </DropdownMenu.Item>
 
               {/* お気に入り一覧 (0 件のときはセパレータ・一覧ともに非表示) */}
-              {favorites.length > 0 && (
+              {newTabMenu.hasFavorites && (
                 <>
                   <DropdownMenu.Separator className="dropdown-menu__separator" />
-                  {favorites.map((fav, idx) => {
-                    const isDefault = fav.id === defaultFavoriteId;
-                    const icon = isDefault ? '⭐' : '★';
-                    // 最初の 9 件のみショートカットラベルを表示
-                    const shortcut = idx < 9 ? `Ctrl+Shift+${idx + 1}` : undefined;
-                    return (
-                      <DropdownMenu.Item
-                        key={fav.id}
-                        className="dropdown-menu__item"
-                        onSelect={() => spawnFavorite(fav.id)}
-                      >
-                        <span className="dropdown-menu__fav-icon">{icon}</span>
-                        {fav.title}
-                        {shortcut && (
-                          <span className="dropdown-menu__shortcut">{shortcut}</span>
-                        )}
-                      </DropdownMenu.Item>
-                    );
-                  })}
+                  {newTabMenu.items.map((item) => (
+                    <DropdownMenu.Item
+                      key={item.favoriteId}
+                      className="dropdown-menu__item"
+                      onSelect={() =>
+                        emit({
+                          type: 'tabs/favorite-spawn-requested',
+                          favoriteId: item.favoriteId,
+                        })
+                      }
+                    >
+                      <span className="dropdown-menu__fav-icon">{item.icon}</span>
+                      {item.title}
+                      {item.shortcut && (
+                        <span className="dropdown-menu__shortcut">{item.shortcut}</span>
+                      )}
+                    </DropdownMenu.Item>
+                  ))}
                 </>
               )}
             </DropdownMenu.Content>

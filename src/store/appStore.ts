@@ -10,22 +10,6 @@ import {
 import type { PrInfo as PrInfoValue } from '../lib/prStatus';
 import type { ClaudeTranscriptMeta, ClaudeUsageLimits } from '../lib/claudeMeta';
 import { forceDisposeRuntime } from '../lib/terminalRegistry';
-import {
-  checkForUpdate,
-  compareVersions,
-  downloadUpdate,
-  installAndRelaunch,
-  takeFailedUpdateAttempt,
-  type UpdateAvailable,
-} from '../lib/updater';
-
-// Update ハンドルは state には入れない (zustand の構造比較で重い object を引きずらないため)
-let pendingUpdateHandle: UpdateAvailable | null = null;
-
-// ready のまま待機している pending を差し替え中かどうか。定期チェックが重なって
-// 同じ版を二重に DL しないためのガード。
-let refreshingPendingUpdate = false;
-
 export const CLOSED_TABS_MAX = 10;
 
 const defaultSettings: Settings = {
@@ -748,12 +732,6 @@ interface AppActions {
   startEditing: (id: string) => void;
   stopEditing: () => void;
 
-  /** 右クリックコンテキストメニューの open 状態を同期する。
-   * ContextMenu の onOpenChange から呼ぶ。
-   * TerminalPane の attachCustomKeyEventHandler で contextMenuOpen===true のとき
-   * Ctrl+Tab 等のキーバインドを suspend する。
-   */
-  setContextMenuOpen: (open: boolean) => void;
 
   /**
    * グループを新規作成し、そのグループ ID を返す。
@@ -1010,47 +988,6 @@ interface AppActions {
    */
   setDragState: (dragId: string | null, dragKind: DragKind | null) => void;
 
-  // --- updater アクション ---
-  /**
-   * 起動時と定期チェックで App.tsx から呼ぶ。更新チェックを実行し、利用可能な更新が
-   * あればバックグラウンドで自動 DL して updatePhase を 'ready' に遷移させる。
-   *
-   * すでに 'ready' (DL 済みで再起動待ち) の場合は、その pending より新しいリリースが
-   * 出ていないかを確認し、出ていれば裏で DL して差し替える (phase は 'ready' のまま)。
-   * これがないと、放置している間に出た版を飛ばして 1 つずつしか上がらない。
-   *
-   * 再入防止: phase が 'idle' / 'ready' 以外のとき no-op。
-   */
-  runUpdateCheck: () => Promise<void>;
-
-  /** 更新ダイアログを開く。 */
-  openUpdateDialog: () => void;
-
-  /** 更新ダイアログを閉じる。 */
-  closeUpdateDialog: () => void;
-
-  /**
-   * ユーザーが Dialog の「今すぐ再起動」をクリックして呼ぶ。
-   * インストール + relaunch を実行する。
-   * 再入防止: phase が 'ready' でも 'error' でもないとき no-op。
-   */
-  applyUpdate: () => Promise<void>;
-
-  /**
-   * エラー状態をリセットして idle に戻す。
-   * 更新ダイアログの「閉じる」ボタンから呼ぶ。
-   */
-  resetUpdateError: () => void;
-
-  /**
-   * 前回の更新適用が反映されたかを起動時に確かめる。
-   * 反映されていなければ updateInstallFailure を立てて知らせる。
-   */
-  checkPreviousUpdateAttempt: () => Promise<void>;
-
-  /** 更新失敗の通知を閉じる。 */
-  dismissUpdateInstallFailure: () => void;
-
   /**
    * 最後に閉じたタブを復元する。Ctrl+Shift+T から呼ぶ。
    * - スタックが空 → null を返す (no-op)
@@ -1061,48 +998,6 @@ interface AppActions {
 }
 
 type Store = AppState & AppActions;
-
-/**
- * ready のまま待機している pending 更新を、さらに新しいリリースへ差し替える。
- *
- * racker は起動しっぱなしで使われるため、DL 済みバッジが何日も放置されることがある。
- * その間に出たリリースを拾わないと、バッジから入るのは常に「気付いた時点の次の版」に
- * なってしまう (= 1 バージョンずつしか上がらない)。定期チェックのたびにここを通し、
- * 現在の pending より新しい版があれば DL してから差し替える。
- *
- * 差し替えは **DL 完了後** に行う。途中で失敗しても、すでに DL 済みの古い pending が
- * そのまま残るので「更新できる状態」を失わない。
- */
-async function refreshPendingUpdate(
-  set: (partial: Partial<Store>) => void,
-  get: () => Store,
-): Promise<void> {
-  if (refreshingPendingUpdate) return;
-  refreshingPendingUpdate = true;
-  try {
-    const latest = await checkForUpdate();
-    // 取得できない (ネットワーク不通など) ときは既存の pending をそのまま残す
-    if (!latest) return;
-
-    const pending = pendingUpdateHandle;
-    if (pending && compareVersions(latest.version, pending.version) <= 0) return;
-
-    // バッジ表示中なので進捗 UI は不要。完全に裏で落とす。
-    await downloadUpdate(latest, () => {});
-
-    // DL 中にユーザーが適用を始めていたら (installing / error) 触らない
-    if (get().updatePhase !== 'ready') return;
-
-    pendingUpdateHandle = latest;
-    const { _handle: _newHandle, ...persistableInfo } = latest;
-    set({ updateInfo: persistableInfo, updateProgress: 1 });
-  } catch (e) {
-    // 差し替えに失敗しても古い pending で更新はできる。黙って諦める。
-    console.warn('[updater] refreshPendingUpdate failed:', e);
-  } finally {
-    refreshingPendingUpdate = false;
-  }
-}
 
 export const useAppStore = create<Store>()(
   persist(
@@ -1116,18 +1011,11 @@ export const useAppStore = create<Store>()(
   dragId: null,
   dragKind: null,
   editingId: null,
-  contextMenuOpen: false,
   settings: defaultSettings,
   wslDistros: [],
   claudeMeta: null,
   claudeUsage: null,
   closedTabs: [],
-  updateInfo: null,
-  updatePhase: 'idle',
-  updateProgress: 0,
-  updateError: null,
-  updateDialogOpen: false,
-  updateInstallFailure: null,
 
   addFavorite: (fav) => {
     const id = newId();
@@ -1335,8 +1223,6 @@ export const useAppStore = create<Store>()(
 
   startEditing: (id) => set({ editingId: id }),
   stopEditing: () => set({ editingId: null }),
-  setContextMenuOpen: (open) => set({ contextMenuOpen: open }),
-
   createGroup: (title = 'Default') => {
     const id = newId();
     set((state) => ({
@@ -1778,102 +1664,6 @@ export const useAppStore = create<Store>()(
       return { tabs: { ...state.tabs, [tabId]: { ...tab, agentState: next } } };
     }),
 
-  runUpdateCheck: async () => {
-    const phase = get().updatePhase;
-
-    // DL 済み (ready) のまま待機している間に、さらに新しいリリースが出ていることがある。
-    // ここで取り直さないと、バッジをクリックした時点ですでに古い版を掴んだままになり、
-    // 「再起動するたびに 1 バージョンずつしか上がらない」状態になる。
-    // バッジは出したままにしておきたいので phase は 'ready' から動かさず、裏で差し替える。
-    if (phase === 'ready') {
-      await refreshPendingUpdate(set, get);
-      return;
-    }
-
-    if (phase !== 'idle') return;
-
-    set({ updatePhase: 'checking', updateError: null });
-    const info = await checkForUpdate();
-
-    if (!info) {
-      set({ updatePhase: 'idle', updateInfo: null });
-      return;
-    }
-
-    // ハンドルをモジュールスコープに退避し、state には含めない
-    pendingUpdateHandle = info;
-    const { _handle, ...persistableInfo } = info;
-    set({ updateInfo: persistableInfo, updatePhase: 'downloading', updateProgress: 0 });
-
-    // 自動でバックグラウンド DL を開始する（ユーザー承認なし）
-    try {
-      await downloadUpdate(info, (p) => {
-        const next = p.ratio ?? -1;
-        const prev = get().updateProgress;
-        // クオンタイズ (1% 単位): 不明 ↔ 既知の遷移、または 1% 以上変化したときのみ更新
-        if ((next < 0 && prev >= 0) || (next >= 0 && prev < 0) || (next >= 0 && Math.abs(next - prev) >= 0.01)) {
-          set({ updateProgress: next });
-        }
-      });
-      set({ updatePhase: 'ready' });
-    } catch (e) {
-      // バックグラウンド失敗はユーザーに見せず idle に戻して次回起動でリトライ (Chrome 流)
-      console.warn('[updater] background download failed:', e);
-      // DL 中に外部から phase が変更されていた場合は上書きしない
-      if (get().updatePhase === 'downloading') {
-        pendingUpdateHandle = null;
-        set({ updatePhase: 'idle', updateInfo: null, updateProgress: 0 });
-      }
-    }
-  },
-
-  openUpdateDialog: () => set({ updateDialogOpen: true }),
-
-  closeUpdateDialog: () => set({ updateDialogOpen: false }),
-
-  applyUpdate: async () => {
-    const phase = get().updatePhase;
-    // 再入防止ガード: ready または error のときのみ実行
-    if (phase !== 'ready' && phase !== 'error') return;
-    if (!pendingUpdateHandle) {
-      set({
-        updatePhase: 'error',
-        updateError: '更新ハンドルが失われました。アプリを再起動してください。',
-      });
-      return;
-    }
-
-    set({ updatePhase: 'installing', updateError: null });
-
-    try {
-      await installAndRelaunch(pendingUpdateHandle);
-      // relaunch 後は到達しない
-    } catch (e) {
-      set({
-        updatePhase: 'error',
-        updateError: (e as Error)?.message ?? String(e),
-      });
-    }
-  },
-
-  resetUpdateError: () => {
-    pendingUpdateHandle = null;
-    set({
-      updatePhase: 'idle',
-      updateError: null,
-      updateInfo: null,
-      updateProgress: 0,
-      updateDialogOpen: false,
-    });
-  },
-
-  checkPreviousUpdateAttempt: async () => {
-    const failure = await takeFailedUpdateAttempt();
-    if (failure) set({ updateInstallFailure: failure });
-  },
-
-  dismissUpdateInstallFailure: () => set({ updateInstallFailure: null }),
-
   restoreLastClosedTab: () => {
     const { closedTabs, groups } = get();
     if (closedTabs.length === 0) return null;
@@ -1991,9 +1781,8 @@ export const useAppStore = create<Store>()(
         // 選択中グループだけは保存する。再起動で別のフォルダに飛ぶと、そのまま
         // Ctrl+T したときに意図しないグループへタブが入るため。
         activeGroupId: state.activeGroupId,
-        // activeTabId / editingId / contextMenuOpen / wslDistros は OFF
-        // updater 系 (updateInfo, updatePhase, updateProgress, updateError, updateDialogOpen)
-        // は永続化対象外。再起動時はデフォルト値で初期化される。
+        // activeTabId / editingId / wslDistros は OFF
+        // updater は store ではなく features/updater の Mediator が持つ。
         // closedTabs は永続化対象外（再起動でクリア）。
       }),
       // F-M2: 復元時の整合性ガード
@@ -2022,17 +1811,8 @@ export const useAppStore = create<Store>()(
 
         // ランタイム状態は復元しない
         state.editingId = null;
-        state.contextMenuOpen = false;
         state.dragId = null;
         state.dragKind = null;
-
-        // updater 系は永続化対象外のため再起動時にデフォルト値で明示初期化する
-        state.updateInfo = null;
-        state.updatePhase = 'idle';
-        state.updateProgress = 0;
-        state.updateError = null;
-        state.updateDialogOpen = false;
-        state.updateInstallFailure = null;
 
         // closedTabs は永続化対象外のため再起動時に明示初期化する
         state.closedTabs = [];

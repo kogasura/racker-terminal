@@ -3,6 +3,8 @@ import { Window } from '@tauri-apps/api/window';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
+import { useUpdaterView } from '../features/updater/UpdaterRoot';
+import { UpdateBadgeView } from '../features/updater/views/UpdateBadgeView';
 
 /**
  * frameless window 用カスタムタイトルバー。
@@ -25,9 +27,8 @@ export function TitleBar() {
   const spawnDefaultOrNew = useAppStore((s) => s.spawnDefaultOrNew);
   const spawnFavorite = useAppStore((s) => s.spawnFavorite);
 
-  // 自動更新バッジ
-  const updatePhase = useAppStore((s) => s.updatePhase);
-  const openUpdateDialog = useAppStore((s) => s.openUpdateDialog);
+  // 自動更新バッジ。状態は updater の Root から View モデルとして降ってくる。
+  const { badge } = useUpdaterView();
 
   // data-tauri-drag-region フォールバック: 左クリックの mousedown でウィンドウドラッグを開始する。
   // ボタンクリック時は button.onClick が e.stopPropagation 相当の動作をしないので
@@ -49,18 +50,8 @@ export function TitleBar() {
         Racker Terminal
       </div>
 
-      {/* 自動更新バッジ: ready または error のときのみ表示 (downloading 中は無音) */}
-      {(updatePhase === 'ready' || updatePhase === 'error') && (
-        <button
-          type="button"
-          className="title-bar__update-badge"
-          onClick={openUpdateDialog}
-          aria-label={updatePhase === 'error' ? 'アップデートエラー' : '再起動して更新を適用'}
-          title={updatePhase === 'error' ? 'アップデートエラー' : '再起動して更新を適用'}
-        >
-          {updatePhase === 'error' ? '!' : '↑'}
-        </button>
-      )}
+      {/* 自動更新バッジ: 出すかどうかも文言も View モデルが決めている */}
+      <UpdateBadgeView vm={badge} />
 
       {/* 新規タブ split button */}
       <div className="title-bar__new-tab-group">

@@ -4,6 +4,8 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import type { TabsEvent } from '../features/tabs/events';
 import { FavoriteDialog } from './FavoriteDialog';
 import type { Favorite } from '../types';
 import { DRAG_KIND } from '../lib/dndResolve';
@@ -124,7 +126,8 @@ export const FavoritesSection = memo(function FavoritesSection() {
   const removeFavorite = useAppStore((s) => s.removeFavorite);
   const addFavorite = useAppStore((s) => s.addFavorite);
   const updateFavorite = useAppStore((s) => s.updateFavorite);
-  const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
+  // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
+  const emit = useEmit<TabsEvent>();
   const setDefaultFavorite = useAppStore((s) => s.setDefaultFavorite);
 
   return (
@@ -169,7 +172,9 @@ export const FavoritesSection = memo(function FavoritesSection() {
                       // 既定なら解除、そうでなければ設定
                       setDefaultFavorite(isDefault ? null : fav.id);
                     }}
-                    onContextMenuOpen={(open) => setContextMenuOpen(open)}
+                    onContextMenuOpen={(open) =>
+                      emit({ type: open ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
+                    }
                   />
                 );
               })}
@@ -195,8 +200,8 @@ export const FavoritesSection = memo(function FavoritesSection() {
           }}
           onClose={() => {
             setDialogState(null);
-            // F-S5: ContextMenu → Dialog 遷移で contextMenuOpen が true で残るリスクに対する念のためリセット
-            setContextMenuOpen(false);
+            // F-S5: ContextMenu → Dialog 遷移でメニューが開いたままになるリスクへの念のためリセット
+            emit({ type: 'tabs/context-menu-closed' });
           }}
         />
       )}
@@ -210,8 +215,8 @@ export const FavoritesSection = memo(function FavoritesSection() {
           }}
           onClose={() => {
             setDialogState(null);
-            // F-S5: ContextMenu → Dialog 遷移で contextMenuOpen が true で残るリスクに対する念のためリセット
-            setContextMenuOpen(false);
+            // F-S5: ContextMenu → Dialog 遷移でメニューが開いたままになるリスクへの念のためリセット
+            emit({ type: 'tabs/context-menu-closed' });
           }}
         />
       )}

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -36,7 +36,8 @@ import { DragDropProvider } from './components/DragDropProvider';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import { StatusBar } from './components/StatusBar';
-import { UpdateDialog } from './components/UpdateDialog';
+import { UpdaterRoot } from './features/updater/UpdaterRoot';
+import { TabsRoot } from './features/tabs/TabsRoot';
 import { useFileDropToTerminal } from './hooks/useFileDropToTerminal';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import './styles/variables.css';
@@ -184,43 +185,14 @@ function App() {
     return unsub;
   }, []);
 
-  // updater のチェック:
-  // - 起動時に 1 回 (persist hydration 完了を待つ)
-  // - 以降は 1 時間ごとに定期チェックして、起動しっぱなし運用でも更新に気付けるようにする
-  // 同時実行は runUpdateCheck 側のガード (phase !== 'idle' のとき no-op) で防がれる。
+  // persist の hydration 完了。updater の初回チェックはこれを待ってから走らせる
+  // (復元前に走らせると、まだ何も無い状態で更新ダイアログだけが出ることがある)。
+  const [hydrated, setHydrated] = useState(() => useAppStore.persist.hasHydrated());
   useEffect(() => {
-    const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 時間
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    const fire = () => {
-      if (cancelled) return;
-      void useAppStore.getState().runUpdateCheck();
-    };
-
-    const start = () => {
-      if (cancelled) return;
-      // 前回「再起動して適用」したのにバージョンが変わっていないなら、更新は
-      // 無言で失敗している。チェックより先に確かめて知らせる。
-      void useAppStore.getState().checkPreviousUpdateAttempt();
-      fire();
-      intervalId = setInterval(fire, UPDATE_CHECK_INTERVAL_MS);
-    };
-
-    if (useAppStore.persist.hasHydrated()) {
-      start();
-      return () => {
-        cancelled = true;
-        if (intervalId !== null) clearInterval(intervalId);
-      };
-    }
-    const unsub = useAppStore.persist.onFinishHydration(start);
-    return () => {
-      cancelled = true;
-      unsub();
-      if (intervalId !== null) clearInterval(intervalId);
-    };
-  }, []);
+    if (hydrated) return;
+    const unsub = useAppStore.persist.onFinishHydration(() => setHydrated(true));
+    return unsub;
+  }, [hydrated]);
 
   // #5: WebGL のグリフキャッシュ (TextureAtlas) は全タブで共有されており、外からクリアすると
   // 他タブの頂点バッファが古い座標を指したままになって文字が化ける。クリアではなく
@@ -631,9 +603,12 @@ function App() {
   }, []);
 
   return (
+    // updater 機能の Root。バッジ (タイトルバー内) と設定セクション (設定ダイアログ内) が
+    // 離れた場所に出るため、両方を含む位置でコンテキストの親になる必要がある。
+    <UpdaterRoot ready={hydrated}>
+    <TabsRoot>
     <div className="app-root">
       <TitleBar />
-      <UpdateDialog />
       <div className="app-body">
         {/* D&D は Sidebar と TabBar をまたぐため、両方を包む位置に DndContext を置く
             (TabBar のタブをサイドバーのグループ行へドロップして移動できるようにする) */}
@@ -649,6 +624,8 @@ function App() {
       {/* サイドバーの下まで通す全幅の 1 行。出すものが無いときは自身で消える */}
       <StatusBar />
     </div>
+    </TabsRoot>
+    </UpdaterRoot>
   );
 }
 

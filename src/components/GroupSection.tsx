@@ -4,6 +4,8 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import type { TabsEvent } from '../features/tabs/events';
 import { InlineEdit } from './InlineEdit';
 import { DRAG_KIND } from '../lib/dndResolve';
 import { AGENT_STATE_LABEL, dominantAgentState, type AgentState } from '../types';
@@ -79,7 +81,8 @@ export const GroupSection = memo(function GroupSection({
   const setActiveGroup = useAppStore((s) => s.setActiveGroup);
   const startEditing = useAppStore((s) => s.startEditing);
   const updateGroupTitle = useAppStore((s) => s.updateGroupTitle);
-  const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
+  // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
+  const emit = useEmit<TabsEvent>();
   // F2: prop drilling 解消 — Sidebar から groupsCount を受け取らず直接 subscribe
   const canDelete = useAppStore((s) => s.groups.length > 1);
   // drop ホバーの見た目をタブのドラッグ中に限定するため、種別だけ subscribe する
@@ -140,7 +143,11 @@ export const GroupSection = memo(function GroupSection({
       style={groupStyle}
       data-dragging={isGroupDragging || undefined}
     >
-      <ContextMenu.Root onOpenChange={(open) => setContextMenuOpen(open)}>
+      <ContextMenu.Root
+        onOpenChange={(open) =>
+          emit({ type: open ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
+        }
+      >
         {/* 編集中は右クリックメニューを無効化する */}
         <ContextMenu.Trigger
           disabled={isEditingGroup}

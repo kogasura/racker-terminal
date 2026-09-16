@@ -29,7 +29,6 @@ function resetStore() {
     favorites: [],
     activeTabId: null,
     editingId: null,
-    contextMenuOpen: false,
     settings: {
       theme: 'tokyo-night',
       fontFamily: '"MonaspiceNe NF", monospace',
@@ -39,11 +38,6 @@ function resetStore() {
     },
     wslDistros: [],
     closedTabs: [],
-    updateInfo: null,
-    updatePhase: 'idle',
-    updateProgress: 0,
-    updateError: null,
-    updateDialogOpen: false,
   });
 }
 
@@ -973,17 +967,6 @@ describe('appStore', () => {
     });
   });
 
-  // --- setContextMenuOpen ---
-  describe('setContextMenuOpen', () => {
-    it('true / false を切り替えられる', () => {
-      expect(useAppStore.getState().contextMenuOpen).toBe(false);
-      useAppStore.getState().setContextMenuOpen(true);
-      expect(useAppStore.getState().contextMenuOpen).toBe(true);
-      useAppStore.getState().setContextMenuOpen(false);
-      expect(useAppStore.getState().contextMenuOpen).toBe(false);
-    });
-  });
-
   // --- setTabStatus ---
   describe('setTabStatus', () => {
     it('spawning → live に変更し ptyId を設定する', () => {
@@ -1553,18 +1536,11 @@ function makeState(
     dragId: null,
     dragKind: null,
     editingId: null,
-    contextMenuOpen: false,
     wslDistros: [],
     claudeMeta: null,
     claudeUsage: null,
     closedTabs: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
-    updateInfo: null,
-    updatePhase: 'idle',
-    updateProgress: 0,
-    updateError: null,
-    updateDialogOpen: false,
-    updateInstallFailure: null,
   };
 }
 
@@ -1715,7 +1691,6 @@ describe('navigateToTab', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -1834,7 +1809,6 @@ describe('グループ選択 (activeGroupId)', () => {
       dragId: null,
       dragKind: null,
       editingId: null,
-      contextMenuOpen: false,
       closedTabs: [],
     });
   });
@@ -2015,7 +1989,6 @@ describe('applyClaudeSessions', () => {
       dragId: null,
       dragKind: null,
       editingId: null,
-      contextMenuOpen: false,
       closedTabs: [],
     });
   });
@@ -2491,7 +2464,6 @@ describe('removeTab — fallback expand', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -2547,7 +2519,6 @@ describe('spawning タイムアウト (2.11) — setTabStatus による状態遷
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -2691,7 +2662,6 @@ describe('persist partialize — ランタイム状態が保存対象外であ�
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -2734,17 +2704,15 @@ describe('persist partialize — ランタイム状態が保存対象外であ�
     expect((serializedTab as Record<string, unknown>).userTitle).toBe('T');
   });
 
-  it('partialize: activeTabId / editingId / contextMenuOpen が保存されない', () => {
+  it('partialize: activeTabId / editingId が保存されない', () => {
     const groupId = useAppStore.getState().createGroup();
     useAppStore.getState().createTab(groupId, { title: 'T' });
     useAppStore.getState().startEditing('some-id');
-    useAppStore.getState().setContextMenuOpen(true);
 
     const partializeResult = useAppStore.persist.getOptions().partialize!(useAppStore.getState()) as Record<string, unknown>;
 
     expect(partializeResult.activeTabId).toBeUndefined();
     expect(partializeResult.editingId).toBeUndefined();
-    expect(partializeResult.contextMenuOpen).toBeUndefined();
   });
 
   it('partialize: userTitle が保存される', () => {
@@ -2782,7 +2750,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
         orphan: { id: 'orphan', groupId: 'g1', status: 'live', ptyId: 'p2' },
       },
       editingId: 'something',
-      contextMenuOpen: true,
     };
     callOnRehydrate(state);
     expect(state.tabs['orphan']).toBeUndefined();
@@ -2794,7 +2761,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
       groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1', 'ghost'] }],
       tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     expect(state.groups[0].tabIds).toEqual(['t1']);
@@ -2813,7 +2779,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
         t3: { id: 't3', groupId: 'g2', status: 'live' },
       },
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     // t2 は g1 に残り、g2 から除去される
@@ -2830,13 +2795,11 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
         t1: { id: 't1', groupId: 'g1', status: 'live', ptyId: 'pty-123' },
       },
       editingId: 'edit-id',
-      contextMenuOpen: true,
     };
     callOnRehydrate(state);
     expect(state.tabs['t1'].status).toBe('spawning');
     expect(state.tabs['t1'].ptyId).toBeUndefined();
     expect(state.editingId).toBeNull();
-    expect(state.contextMenuOpen).toBe(false);
   });
 
   // 再起動で別のフォルダに飛ぶと、そのまま Ctrl+T したときに意図しない
@@ -2853,7 +2816,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
       },
       activeGroupId: 'g2',
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     expect(state.activeGroupId).toBe('g2');
@@ -2866,7 +2828,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
       tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
       activeGroupId: 'gone',
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     expect(state.activeGroupId).toBe('g1');
@@ -2878,7 +2839,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
       groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
       tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     expect((state as any).activeGroupId).toBe('g1');
@@ -2894,7 +2854,6 @@ describe('persist onRehydrateStorage 整合性ガード', () => {
       tabs: { t1: { id: 't1', groupId: 'g1', status: 'live' } },
       activeGroupId: 'g2',
       editingId: null,
-      contextMenuOpen: false,
     };
     callOnRehydrate(state);
     expect(state.activeGroupId).toBe('g2');
@@ -2968,7 +2927,6 @@ describe('args 対応 (P4-J)', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       settings: {
         theme: 'tokyo-night',
         fontFamily: '"MonaspiceNe NF", monospace',
@@ -3118,7 +3076,6 @@ describe('setWslDistros', () => {
       favorites: [],
       activeTabId: null,
       editingId: null,
-      contextMenuOpen: false,
       wslDistros: [],
       settings: {
         theme: 'tokyo-night',
@@ -3154,454 +3111,6 @@ describe('setWslDistros', () => {
     expect(partializeResult.wslDistros).toBeUndefined();
   });
 });
-
-// --- updater スライス (Chrome 風バックグラウンド DL フロー) ---
-
-// compareVersions は純粋関数なので実物を使う (モックすると差し替え判定のテストが
-// モック側の実装をテストすることになってしまう)。
-vi.mock('../lib/updater', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../lib/updater')>()),
-  checkForUpdate: vi.fn(),
-  downloadUpdate: vi.fn(),
-  installAndRelaunch: vi.fn(),
-  takeFailedUpdateAttempt: vi.fn().mockResolvedValue(null),
-}));
-
-import {
-  checkForUpdate,
-  downloadUpdate,
-  installAndRelaunch,
-  takeFailedUpdateAttempt,
-} from '../lib/updater';
-
-describe('updater スライス', () => {
-  function resetUpdaterStore() {
-    useAppStore.setState({
-      groups: [],
-      tabs: {},
-      favorites: [],
-      activeTabId: null,
-      editingId: null,
-      contextMenuOpen: false,
-      wslDistros: [],
-      settings: {
-        theme: 'tokyo-night',
-        fontFamily: '"MonaspiceNe NF", monospace',
-        fontSize: 12.5,
-        scrollback: 10000,
-        transparency: 1.0,
-      },
-      updateInfo: null,
-      updatePhase: 'idle',
-      updateProgress: 0,
-      updateError: null,
-      updateDialogOpen: false,
-      updateInstallFailure: null,
-    });
-  }
-
-  beforeEach(() => {
-    resetUpdaterStore();
-    vi.mocked(checkForUpdate).mockReset();
-    vi.mocked(downloadUpdate).mockReset();
-    vi.mocked(installAndRelaunch).mockReset();
-    vi.mocked(takeFailedUpdateAttempt).mockReset();
-    vi.mocked(takeFailedUpdateAttempt).mockResolvedValue(null);
-  });
-
-  it('runUpdateCheck: idle → checking → downloading → ready (更新あり、DL 成功)', async () => {
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: 'Bug fixes',
-      date: '2026-05-01T00:00:00Z',
-      _handle: {} as any,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockImplementation(async (_update, onProgress) => {
-      onProgress({ ratio: 0.5, downloaded: 500, contentLength: 1000 });
-    });
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('ready');
-    expect(state.updateInfo).toEqual({
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: 'Bug fixes',
-      date: '2026-05-01T00:00:00Z',
-    });
-    expect(checkForUpdate).toHaveBeenCalledTimes(1);
-    expect(downloadUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  it('runUpdateCheck: idle → checking → idle (更新なし、null 返却)', async () => {
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('idle');
-    expect(state.updateInfo).toBeNull();
-    expect(downloadUpdate).not.toHaveBeenCalled();
-  });
-
-  it('runUpdateCheck: phase != idle のとき再入は no-op', async () => {
-    useAppStore.setState({ updatePhase: 'checking' });
-
-    await useAppStore.getState().runUpdateCheck();
-
-    expect(checkForUpdate).not.toHaveBeenCalled();
-    expect(useAppStore.getState().updatePhase).toBe('checking');
-  });
-
-  it('runUpdateCheck: DL 失敗は idle に戻す (silently fail)', async () => {
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: '',
-      date: undefined,
-      _handle: {} as any,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network timeout'));
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    // バックグラウンド失敗はユーザーに見せず idle に戻す
-    expect(state.updatePhase).toBe('idle');
-    expect(state.updateInfo).toBeNull();
-    expect(state.updateProgress).toBe(0);
-  });
-
-  // --- ready のまま放置している間に出たリリースへの追従 ---
-  //
-  // racker は起動しっぱなしで使われる。DL 済みバッジを放置している間に新しい版が出ても
-  // 拾えないと、バッジから入るのは常に「気付いた時点の次の版」になり、再起動のたびに
-  // 1 バージョンずつしか上がらない。
-
-  /** ready (1.2.0 を DL 済み) の状態を作る。 */
-  async function makeReadyWith(version: string, handleTag = version) {
-    vi.mocked(checkForUpdate).mockResolvedValueOnce({
-      version,
-      currentVersion: '1.1.0',
-      notes: `notes ${version}`,
-      _handle: { tag: handleTag } as any,
-    });
-    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
-    await useAppStore.getState().runUpdateCheck();
-    expect(useAppStore.getState().updatePhase).toBe('ready');
-  }
-
-  it('runUpdateCheck: ready のとき、より新しい版が出ていれば DL して差し替える', async () => {
-    await makeReadyWith('1.2.0');
-
-    // 放置中に 1.4.0 が出た
-    vi.mocked(checkForUpdate).mockResolvedValueOnce({
-      version: '1.4.0',
-      currentVersion: '1.1.0',
-      notes: 'notes 1.4.0',
-      _handle: { tag: '1.4.0' } as any,
-    });
-    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('ready');
-    expect(state.updateInfo?.version).toBe('1.4.0');
-    expect(downloadUpdate).toHaveBeenCalledTimes(2);
-
-    // 実際に適用されるハンドルも差し替わっていること
-    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
-    await useAppStore.getState().applyUpdate();
-    expect(vi.mocked(installAndRelaunch).mock.calls[0][0].version).toBe('1.4.0');
-  });
-
-  it('runUpdateCheck: ready のとき、同じ版なら再 DL しない', async () => {
-    await makeReadyWith('1.2.0');
-
-    vi.mocked(checkForUpdate).mockResolvedValueOnce({
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: 'notes 1.2.0',
-      _handle: { tag: 'other' } as any,
-    });
-
-    await useAppStore.getState().runUpdateCheck();
-
-    expect(downloadUpdate).toHaveBeenCalledTimes(1);
-    expect(useAppStore.getState().updateInfo?.version).toBe('1.2.0');
-  });
-
-  it('runUpdateCheck: ready のとき、チェックが null なら pending を維持する', async () => {
-    await makeReadyWith('1.2.0');
-
-    // ネットワーク不通など
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(null);
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('ready');
-    expect(state.updateInfo?.version).toBe('1.2.0');
-  });
-
-  it('runUpdateCheck: ready のとき、差し替えの DL に失敗しても古い pending で更新できる', async () => {
-    await makeReadyWith('1.2.0');
-
-    vi.mocked(checkForUpdate).mockResolvedValueOnce({
-      version: '1.4.0',
-      currentVersion: '1.1.0',
-      notes: 'notes 1.4.0',
-      _handle: { tag: '1.4.0' } as any,
-    });
-    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network timeout'));
-
-    await useAppStore.getState().runUpdateCheck();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('ready');
-    expect(state.updateInfo?.version).toBe('1.2.0');
-
-    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
-    await useAppStore.getState().applyUpdate();
-    expect(vi.mocked(installAndRelaunch).mock.calls[0][0].version).toBe('1.2.0');
-  });
-
-  it('runUpdateCheck: ready のとき、差し替え中に再入しても二重に DL しない', async () => {
-    await makeReadyWith('1.2.0');
-
-    let resolveDownload!: () => void;
-    vi.mocked(checkForUpdate).mockResolvedValue({
-      version: '1.4.0',
-      currentVersion: '1.1.0',
-      notes: 'notes 1.4.0',
-      _handle: { tag: '1.4.0' } as any,
-    });
-    vi.mocked(downloadUpdate).mockImplementationOnce(
-      () => new Promise<void>((resolve) => { resolveDownload = () => resolve(); }),
-    );
-
-    const first = useAppStore.getState().runUpdateCheck();
-    await useAppStore.getState().runUpdateCheck(); // 定期チェックが重なった
-    resolveDownload();
-    await first;
-
-    // 1 回目 (ready 到達) + 差し替え 1 回 = 2 回まで
-    expect(downloadUpdate).toHaveBeenCalledTimes(2);
-    expect(useAppStore.getState().updateInfo?.version).toBe('1.4.0');
-  });
-
-  it('applyUpdate: ready → installing (installAndRelaunch が呼ばれる)', async () => {
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: 'Bug fixes',
-      _handle: {} as any,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
-    vi.mocked(installAndRelaunch).mockResolvedValueOnce(undefined);
-
-    await useAppStore.getState().runUpdateCheck();
-    expect(useAppStore.getState().updatePhase).toBe('ready');
-
-    await useAppStore.getState().applyUpdate();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('installing');
-    expect(installAndRelaunch).toHaveBeenCalledTimes(1);
-  });
-
-  it('applyUpdate: phase !== ready && phase !== error のとき no-op', async () => {
-    useAppStore.setState({ updatePhase: 'idle' });
-
-    await useAppStore.getState().applyUpdate();
-
-    expect(installAndRelaunch).not.toHaveBeenCalled();
-    expect(useAppStore.getState().updatePhase).toBe('idle');
-  });
-
-  it('applyUpdate: downloading phase のとき no-op', async () => {
-    useAppStore.setState({ updatePhase: 'downloading' });
-
-    await useAppStore.getState().applyUpdate();
-
-    expect(installAndRelaunch).not.toHaveBeenCalled();
-    expect(useAppStore.getState().updatePhase).toBe('downloading');
-  });
-
-  it('applyUpdate: installAndRelaunch 失敗時は phase=error, updateError セット', async () => {
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: '',
-      _handle: {} as any,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
-    vi.mocked(installAndRelaunch).mockRejectedValueOnce(new Error('Install failed'));
-
-    await useAppStore.getState().runUpdateCheck();
-    await useAppStore.getState().applyUpdate();
-
-    const state = useAppStore.getState();
-    expect(state.updatePhase).toBe('error');
-    expect(state.updateError).toBe('Install failed');
-  });
-
-  it('applyUpdate: error phase からリトライできる (error → installing)', async () => {
-    // pendingUpdateHandle が設定された状態を作るために一度 ready まで遷移させる
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: '',
-      _handle: {} as any,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockResolvedValueOnce(undefined);
-    vi.mocked(installAndRelaunch)
-      .mockRejectedValueOnce(new Error('First attempt failed'))
-      .mockResolvedValueOnce(undefined);
-
-    await useAppStore.getState().runUpdateCheck();
-    await useAppStore.getState().applyUpdate(); // 失敗 → error
-    expect(useAppStore.getState().updatePhase).toBe('error');
-
-    // リトライ
-    await useAppStore.getState().applyUpdate();
-    expect(useAppStore.getState().updatePhase).toBe('installing');
-    expect(installAndRelaunch).toHaveBeenCalledTimes(2);
-  });
-
-  it('resetUpdateError: handle, updateInfo を含めて完全リセットする', () => {
-    resetUpdaterStore();
-    useAppStore.setState({
-      updatePhase: 'error',
-      updateInfo: { version: '2.0', currentVersion: '1.0', notes: '' },
-      updateError: 'fail',
-      updateProgress: 0.5,
-      updateDialogOpen: true,
-    });
-    useAppStore.getState().resetUpdateError();
-    const s = useAppStore.getState();
-    expect(s.updatePhase).toBe('idle');
-    expect(s.updateInfo).toBe(null);
-    expect(s.updateError).toBe(null);
-    expect(s.updateProgress).toBe(0);
-    expect(s.updateDialogOpen).toBe(false);
-  });
-
-  it('checkPreviousUpdateAttempt: 反映されていれば何も立てない', async () => {
-    resetUpdaterStore();
-    vi.mocked(takeFailedUpdateAttempt).mockResolvedValueOnce(null);
-
-    await useAppStore.getState().checkPreviousUpdateAttempt();
-
-    expect(useAppStore.getState().updateInstallFailure).toBe(null);
-  });
-
-  it('checkPreviousUpdateAttempt: 反映されていなければ updateInstallFailure を立てる', async () => {
-    resetUpdaterStore();
-    vi.mocked(takeFailedUpdateAttempt).mockResolvedValueOnce({
-      version: '1.9.3',
-      currentVersion: '1.9.2',
-    });
-
-    await useAppStore.getState().checkPreviousUpdateAttempt();
-
-    expect(useAppStore.getState().updateInstallFailure).toEqual({
-      version: '1.9.3',
-      currentVersion: '1.9.2',
-    });
-    // 通常の更新フローは妨げない
-    expect(useAppStore.getState().updatePhase).toBe('idle');
-  });
-
-  it('dismissUpdateInstallFailure: 通知を閉じる', () => {
-    resetUpdaterStore();
-    useAppStore.setState({
-      updateInstallFailure: { version: '1.9.3', currentVersion: '1.9.2' },
-    });
-
-    useAppStore.getState().dismissUpdateInstallFailure();
-
-    expect(useAppStore.getState().updateInstallFailure).toBe(null);
-  });
-
-  it('closeUpdateDialog: error phase で閉じても phase は維持される (バッジ残存)', () => {
-    resetUpdaterStore();
-    useAppStore.setState({
-      updatePhase: 'error',
-      updateError: 'something failed',
-      updateDialogOpen: true,
-    });
-    useAppStore.getState().closeUpdateDialog();
-    const s = useAppStore.getState();
-    expect(s.updatePhase).toBe('error');
-    expect(s.updateError).toBe('something failed');
-    expect(s.updateDialogOpen).toBe(false);
-  });
-
-  it('closeUpdateDialog: error 以外の phase では phase を維持する', () => {
-    resetUpdaterStore();
-    useAppStore.setState({
-      updatePhase: 'ready',
-      updateInfo: { version: '2.0', currentVersion: '1.0', notes: '' },
-      updateDialogOpen: true,
-    });
-    useAppStore.getState().closeUpdateDialog();
-    const s = useAppStore.getState();
-    expect(s.updatePhase).toBe('ready');
-    expect(s.updateDialogOpen).toBe(false);
-  });
-
-  it('runUpdateCheck: DL 失敗後の applyUpdate は handle がないため error に遷移する (S1 ガード)', async () => {
-    resetUpdaterStore();
-    const mockUpdate = {
-      version: '1.2.0',
-      currentVersion: '1.1.0',
-      notes: 'test',
-      _handle: { install: vi.fn() } as never,
-    };
-    vi.mocked(checkForUpdate).mockResolvedValueOnce(mockUpdate);
-    vi.mocked(downloadUpdate).mockRejectedValueOnce(new Error('Network'));
-    await useAppStore.getState().runUpdateCheck();
-    expect(useAppStore.getState().updatePhase).toBe('idle');
-
-    // 強制的に error にしても handle が null なので S1 ガードで error メッセージが立つ
-    useAppStore.setState({ updatePhase: 'error' });
-    await useAppStore.getState().applyUpdate();
-    expect(vi.mocked(installAndRelaunch)).not.toHaveBeenCalled();
-    expect(useAppStore.getState().updatePhase).toBe('error');
-    expect(useAppStore.getState().updateError).toContain('更新ハンドルが失われました');
-  });
-
-  it('partialize: updater 系フィールドは出力に含まれない', () => {
-    useAppStore.setState({
-      updateInfo: { version: '1.2.0', currentVersion: '1.1.0', notes: '' },
-      updatePhase: 'ready',
-      updateProgress: 0.5,
-      updateError: null,
-      updateDialogOpen: true,
-    });
-
-    const result = useAppStore.persist.getOptions().partialize!(
-      useAppStore.getState(),
-    ) as Record<string, unknown>;
-
-    expect(result.updateInfo).toBeUndefined();
-    expect(result.updatePhase).toBeUndefined();
-    expect(result.updateProgress).toBeUndefined();
-    expect(result.updateError).toBeUndefined();
-    expect(result.updateDialogOpen).toBeUndefined();
-  });
-});
-
-// --- closedTabs / restoreLastClosedTab ---
 
 describe('closedTabs / restoreLastClosedTab', () => {
   beforeEach(() => {

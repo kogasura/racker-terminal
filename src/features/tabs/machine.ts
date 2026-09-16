@@ -18,6 +18,7 @@
  */
 
 import type { Step, TransitionFn } from '../../architecture/machine';
+import type { Favorite } from '../../types';
 import type { NavigateDirection, TabsEvent } from './events';
 
 export interface TabsState {
@@ -42,6 +43,20 @@ export type TabsEffect =
   | { readonly kind: 'clear-claude-session'; readonly tabId: string }
   | { readonly kind: 'move-tab'; readonly tabId: string; readonly toGroupId: string }
   | { readonly kind: 'move-tab-to-new-group'; readonly tabId: string }
+  | { readonly kind: 'activate-group'; readonly groupId: string }
+  | { readonly kind: 'start-editing-group'; readonly groupId: string }
+  | { readonly kind: 'rename-group'; readonly groupId: string; readonly title: string }
+  | { readonly kind: 'close-group'; readonly groupId: string }
+  | { readonly kind: 'create-tab-in-group'; readonly groupId: string }
+  | { readonly kind: 'spawn-favorite-by-id'; readonly favoriteId: string }
+  | { readonly kind: 'remove-favorite'; readonly favoriteId: string }
+  | { readonly kind: 'toggle-default-favorite'; readonly favoriteId: string }
+  | { readonly kind: 'add-favorite'; readonly favorite: Omit<Favorite, 'id'> }
+  | {
+      readonly kind: 'update-favorite';
+      readonly favoriteId: string;
+      readonly favorite: Omit<Favorite, 'id'>;
+    }
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
@@ -121,6 +136,40 @@ const handlers: HandlerMap = {
 
   'tabs/tab-move-to-new-group-requested': (state, event) =>
     dispatch(state, { kind: 'move-tab-to-new-group', tabId: event.tabId }),
+
+  'tabs/group-activated': (state, event) =>
+    dispatch(state, { kind: 'activate-group', groupId: event.groupId }),
+
+  'tabs/group-rename-started': (state, event) =>
+    dispatch(state, { kind: 'start-editing-group', groupId: event.groupId }),
+
+  'tabs/group-renamed': (state, event) =>
+    dispatch(state, { kind: 'rename-group', groupId: event.groupId, title: event.title }),
+
+  'tabs/group-close-requested': (state, event) =>
+    dispatch(state, { kind: 'close-group', groupId: event.groupId }),
+
+  'tabs/tab-create-in-group-requested': (state, event) =>
+    dispatch(state, { kind: 'create-tab-in-group', groupId: event.groupId }),
+
+  'tabs/favorite-spawn-requested': (state, event) =>
+    dispatch(state, { kind: 'spawn-favorite-by-id', favoriteId: event.favoriteId }),
+
+  'tabs/favorite-remove-requested': (state, event) =>
+    dispatch(state, { kind: 'remove-favorite', favoriteId: event.favoriteId }),
+
+  'tabs/favorite-default-toggled': (state, event) =>
+    dispatch(state, { kind: 'toggle-default-favorite', favoriteId: event.favoriteId }),
+
+  'tabs/favorite-added': (state, event) =>
+    dispatch(state, { kind: 'add-favorite', favorite: event.favorite }),
+
+  'tabs/favorite-updated': (state, event) =>
+    dispatch(state, {
+      kind: 'update-favorite',
+      favoriteId: event.favoriteId,
+      favorite: event.favorite,
+    }),
 };
 
 /**

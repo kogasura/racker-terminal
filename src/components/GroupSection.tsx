@@ -2,13 +2,12 @@ import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
 import { useEmit } from '../architecture/chain';
 import type { TabsEvent } from '../features/tabs/events';
+import { useGroupView } from '../features/tabs/TabsRoot';
 import { InlineEdit } from './InlineEdit';
 import { DRAG_KIND } from '../lib/dndResolve';
-import { AGENT_STATE_LABEL, dominantAgentState, type AgentState } from '../types';
+import { AGENT_STATE_LABEL, type AgentState } from '../types';
 
 interface GroupSectionProps {
   groupId: string;
@@ -57,36 +56,11 @@ function GroupAgentIndicator({ agentState }: { agentState: AgentState | undefine
 export const GroupSection = memo(function GroupSection({
   groupId,
 }: GroupSectionProps) {
-  // M1: useShallow で必要フィールドのみ抽出（他グループの mutation による不要再レンダーを防ぐ）
-  const groupView = useAppStore(
-    useShallow((s) => {
-      const g = s.groups.find((x) => x.id === groupId);
-      if (!g) return null;
-      // 配下タブの代表エージェント状態（優先度: blocked > working > done > idle）。
-      // タブ自体がサイドバーに見えないため、グループ単位での集約表示が
-      // 「どのフォルダが応答待ちか」を知る唯一の手がかりになる。
-      const agentState = dominantAgentState(g.tabIds.map((id) => s.tabs[id]?.agentState));
-      return {
-        title: g.title,
-        tabCount: g.tabIds.length,
-        agentState,
-        isActive: s.activeGroupId === groupId,
-      };
-    }),
-  );
-  // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
-  const isEditingGroup = useAppStore((s) => s.editingId === groupId);
-  const createTab = useAppStore((s) => s.createTab);
-  const removeGroup = useAppStore((s) => s.removeGroup);
-  const setActiveGroup = useAppStore((s) => s.setActiveGroup);
-  const startEditing = useAppStore((s) => s.startEditing);
-  const updateGroupTitle = useAppStore((s) => s.updateGroupTitle);
+  const vm = useGroupView(groupId);
   // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
   const emit = useEmit<TabsEvent>();
-  // F2: prop drilling 解消 — Sidebar から groupsCount を受け取らず直接 subscribe
-  const canDelete = useAppStore((s) => s.groups.length > 1);
-  // drop ホバーの見た目をタブのドラッグ中に限定するため、種別だけ subscribe する
-  const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
+  const isEditingGroup = vm.isEditing;
+  const isDraggingTab = vm.isDraggingTab;
 
   // B1: グループ自体を D&D 並び替え可能にする（kind=group でタブ用と区別）
   // F-M4: 編集中 (isEditingGroup) は D&D を無効化する（stopEditing が未確定入力を確定してしまうため）
@@ -110,28 +84,21 @@ export const GroupSection = memo(function GroupSection({
   // グループ同士の並び替え中は sortable のアニメーションが位置を示すため不要。
   const isTabDropTarget = isOver && isDraggingTab;
 
-  if (!groupView) return null;
+  if (!vm.exists) return null;
 
-  const { title, tabCount, agentState, isActive } = groupView;
-
-  // グループ削除可能条件: タブが空 + グループが 2 個以上
-  const canDeleteGroup = tabCount === 0 && canDelete;
+  const { title, tabCount, agentState, isActive, canDelete: canDeleteGroup } = vm;
 
   const handleSelect = () => {
     // 編集中は選択操作を無効化
     if (isEditingGroup) return;
-    setActiveGroup(groupId);
+    emit({ type: 'tabs/group-activated', groupId });
   };
 
   function handleGroupDoubleClick(e: React.MouseEvent) {
     // 編集中のダブルクリックは無視
     if (isEditingGroup) return;
     e.stopPropagation();
-    startEditing(groupId);
-  }
-
-  function handleGroupCommit(newTitle: string) {
-    updateGroupTitle(groupId, newTitle);
+    emit({ type: 'tabs/group-rename-started', groupId });
   }
 
   return (
@@ -188,7 +155,7 @@ export const GroupSection = memo(function GroupSection({
             <InlineEdit
               id={groupId}
               title={title}
-              onCommit={handleGroupCommit}
+              onCommit={(newTitle) => emit({ type: 'tabs/group-renamed', groupId, title: newTitle })}
               className="group-header__title"
             />
 
@@ -214,7 +181,7 @@ export const GroupSection = memo(function GroupSection({
               disabled={!canDeleteGroup}
               onClick={(e) => {
                 e.stopPropagation();
-                removeGroup(groupId);
+                emit({ type: 'tabs/group-close-requested', groupId });
               }}
             >
               ×
@@ -226,14 +193,14 @@ export const GroupSection = memo(function GroupSection({
           <ContextMenu.Content className="context-menu__content">
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => startEditing(groupId)}
+              onSelect={() => emit({ type: 'tabs/group-rename-started', groupId })}
             >
               リネーム
             </ContextMenu.Item>
 
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => createTab(groupId)}
+              onSelect={() => emit({ type: 'tabs/tab-create-in-group-requested', groupId })}
             >
               新規タブを追加
             </ContextMenu.Item>
@@ -243,7 +210,7 @@ export const GroupSection = memo(function GroupSection({
             <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               disabled={!canDeleteGroup}
-              onSelect={() => removeGroup(groupId)}
+              onSelect={() => emit({ type: 'tabs/group-close-requested', groupId })}
             >
               グループを閉じる
             </ContextMenu.Item>

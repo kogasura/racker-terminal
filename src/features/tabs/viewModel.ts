@@ -11,6 +11,7 @@ import {
   getTabDisplayTitle,
   AGENT_STATE_LABEL,
   type AgentState,
+  type Favorite,
   type Tab,
   type TabStatus,
 } from '../../types';
@@ -136,6 +137,91 @@ export function selectMoveTargets(
     title: groupTitles[i] ?? '',
     disabled: groupId === currentGroupId,
   }));
+}
+
+/** お気に入り 1 件ぶん。 */
+export interface FavoriteViewModel {
+  readonly favorite: Favorite;
+  /** 既定のお気に入り (Ctrl+T で開くもの) か。 */
+  readonly isDefault: boolean;
+}
+
+/** お気に入り一覧。 */
+export interface FavoritesViewModel {
+  readonly items: readonly FavoriteViewModel[];
+  /** 空のときは案内文を出す。 */
+  readonly isEmpty: boolean;
+}
+
+export function selectFavorites(
+  favorites: readonly Favorite[],
+  defaultFavoriteId: string | null | undefined,
+): FavoritesViewModel {
+  return {
+    items: favorites.map((favorite) => ({
+      favorite,
+      isDefault: favorite.id === defaultFavoriteId,
+    })),
+    isEmpty: favorites.length === 0,
+  };
+}
+
+/** グループ 1 行ぶんの描画パラメータ。 */
+export interface GroupViewModel {
+  /** グループが実在するか。削除直後などに false になる。 */
+  readonly exists: boolean;
+  readonly title: string;
+  readonly tabCount: number;
+  /**
+   * 配下タブの代表エージェント状態 (優先度: blocked > working > done > idle)。
+   * タブ自体がサイドバーに見えないため、グループ単位での集約表示が
+   * 「どのフォルダが応答待ちか」を知る唯一の手がかりになる。
+   */
+  readonly agentState: AgentState | undefined;
+  readonly isActive: boolean;
+  readonly isEditing: boolean;
+  /** 閉じられるか。空のグループで、かつ 2 個以上あるときだけ。 */
+  readonly canDelete: boolean;
+  /** タブをドラッグ中か (drop ホバーの見た目に使う)。 */
+  readonly isDraggingTab: boolean;
+}
+
+const MISSING_GROUP: GroupViewModel = {
+  exists: false,
+  title: '',
+  tabCount: 0,
+  agentState: undefined,
+  isActive: false,
+  isEditing: false,
+  canDelete: false,
+  isDraggingTab: false,
+};
+
+export interface GroupSnapshot {
+  readonly title: string;
+  readonly tabCount: number;
+  readonly agentState: AgentState | undefined;
+  readonly isActive: boolean;
+}
+
+export function selectGroup(
+  snapshot: GroupSnapshot | null,
+  isEditing: boolean,
+  groupCount: number,
+  isDraggingTab: boolean,
+): GroupViewModel {
+  if (!snapshot) return MISSING_GROUP;
+  return {
+    exists: true,
+    title: snapshot.title,
+    tabCount: snapshot.tabCount,
+    agentState: snapshot.agentState,
+    isActive: snapshot.isActive,
+    isEditing,
+    // 最後の 1 個は残す (グループが 0 になるとタブの置き場が無くなる)
+    canDelete: snapshot.tabCount === 0 && groupCount > 1,
+    isDraggingTab,
+  };
 }
 
 /** サイドバー。 */

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   agentTooltip,
+  selectFavorites,
+  selectGroup,
   selectMoveTargets,
   selectSidebar,
   selectTabBar,
@@ -87,6 +89,50 @@ describe('selectMoveTargets', () => {
       { groupId: 'g1', title: 'A', disabled: true },
       { groupId: 'g2', title: 'B', disabled: false },
     ]);
+  });
+});
+
+describe('selectGroup', () => {
+  const snapshot = { title: 'G', tabCount: 0, agentState: undefined, isActive: true };
+
+  it('グループが無ければ exists: false', () => {
+    expect(selectGroup(null, false, 2, false).exists).toBe(false);
+  });
+
+  it('空のグループは、2 個以上あるときだけ閉じられる', () => {
+    expect(selectGroup(snapshot, false, 2, false).canDelete).toBe(true);
+    // 最後の 1 個は残す (グループが 0 になるとタブの置き場が無くなる)
+    expect(selectGroup(snapshot, false, 1, false).canDelete).toBe(false);
+  });
+
+  it('タブが残っていれば閉じられない', () => {
+    expect(selectGroup({ ...snapshot, tabCount: 1 }, false, 3, false).canDelete).toBe(false);
+  });
+
+  it('代表エージェント状態と選択状態をそのまま渡す', () => {
+    const vm = selectGroup({ ...snapshot, agentState: 'blocked' }, true, 2, true);
+    expect(vm).toMatchObject({ agentState: 'blocked', isActive: true, isEditing: true, isDraggingTab: true });
+  });
+});
+
+describe('selectFavorites', () => {
+  const favs = [
+    { id: 'f1', title: 'A', shell: 'nu' },
+    { id: 'f2', title: 'B', shell: 'nu' },
+  ] as never as Parameters<typeof selectFavorites>[0];
+
+  it('空なら isEmpty', () => {
+    expect(selectFavorites([], null)).toEqual({ items: [], isEmpty: true });
+  });
+
+  it('既定のお気に入りに印を付ける', () => {
+    const vm = selectFavorites(favs, 'f2');
+    expect(vm.items.map((i) => i.isDefault)).toEqual([false, true]);
+    expect(vm.isEmpty).toBe(false);
+  });
+
+  it('既定が未設定ならどれにも印が付かない', () => {
+    expect(selectFavorites(favs, undefined).items.every((i) => !i.isDefault)).toBe(true);
   });
 });
 

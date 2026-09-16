@@ -203,6 +203,59 @@ describe('tabs effects', () => {
     expect(state.groups[1].tabIds).toEqual(['t1']);
   });
 
+  it('グループ操作が store に届く', () => {
+    const m = boot();
+
+    m.send({ type: 'tabs/group-rename-started', groupId: 'g1' });
+    expect(useAppStore.getState().editingId).toBe('g1');
+
+    m.send({ type: 'tabs/group-renamed', groupId: 'g1', title: 'フォルダ' });
+    expect(useAppStore.getState().groups[0].title).toBe('フォルダ');
+
+    m.send({ type: 'tabs/tab-create-in-group-requested', groupId: 'g1' });
+    expect(useAppStore.getState().groups[0].tabIds).toHaveLength(3);
+  });
+
+  it('group-activated: 選択中グループが変わる', () => {
+    useAppStore.setState((s) => ({
+      groups: [...s.groups, { id: 'g2', title: 'G2', collapsed: false, tabIds: [] }],
+    }));
+    boot().send({ type: 'tabs/group-activated', groupId: 'g2' });
+    expect(useAppStore.getState().activeGroupId).toBe('g2');
+  });
+
+  it('既定のお気に入りはトグルになる（既定なら解除）', () => {
+    const m = boot();
+    m.send({
+      type: 'tabs/favorite-added',
+      favorite: { title: 'A', shell: 'nu' } as never,
+    });
+    const favId = useAppStore.getState().favorites[0].id;
+
+    m.send({ type: 'tabs/favorite-default-toggled', favoriteId: favId });
+    expect(useAppStore.getState().settings.defaultFavoriteId).toBe(favId);
+
+    // 解除は undefined になる (store 側が null を undefined に畳む)
+    m.send({ type: 'tabs/favorite-default-toggled', favoriteId: favId });
+    expect(useAppStore.getState().settings.defaultFavoriteId).toBeUndefined();
+  });
+
+  it('お気に入りの追加 / 書き換え / 削除が store に届く', () => {
+    const m = boot();
+    m.send({ type: 'tabs/favorite-added', favorite: { title: 'A', shell: 'nu' } as never });
+    const favId = useAppStore.getState().favorites[0].id;
+
+    m.send({
+      type: 'tabs/favorite-updated',
+      favoriteId: favId,
+      favorite: { title: 'B', shell: 'nu' } as never,
+    });
+    expect(useAppStore.getState().favorites[0].title).toBe('B');
+
+    m.send({ type: 'tabs/favorite-remove-requested', favoriteId: favId });
+    expect(useAppStore.getState().favorites).toHaveLength(0);
+  });
+
   it('コンテキストメニュー表示中はどのコマンドも store に届かない', () => {
     const spawn = stubAction('spawnDefaultOrNew');
     const m = boot();

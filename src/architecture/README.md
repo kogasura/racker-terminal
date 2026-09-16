@@ -131,17 +131,21 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 | それ以外 | 未着手。`useAppStore` を直接参照する従来の形 |
 
 Passive View になったもの: `StatusBar` / `TabBar` / `Sidebar` / `TabItem` /
-updater の View 群。
+`GroupSection` / `FavoritesSection` / updater の View 群。
+**サイドバーとタブバーの表示は、これで全部 View モデル経由になった。**
 
 store 参照の残数（多い順）: `App.tsx` 23 / `DragDropProvider` 18 /
-`TerminalPane` 12（うち 7 は例外）/ `GroupSection` 10 / `FavoritesSection` 8 /
-`TitleBar` 5。
+`TerminalPane` 12（うち 7 は例外）/ `TitleBar` 5。
 
 ### 一覧の中の View モデル
 
-タブ 1 個ぶんの View モデルは `useTabItemView(tabId)` で引きます。一覧ぶんを
-まとめて Root から配ると、1 タブの変化で全タブが描き直されるためです。
-移行前のコンポーネントが個別に subscribe していたのと同じ性質を保っています。
+タブ 1 個ぶんの View モデルは `useTabItemView(tabId)`、グループ 1 行ぶんは
+`useGroupView(groupId)` で引きます。一覧ぶんをまとめて Root から配ると、
+1 件の変化で全件が描き直されるためです。移行前のコンポーネントが個別に
+subscribe していたのと同じ性質を保っています。
+
+一方、お気に入り一覧 (`useFavoritesView`) はサイドバーに 1 つしか無いので
+引数を取りません。**引数で絞るのは、同じ View が並ぶときだけ**です。
 
 View から見れば「Root から降ってくる View モデル」であることに変わりはなく、
 store の形も、そこから何を導くかも知らないままでいられます。

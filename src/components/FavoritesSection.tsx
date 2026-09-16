@@ -2,9 +2,8 @@ import { useState, memo } from 'react';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
 import { useEmit } from '../architecture/chain';
+import { useFavoritesView } from '../features/tabs/TabsRoot';
 import type { TabsEvent } from '../features/tabs/events';
 import { FavoriteDialog } from './FavoriteDialog';
 import type { Favorite } from '../types';
@@ -118,17 +117,9 @@ export const FavoritesSection = memo(function FavoritesSection() {
   const [collapsed, setCollapsed] = useState(false);
   const [dialogState, setDialogState] = useState<DialogState>(null);
 
-  // favorites 配列のみ subscribe（id/title/shell 等の変化のみで再レンダー）
-  const favorites = useAppStore(useShallow((s) => s.favorites));
-  // defaultFavoriteId を subscribe
-  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
-  const spawnFavorite = useAppStore((s) => s.spawnFavorite);
-  const removeFavorite = useAppStore((s) => s.removeFavorite);
-  const addFavorite = useAppStore((s) => s.addFavorite);
-  const updateFavorite = useAppStore((s) => s.updateFavorite);
+  const { items, isEmpty } = useFavoritesView();
   // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
   const emit = useEmit<TabsEvent>();
-  const setDefaultFavorite = useAppStore((s) => s.setDefaultFavorite);
 
   return (
     <div className="favorites-section">
@@ -148,36 +139,36 @@ export const FavoritesSection = memo(function FavoritesSection() {
 
       {!collapsed && (
         <div className="favorites-list">
-          {favorites.length === 0 ? (
+          {isEmpty ? (
             <div className="favorites-empty">
               お気に入りはまだありません。タブを右クリックするか、下のボタンから登録してください。
             </div>
           ) : (
             // B2: SortableContext で favorites の D&D 並び替えを有効化する
             <SortableContext
-              items={favorites.map((f) => f.id)}
+              items={items.map((item) => item.favorite.id)}
               strategy={verticalListSortingStrategy}
             >
-              {favorites.map((fav) => {
-                const isDefault = fav.id === defaultFavoriteId;
-                return (
-                  <SortableFavoriteItem
-                    key={fav.id}
-                    fav={fav}
-                    isDefault={isDefault}
-                    onSpawn={() => spawnFavorite(fav.id)}
-                    onEdit={() => setDialogState({ mode: 'edit', favorite: fav })}
-                    onRemove={() => removeFavorite(fav.id)}
-                    onSetDefault={() => {
-                      // 既定なら解除、そうでなければ設定
-                      setDefaultFavorite(isDefault ? null : fav.id);
-                    }}
-                    onContextMenuOpen={(open) =>
-                      emit({ type: open ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
-                    }
-                  />
-                );
-              })}
+              {items.map(({ favorite, isDefault }) => (
+                <SortableFavoriteItem
+                  key={favorite.id}
+                  fav={favorite}
+                  isDefault={isDefault}
+                  onSpawn={() =>
+                    emit({ type: 'tabs/favorite-spawn-requested', favoriteId: favorite.id })
+                  }
+                  onEdit={() => setDialogState({ mode: 'edit', favorite })}
+                  onRemove={() =>
+                    emit({ type: 'tabs/favorite-remove-requested', favoriteId: favorite.id })
+                  }
+                  onSetDefault={() =>
+                    emit({ type: 'tabs/favorite-default-toggled', favoriteId: favorite.id })
+                  }
+                  onContextMenuOpen={(open) =>
+                    emit({ type: open ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
+                  }
+                />
+              ))}
             </SortableContext>
           )}
 
@@ -195,7 +186,7 @@ export const FavoritesSection = memo(function FavoritesSection() {
         <FavoriteDialog
           mode="add"
           onSubmit={(data) => {
-            addFavorite(data);
+            emit({ type: 'tabs/favorite-added', favorite: data });
             setDialogState(null);
           }}
           onClose={() => {
@@ -210,7 +201,11 @@ export const FavoritesSection = memo(function FavoritesSection() {
           mode="edit"
           initial={dialogState.favorite}
           onSubmit={(data) => {
-            updateFavorite(dialogState.favorite.id, data);
+            emit({
+              type: 'tabs/favorite-updated',
+              favoriteId: dialogState.favorite.id,
+              favorite: data,
+            });
             setDialogState(null);
           }}
           onClose={() => {

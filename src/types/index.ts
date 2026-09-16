@@ -452,7 +452,7 @@ export interface ClosedTab {
  * 本 Unit では型のみを定義する。
  *
  * Phase 4 A1 永続化 partialize 方針:
- * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, dragId, dragKind, editingId, contextMenuOpen, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
+ * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, dragId, dragKind, editingId, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
  * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, claudeSessionCwd, claudeSessionDistro, claudeSessionLive, claudeSeenAt, bypassPermissions}, favorites, settings, activeGroupId
  */
 export interface AppState {
@@ -498,11 +498,6 @@ export interface AppState {
    * 同時に複数の編集を許可しないために単一の ID で管理する。
    */
   editingId: string | null;
-  /**
-   * 右クリックコンテキストメニューが開いているとき true。
-   * TerminalPane の attachCustomKeyEventHandler でキーバインドを suspend するために使用する。
-   */
-  contextMenuOpen: boolean;
   settings: Settings;
   /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
    *  Phase 4 P-K で追加。 */
@@ -531,21 +526,4 @@ export interface AppState {
    * Ctrl+Shift+T で最新の閉じたタブを復元する。
    */
   closedTabs: ClosedTab[];
-
-  // --- updater スライス (persist 対象外) ---
-  /** 自動更新の新バージョン情報。利用可能な更新がない場合は null。 */
-  updateInfo: UpdateInfo | null;
-  /** 自動更新フェーズ。 */
-  updatePhase: UpdatePhase;
-  /** ダウンロード進捗 (0..1)。不明時は -1。 */
-  updateProgress: number;
-  /** 更新処理中のエラーメッセージ。エラーがない場合は null。 */
-  updateError: string | null;
-  /** 更新ダイアログの表示状態。 */
-  updateDialogOpen: boolean;
-  /**
-   * 前回の更新が反映されないまま起動したときに立つ。通知したら null に戻す。
-   * updatePhase とは独立しており、通常の更新フローを妨げない。
-   */
-  updateInstallFailure: UpdateInstallFailure | null;
 }

@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act } from 'react';
-import { render, cleanup } from '@testing-library/react';
+import { render as rtlRender, cleanup } from '@testing-library/react';
+import type { ReactElement, ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { GroupSection } from './GroupSection';
 import { FavoriteDialog } from './FavoriteDialog';
 import { SettingsDialog } from './SettingsDialog';
+import { UpdaterRoot } from '../features/updater/UpdaterRoot';
+import { TabsRoot } from '../features/tabs/TabsRoot';
 import { StatusBar } from './StatusBar';
 
 // Tauri の invoke / plugin はテスト環境に存在しないのでスタブする。
@@ -20,6 +23,29 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue
  * 寄っており、コンポーネントが実際に描画できるかは誰も見ていなかった。
  * 描画時の例外はアプリ全体が落ちる形で表面化するため、最低限ここで止める。
  */
+/**
+ * 機能 Root を敷いたうえで描画する。
+ *
+ * コンポーネントは View モデルを Root から受け取り、操作をチェーンへ流すため、
+ * 単体で描画するには Root が要る。updater は ready={false} で初回チェックを止める
+ * (スモークテストで通信させない)。
+ */
+function AppRoots({ children }: { children: ReactNode }) {
+  return (
+    <UpdaterRoot ready={false}>
+      <TabsRoot>{children}</TabsRoot>
+    </UpdaterRoot>
+  );
+}
+
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+  return rtlRender(ui, { wrapper: AppRoots, ...options });
+}
+
+function renderSettings(onClose: () => void = () => {}) {
+  return render(<SettingsDialog onClose={onClose} />);
+}
+
 describe('コンポーネントのレンダリング', () => {
   beforeEach(() => {
     // 各テストで store を既知の状態に戻す
@@ -180,7 +206,7 @@ describe('コンポーネントのレンダリング', () => {
   });
 
   it('SettingsDialog が描画できる', () => {
-    expect(() => render(<SettingsDialog onClose={() => {}} />)).not.toThrow();
+    expect(() => renderSettings()).not.toThrow();
   });
 });
 
@@ -278,7 +304,7 @@ describe('コンポーネントの操作', () => {
   });
 
   it('SettingsDialog: 送信しても落ちない', async () => {
-    render(<SettingsDialog onClose={() => {}} />);
+    renderSettings();
     const form = document.body.querySelector('form');
     expect(form, 'form が見つからない').toBeTruthy();
     await act(async () => {

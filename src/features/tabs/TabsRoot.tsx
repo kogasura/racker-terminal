@@ -1,0 +1,82 @@
+/**
+ * タブ操作の Root。
+ *
+ * `UpdaterRoot` と同じ形で、Mediator の保持・チェーンの組み立て・View モデルの配布を
+ * 担います。`tabs/` 宛てのイベントだけを自分の Mediator に渡し、それ以外は上へ流すので、
+ * Root どうしは自由に入れ子にできます。
+ */
+
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
+import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
+import { createMachine, type Machine } from '../../architecture/machine';
+import { createEffectRunner, type EffectDeps } from './effects';
+import type { TabsEvent } from './events';
+import { initialState, transition, type TabsEffect, type TabsState } from './machine';
+
+export interface TabsViewModel {
+  /**
+   * キーコマンドが今は止まっているか。
+   *
+   * View 側でこれを見るのは、xterm の `attachCustomKeyEventHandler` に返す値を
+   * 決めるためだけです (止まっている間は `preventDefault` せず xterm に通常処理させる)。
+   * コマンドを実行するかどうかの裁定は Mediator が持っていて、View の判断ではありません。
+   */
+  readonly commandsSuspended: boolean;
+}
+
+const TabsViewContext = createContext<TabsViewModel | null>(null);
+
+export function useTabsView(): TabsViewModel {
+  const vm = useContext(TabsViewContext);
+  if (!vm) throw new Error('useTabsView は TabsRoot の内側でしか使えません。');
+  return vm;
+}
+
+/** 開発時にイベントの流れを追えるようにするリンク。何も消費しない。 */
+const traceLink: Link<TabsEvent> = (event, next) => {
+  if (import.meta.env.DEV) console.debug('[tabs] event:', event.type);
+  next(event);
+};
+
+export interface TabsRootProps {
+  readonly children: ReactNode;
+  /** テスト用の差し替え。 */
+  readonly deps?: EffectDeps;
+}
+
+export function TabsRoot({ children, deps }: TabsRootProps) {
+  const machineRef = useRef<Machine<TabsState, TabsEvent> | null>(null);
+  if (!machineRef.current) {
+    machineRef.current = createMachine<TabsState, TabsEvent, TabsEffect>({
+      initial: initialState,
+      transition,
+      run: createEffectRunner(deps),
+    });
+  }
+  const machine = machineRef.current;
+
+  const state = useSyncExternalStore(machine.subscribe, machine.getState, machine.getState);
+
+  const links = useMemo<readonly Link<TabsEvent>[]>(
+    () => [traceLink, mediatorLink('tabs/', (event) => machine.send(event))],
+    [machine],
+  );
+
+  const viewModel = useMemo<TabsViewModel>(
+    () => ({ commandsSuspended: state.input === 'suspended' }),
+    [state],
+  );
+
+  return (
+    <EventScope<TabsEvent> links={links}>
+      <TabsViewContext.Provider value={viewModel}>{children}</TabsViewContext.Provider>
+    </EventScope>
+  );
+}

@@ -1,6 +1,10 @@
 import React, { memo, useEffect, useRef } from 'react';
 import type { Tab } from '../types';
-import { useAppStore, selectNextTabId, selectPrevTabId } from '../store/appStore';
+import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import { useTabsView } from '../features/tabs/TabsRoot';
+import { tabCommandForKey } from '../features/tabs/keys';
+import type { TabsIntent } from '../features/tabs/events';
 import {
   acquireRuntime,
   releaseRuntime,
@@ -239,48 +243,10 @@ interface KeyBinding {
 }
 
 /**
- * Ctrl+Shift+1..9 のお気に入り index (0..8) を取り出す。該当しなければ null。
- * e.code は 'Digit1'..'Digit9' / 'Numpad1'..'Numpad9' を許容する。
- */
-function favoriteIndexFromKey(e: KeyboardEvent): number | null {
-  if (!e.shiftKey) return null;
-  // 合成キー（e.code 空）では e.key の数字にフォールバックする
-  const m =
-    e.code.match(/^(?:Digit|Numpad)([1-9])$/) ??
-    (e.code === '' ? e.key.match(/^([1-9])$/) : null);
-  if (!m) return null;
-  return parseInt(m[1], 10) - 1; // 1-9 → 0-8
-}
-
-/**
  * Ctrl 系のキーバインド。**先頭から順に評価し、最初に match したものだけを実行する**ので
  * 並び順に意味がある（例: Ctrl+Shift+T を Ctrl+T より先に置く）。
  */
 const CTRL_KEY_BINDINGS: KeyBinding[] = [
-  {
-    // Ctrl+Shift+W: アクティブタブを閉じる
-    // e.code ('KeyW') を使うことで CapsLock/AZERTY 等の非 ASCII レイアウトでも
-    // 物理 W キーの位置を正確に判定できる（e.key は 'w'/'W'/'z' 等レイアウト依存）
-    match: (e, codeIs) => e.shiftKey && codeIs('KeyW', 'w'),
-    run: (e) => {
-      e.preventDefault();
-      const aid = useAppStore.getState().activeTabId;
-      if (aid) useAppStore.getState().removeTab(aid);
-      return false;
-    },
-  },
-  {
-    // Ctrl+Tab / Ctrl+Shift+Tab: 次/前のタブへ移動
-    // e.code ('Tab') で物理 Tab キーを判定する（IME 中は e.key === 'Process' になる場合がある）
-    match: (_e, codeIs) => codeIs('Tab', 'tab'),
-    run: (e) => {
-      e.preventDefault();
-      const state = useAppStore.getState();
-      const next = e.shiftKey ? selectPrevTabId(state) : selectNextTabId(state);
-      if (next) state.navigateToTab(next);
-      return false;
-    },
-  },
   {
     // Ctrl+V: クリップボードから貼り付け (v0.5 改善)
     // Windows ターミナル慣習に合わせて Ctrl+V を有効化。Ctrl+Shift+V は予約 (Linux 慣習用)。
@@ -342,45 +308,29 @@ const CTRL_KEY_BINDINGS: KeyBinding[] = [
       return false;
     },
   },
-  {
-    // Ctrl+Shift+T: 閉じたタブを復元
-    match: (e, codeIs) => e.shiftKey && codeIs('KeyT', 't'),
-    run: (e) => {
-      e.preventDefault();
-      useAppStore.getState().restoreLastClosedTab();
-      return false;
-    },
-  },
-  {
-    // Ctrl+T: 既定タブを開く (Ctrl+Shift+T は閉じたタブの復元)。Phase 4 P-H で追加。
-    match: (e, codeIs) => !e.shiftKey && codeIs('KeyT', 't'),
-    run: (e) => {
-      e.preventDefault();
-      useAppStore.getState().spawnDefaultOrNew();
-      return false;
-    },
-  },
-  {
-    // Ctrl+Shift+1..9: お気に入り index 0..8 を開く。Phase 4 P-H で追加。
-    match: (e) => favoriteIndexFromKey(e) !== null,
-    run: (e) => {
-      const idx = favoriteIndexFromKey(e);
-      if (idx === null) return true;
-      e.preventDefault();
-      useAppStore.getState().spawnFavoriteByIndex(idx);
-      return false;
-    },
-  },
 ];
 
 /**
- * Ctrl 系キーバインドのディスパッチ本体。
+ * Ctrl 系キーのディスパッチ本体。
  *
  * attachCustomKeyEventHandler に渡す実体。戻り値は
  * false → xterm が通常処理しない、true → 通常処理を継続。
  * テスト容易性のため export する。
+ *
+ * ここで直接実行するのは **ターミナル面に閉じた操作** (貼り付け・コピー・改行送出) だけ。
+ * タブを開く / 閉じる / 移動するといったアプリ操作は、このキーがたまたまターミナル上で
+ * 押されただけなので、イベントとして上へ流し tabs の Mediator に裁定させる。
+ *
+ * @param emit チェーンへの送出口。
+ * @param commandsSuspended コマンドが止まっているか (コンテキストメニュー表示中)。
+ *        止まっている間は preventDefault せず、従来どおり xterm に通常処理させる。
  */
-export function handleCtrlKey(e: KeyboardEvent, runtime: TerminalRuntime): boolean {
+export function handleCtrlKey(
+  e: KeyboardEvent,
+  runtime: TerminalRuntime,
+  emit: (event: TabsIntent) => void,
+  commandsSuspended: boolean,
+): boolean {
   if (e.type !== 'keydown') return true;
   if (!e.ctrlKey) return true;
 
@@ -390,8 +340,18 @@ export function handleCtrlKey(e: KeyboardEvent, runtime: TerminalRuntime): boole
   // e.preventDefault() は isComposing チェック後に置くことで IME 確定（Enter/Tab）を阻害しない
   if (e.isComposing || e.keyCode === 229) return true;
 
-  // ContextMenu が開いている間はキーバインドを suspend する（C2: 競合防止）
-  if (useAppStore.getState().contextMenuOpen) return true;
+  // ContextMenu が開いている間はキーを xterm へ素通しする（C2: 競合防止）。
+  // Mediator 側も suspended 中のコマンドを捨てるが、ここで早期に返すのは
+  // 「preventDefault するかどうか」を決めるため。
+  if (commandsSuspended) return true;
+
+  // アプリ操作 (タブ) が先。ターミナル面の操作とはキーが重ならない。
+  const command = tabCommandForKey(e);
+  if (command) {
+    e.preventDefault();
+    emit(command);
+    return false;
+  }
 
   const codeIs: CodeIs = (code, key) =>
     e.code === code || (e.code === '' && e.key.toLowerCase() === key);
@@ -409,6 +369,15 @@ export const TerminalPane = memo(function TerminalPane({
   const settings = useAppStore((s) => s.settings);
   const setTabStatus = useAppStore((s) => s.setTabStatus);
   const updateTabOscTitle = useAppStore((s) => s.updateTabOscTitle);
+
+  // タブ操作はイベントとして上へ流す。xterm のキーハンドラは mount 時に 1 度だけ
+  // 張るため、最新の値を ref 越しに読む (張り直すと入力が取りこぼされる)。
+  const emit = useEmit<TabsIntent>();
+  const { commandsSuspended } = useTabsView();
+  const emitRef = useRef(emit);
+  emitRef.current = emit;
+  const suspendedRef = useRef(commandsSuspended);
+  suspendedRef.current = commandsSuspended;
 
   const divRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalRuntime | null>(null);
@@ -564,7 +533,9 @@ export const TerminalPane = memo(function TerminalPane({
     const runtime = runtimeRef.current;
     if (!runtime) return;
 
-    runtime.term.attachCustomKeyEventHandler((e) => handleCtrlKey(e, runtime));
+    runtime.term.attachCustomKeyEventHandler((e) =>
+      handleCtrlKey(e, runtime, emitRef.current, suspendedRef.current),
+    );
     return () => {
       // xterm はハンドラ解除 API がないため、no-op ハンドラで上書きする
       runtime.term.attachCustomKeyEventHandler(() => true);

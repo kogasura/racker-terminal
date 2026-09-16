@@ -4,6 +4,8 @@ import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useShallow } from 'zustand/shallow';
 import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import type { TabsEvent } from '../features/tabs/events';
 import { InlineEdit } from './InlineEdit';
 import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type Tab, type TabStatus } from '../types';
 import { DRAG_KIND, nextNewGroupTitle } from '../lib/dndResolve';
@@ -180,7 +182,8 @@ export const TabItem = memo(function TabItem({
   const duplicateTab = useAppStore((s) => s.duplicateTab);
   const addFavorite = useAppStore((s) => s.addFavorite);
   const clearClaudeSession = useAppStore((s) => s.clearClaudeSession);
-  const setContextMenuOpen = useAppStore((s) => s.setContextMenuOpen);
+  // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
+  const emit = useEmit<TabsEvent>();
 
   // groupId と kind を data に持たせることで onDragEnd で所属グループと D&D 種別を参照できる
   // F-M6: kind は DRAG_KIND 定数経由で指定（typo を型レベルで検出）
@@ -210,7 +213,11 @@ export const TabItem = memo(function TabItem({
   }
 
   return (
-    <ContextMenu.Root onOpenChange={(open) => setContextMenuOpen(open)}>
+    <ContextMenu.Root
+      onOpenChange={(open) =>
+        emit({ type: open ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
+      }
+    >
       {/* 編集中は右クリックメニューを無効化する */}
       <ContextMenu.Trigger
         disabled={isEditing}

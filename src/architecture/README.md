@@ -140,9 +140,20 @@ store の `dragId` / `dragKind` という 2 つのフラグをやめて Mediator
 （「id はあるが kind が無い」の組み合わせが作れなくなった）。落とし先の解決は
 effects が持つ。
 
-**View から store 参照が消えた。** 残るのは `App.tsx` 21（副作用の巣）と
-`TerminalPane` 12（うち 7 は例外）の 2 つだけ。`Roots.tsx` の 3 は
-hydration 待ちで、Root 自身の仕事。
+**View からも `App.tsx` からも store 参照が消えた。** `App.tsx` は 45 行の
+構成だけになり、副作用はすべて機能ごとの Root が持つ。残るのは
+`TerminalPane` 12（うち 7 は例外）だけ。`Roots.tsx` の 3 は hydration 待ちで、
+Root 自身の仕事。
+
+### 状態を持たない Root
+
+副作用だけを持つ Root もある（`settings` / `terminalUpkeep` / `prStatus` /
+`notifications`）。定期的な手入れや外部データの取得はユーザー操作が起点では
+ないので、裁定するものがなく、Mediator の状態もイベントも要らない。
+
+それでも機能ごとの Root にまとめる価値はある。`App.tsx` に並んでいたときは
+「なぜここにあるのか」が読み取れず、`useEffect` の列から目的を再構成する
+必要があった。対象ごとに分けると、ファイル名が目的になる。
 
 ### I/O は View に持たせない
 

@@ -11,8 +11,14 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { BootstrapRoot } from './features/bootstrap/BootstrapRoot';
+import { ClaudeSessionsRoot } from './features/claudeSessions/ClaudeSessionsRoot';
 import { ClaudeStatusRoot } from './features/claudeStatus/ClaudeStatusRoot';
+import { LaunchRoot } from './features/launch/LaunchRoot';
+import { NotificationsRoot } from './features/notifications/NotificationsRoot';
+import { PrStatusRoot } from './features/prStatus/PrStatusRoot';
 import { SettingsRoot } from './features/settings/SettingsRoot';
+import { TerminalUpkeepRoot } from './features/terminalUpkeep/TerminalUpkeepRoot';
 import { TabsRoot } from './features/tabs/TabsRoot';
 import { UpdaterRoot } from './features/updater/UpdaterRoot';
 import { useAppStore } from './store/appStore';
@@ -30,7 +36,19 @@ export function Roots({ children }: { children: ReactNode }) {
     <UpdaterRoot ready={hydrated}>
       <SettingsRoot>
         <TabsRoot>
-          <ClaudeStatusRoot>{children}</ClaudeStatusRoot>
+          <ClaudeStatusRoot>
+            <ClaudeSessionsRoot>
+              <TerminalUpkeepRoot>
+                <PrStatusRoot>
+                  <NotificationsRoot>
+                    <BootstrapRoot>
+                      <LaunchRoot>{children}</LaunchRoot>
+                    </BootstrapRoot>
+                  </NotificationsRoot>
+                </PrStatusRoot>
+              </TerminalUpkeepRoot>
+            </ClaudeSessionsRoot>
+          </ClaudeStatusRoot>
         </TabsRoot>
       </SettingsRoot>
     </UpdaterRoot>

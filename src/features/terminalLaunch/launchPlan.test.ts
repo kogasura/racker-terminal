@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { cwdBasename, sanitizeSessionName, isWslShell, buildWslClaudeArgs, buildClaudeCommand } from './TerminalPane';
-import { isWslShell as isWslShellSrc } from '../lib/profileTemplates';
+import { cwdBasename, sanitizeSessionName, buildWslClaudeArgs, buildClaudeCommand } from './launchPlan';
+import { isWslShell } from '../../lib/profileTemplates';
+import { isWslShell as isWslShellSrc } from '../../lib/profileTemplates';
 
 describe('cwdBasename', () => {
   it('POSIX パスの末尾フォルダ名を返す', () => {

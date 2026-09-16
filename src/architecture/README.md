@@ -107,19 +107,20 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 - **ユーザー操作はイベントとして上へ流す。** そのキーがたまたまこのコンポーネント上で
   押されただけなら、それは例外の対象外です
 
-### 境界の具体例（`TerminalPane` の現状）
+### 境界の具体例（`TerminalPane`）
 
-移行前の `TerminalPane` には store 参照が 17 箇所ありましたが、例外に当たるのはこのうち
-**7 箇所だけ**です。残りは通常どおりイベントに置き換えます。
+移行前の `TerminalPane` には store 参照が 17 箇所ありましたが、例外に当たるのは
+**7 箇所だけ**でした。残りはすべて移し終えています。
 
 | 分類 | 箇所 | 扱い |
 |---|---|---|
 | ランタイムの生成とコールバック配線（`settings` / `setTabStatus` / `updateTabOscTitle` / `isEditing` / `onCwdChange` / `onAgentState` / `onTabStatusOsc`） | 7 | **例外。** そのまま直接触ってよい |
-| Ctrl 系キーバインドからのアプリ操作（タブを閉じる・移動・復元・新規・お気に入り起動、コンテキストメニュー中の抑止） | 7 | 例外ではない。**移行済み** → `features/tabs/` |
-| 起動シーケンスの決定（Claude セッションの採番、起動プランの算出、spawn タイムアウトの失敗判定） | 3 | 例外ではない。Mediator（ステートマシン）へ移す。`spawning → live / crashed` は素直に状態遷移になる。**未着手** |
+| Ctrl 系キーバインドからのアプリ操作 | 7 | 移行済み → `features/tabs/` |
+| 起動シーケンスの決定（Claude セッションの採番、起動プランの算出、spawn タイムアウトの失敗判定） | 3 | 移行済み → `features/terminalLaunch/` |
 
 つまり「`TerminalPane` は例外」ではなく、「`TerminalPane` の中の**ターミナル面の世話**が
-例外」です。キー入力の受け口とタブの起動フローは、他の機能と同じ形に寄せられます。
+例外」です。**いま残っている store 参照は 7 箇所ちょうどで、上の表の 1 行目と一致します。**
+例外が「ここだけ何でもあり」に育っていないことは、数で確かめられる状態にしてあります。
 
 ## 移行の状況
 
@@ -127,8 +128,12 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 |---|---|
 | `features/updater/` | 完了。状態もデータも Mediator が持つ |
 | `features/claudeStatus/` | 完了。`StatusBar` は store 参照 0 の Passive View。プラン利用量のポーリングも Root が持つ |
-| `features/tabs/` | キーコマンドの裁定、コンテキストメニューによる抑止、`TabBar` / `Sidebar` の View モデル。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
-| それ以外 | 未着手。`useAppStore` を直接参照する従来の形 |
+| `features/tabs/` | タブ UI の View モデルとコマンド、D&D、キーコマンドの裁定。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
+| `features/settings/` `features/terminalUpkeep/` `features/prStatus/` `features/notifications/` `features/claudeSessions/` `features/bootstrap/` `features/launch/` | 副作用だけを持つ Root（状態・イベントなし） |
+| `features/terminalLaunch/` | 起動シーケンスの決定。`TerminalPane` から判断を外に出すためのもの |
+
+**移行は一巡した。** 残る課題は「タブのデータ自体を store から Mediator へ移すか」で、
+これは別の判断（永続化・migrate をどう扱うか）を伴うため、いまは store のままにしてある。
 
 Passive View になったもの: `TitleBar` / `StatusBar` / `TabBar` / `Sidebar` /
 `TabItem` / `GroupSection` / `FavoritesSection` / updater の View 群。

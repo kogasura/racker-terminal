@@ -7,6 +7,7 @@
  */
 
 import { nextNewGroupTitle } from '../../lib/dndResolve';
+import { getTabDisplayTitle } from '../../types';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
 import type { TabsEffect } from './machine';
@@ -50,6 +51,46 @@ const handlers: HandlerMap = {
   'create-tab': (state) => {
     // グループが 1 つも無い起動直後は何もしない (タブバー自体が出ていない)
     if (state.activeGroupId) state.createTab(state.activeGroupId);
+  },
+
+  'activate-tab': (state, effect) => state.setActiveTab(effect.tabId),
+
+  'close-tab': (state, effect) => state.removeTab(effect.tabId),
+
+  'start-editing': (state, effect) => state.startEditing(effect.tabId),
+
+  'rename-tab': (state, effect) => state.updateTabTitle(effect.tabId, effect.title),
+
+  'duplicate-tab': (state, effect) => state.duplicateTab(effect.tabId),
+
+  'favorite-tab': (state, effect) => {
+    const tab = state.tabs[effect.tabId];
+    if (!tab) return;
+    // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する。
+    // launchClaude / bypassPermissions も引き継ぐ: ここが抜けていたため、
+    // Claude タブを「お気に入りに追加」すると自動起動しないお気に入りになっていた。
+    state.addFavorite({
+      title: getTabDisplayTitle(tab),
+      shell: tab.shell,
+      cwd: tab.cwd,
+      args: tab.args, // クローンは addFavorite 内部で行う
+      env: tab.env,
+      launchClaude: tab.launchClaude || undefined,
+      // 権限バイパスは Claude 自動起動が前提。FavoriteDialog の保存と同じ正規化を行う
+      bypassPermissions: (tab.launchClaude && tab.bypassPermissions) || undefined,
+    });
+  },
+
+  'clear-claude-session': (state, effect) => state.clearClaudeSession(effect.tabId),
+
+  // 移動先の末尾に置く。moveTab 側が toIndex をクランプする
+  'move-tab': (state, effect) =>
+    state.moveTab(effect.tabId, effect.toGroupId, Number.MAX_SAFE_INTEGER),
+
+  'move-tab-to-new-group': (state, effect) => {
+    // サイドバー下部の「+ 新規グループに追加」drop エリアと同じ操作
+    const groupId = state.createGroup(nextNewGroupTitle(state.groups));
+    state.moveTab(effect.tabId, groupId, 0);
   },
 
   'create-group': (state) => {

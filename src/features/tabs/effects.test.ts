@@ -122,6 +122,87 @@ describe('tabs effects', () => {
     expect(useAppStore.getState().groups[2].title).toBe('New Group 2');
   });
 
+  it('タブの基本操作が store に届く', () => {
+    const m = boot();
+
+    m.send({ type: 'tabs/tab-activated', tabId: 't2' });
+    expect(useAppStore.getState().activeTabId).toBe('t2');
+
+    m.send({ type: 'tabs/tab-rename-started', tabId: 't2' });
+    expect(useAppStore.getState().editingId).toBe('t2');
+
+    m.send({ type: 'tabs/tab-renamed', tabId: 't2', title: '名前' });
+    expect(useAppStore.getState().tabs.t2.userTitle).toBe('名前');
+
+    m.send({ type: 'tabs/tab-close-requested', tabId: 't2' });
+    expect(useAppStore.getState().tabs.t2).toBeUndefined();
+  });
+
+  it('お気に入り登録は Claude の設定まで引き継ぐ', () => {
+    // ここが抜けていたため、Claude タブを登録すると自動起動しないお気に入りになっていた
+    useAppStore.setState((s) => ({
+      tabs: {
+        ...s.tabs,
+        t1: {
+          ...s.tabs.t1,
+          userTitle: 'claude タブ',
+          shell: 'nu',
+          cwd: 'C:\work',
+          launchClaude: true,
+          bypassPermissions: true,
+        },
+      },
+    }));
+
+    boot().send({ type: 'tabs/tab-favorite-requested', tabId: 't1' });
+
+    const fav = useAppStore.getState().favorites[0];
+    expect(fav).toMatchObject({
+      title: 'claude タブ',
+      shell: 'nu',
+      cwd: 'C:\work',
+      launchClaude: true,
+      bypassPermissions: true,
+    });
+  });
+
+  it('お気に入り登録: Claude 自動起動が無ければ権限バイパスも落とす', () => {
+    useAppStore.setState((s) => ({
+      tabs: { ...s.tabs, t1: { ...s.tabs.t1, launchClaude: false, bypassPermissions: true } },
+    }));
+
+    boot().send({ type: 'tabs/tab-favorite-requested', tabId: 't1' });
+
+    expect(useAppStore.getState().favorites[0].bypassPermissions).toBeUndefined();
+  });
+
+  it('お気に入り登録: 存在しないタブは何もしない', () => {
+    expect(() =>
+      boot().send({ type: 'tabs/tab-favorite-requested', tabId: 'missing' }),
+    ).not.toThrow();
+    expect(useAppStore.getState().favorites).toHaveLength(0);
+  });
+
+  it('move-tab: 別グループの末尾へ移す', () => {
+    useAppStore.setState((s) => ({
+      groups: [...s.groups, { id: 'g2', title: 'G2', collapsed: false, tabIds: [] }],
+    }));
+
+    boot().send({ type: 'tabs/tab-move-requested', tabId: 't1', toGroupId: 'g2' });
+
+    const state = useAppStore.getState();
+    expect(state.groups.find((g) => g.id === 'g2')?.tabIds).toEqual(['t1']);
+    expect(state.tabs.t1.groupId).toBe('g2');
+  });
+
+  it('move-tab-to-new-group: グループを作ってそこへ移す', () => {
+    boot().send({ type: 'tabs/tab-move-to-new-group-requested', tabId: 't1' });
+
+    const state = useAppStore.getState();
+    expect(state.groups).toHaveLength(2);
+    expect(state.groups[1].tabIds).toEqual(['t1']);
+  });
+
   it('コンテキストメニュー表示中はどのコマンドも store に届かない', () => {
     const spawn = stubAction('spawnDefaultOrNew');
     const m = boot();

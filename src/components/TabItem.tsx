@@ -2,57 +2,13 @@ import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
 import { useEmit } from '../architecture/chain';
 import type { TabsEvent } from '../features/tabs/events';
+import { useMoveTargetsView, useTabItemView } from '../features/tabs/TabsRoot';
+import type { PrBadgeViewModel, TabItemViewModel } from '../features/tabs/viewModel';
 import { InlineEdit } from './InlineEdit';
-import { getTabDisplayTitle, AGENT_STATE_LABEL, type AgentState, type Tab, type TabStatus } from '../types';
-import { DRAG_KIND, nextNewGroupTitle } from '../lib/dndResolve';
-import { prBadgeKind, prTooltip } from '../lib/prStatus';
+import { DRAG_KIND } from '../lib/dndResolve';
 import { openUrl } from '@tauri-apps/plugin-opener';
-
-const STATUS_DOT_CLASS: Record<TabStatus, string> = {
-  live: 'tab-item__status-dot tab-item__status-dot--live',
-  spawning: 'tab-item__status-dot tab-item__status-dot--spawning',
-  crashed: 'tab-item__status-dot tab-item__status-dot--crashed',
-};
-
-/**
- * ステータスドットの class を組み立てる。
- *
- * PTY のライフサイクル (TabStatus) を基底の色とし、Claude タブのエージェント状態を
- * modifier で重ねる。'idle' と未検出 (undefined) は modifier を付けず、
- * 通常のタブと同じ見た目にする（「何も起きていない」ことを装飾で主張しない）。
- *
- * Sidebar のドラッグプレビューと共有するため export している。
- */
-export function statusDotClassName(status: TabStatus, agentState?: AgentState): string {
-  const base = STATUS_DOT_CLASS[status];
-  if (!agentState || agentState === 'idle') return base;
-  return `${base} tab-item__status-dot--agent-${agentState}`;
-}
-
-/**
- * ステータスドットの tooltip 文言を組み立てる。
- *
- * Claude のセッション情報が取れているタブでは、状態名だけでなく理由まで出す:
- * - 応答待ちなら `waitingFor`（'input needed' 等）を添える
- * - working のうち **シェルコマンド実行中** (`status === 'shell'`) は
- *   表示上 working に統合しているため、ここで区別を補う
- */
-export function agentTooltip(tab: Pick<Tab, 'agentState' | 'waitingFor' | 'claudeStatus'>): string | undefined {
-  if (tab.agentState === undefined) return undefined;
-  const label = AGENT_STATE_LABEL[tab.agentState];
-
-  if (tab.agentState === 'blocked' && tab.waitingFor !== undefined) {
-    return `${label}: ${tab.waitingFor}`;
-  }
-  if (tab.agentState === 'working' && tab.claudeStatus === 'shell') {
-    return `${label}（シェルコマンド）`;
-  }
-  return label;
-}
 
 /**
  * タブの並び方向。
@@ -71,30 +27,23 @@ interface TabItemProps {
 
 /**
  * 作業ディレクトリのブランチに対応する PR バッジ。クリックでブラウザを開く。
- * PR 未作成・状態が取れない場合は何も描画しない。
+ * 出すかどうかは View モデルが決めている。
  */
-function TabPrBadge({ tab }: { tab: Tab }) {
-  const pr = {
-    branch: tab.prBranch ?? '',
-    number: tab.prNumber,
-    state: tab.prState,
-    isDraft: tab.prIsDraft,
-  };
-  const kind = prBadgeKind(pr);
-  if (kind === null || tab.prNumber === undefined) return null;
+function TabPrBadge({ pr }: { pr: PrBadgeViewModel | null }) {
+  if (pr === null) return null;
 
   return (
     <button
       type="button"
-      className={`tab-item__pr tab-item__pr--${kind}`}
-      title={prTooltip(pr)}
+      className={`tab-item__pr tab-item__pr--${pr.kind}`}
+      title={pr.tooltip}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
-        if (tab.prUrl !== undefined) void openUrl(tab.prUrl);
+        if (pr.url !== undefined) void openUrl(pr.url);
       }}
     >
-      #{tab.prNumber}
+      {pr.label}
     </button>
   );
 }
@@ -117,12 +66,8 @@ function MoveToGroupSubmenu({
   tabId: string;
   currentGroupId: string;
 }) {
-  // Sidebar と同じく id / title を別々に subscribe する。
-  // オブジェクトの配列にすると useShallow の要素比較が毎回 false になる。
-  const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
-  const groupTitles = useAppStore(useShallow((s) => s.groups.map((g) => g.title)));
-  const moveTab = useAppStore((s) => s.moveTab);
-  const createGroup = useAppStore((s) => s.createGroup);
+  const targets = useMoveTargetsView(currentGroupId);
+  const emit = useEmit<TabsEvent>();
 
   return (
     <ContextMenu.Sub>
@@ -133,16 +78,16 @@ function MoveToGroupSubmenu({
 
       <ContextMenu.Portal>
         <ContextMenu.SubContent className="context-menu__content" sideOffset={2} alignOffset={-4}>
-          {groupIds.map((groupId, i) => (
+          {targets.map((target) => (
             <ContextMenu.Item
-              key={groupId}
+              key={target.groupId}
               className="context-menu__item"
-              // 今いるグループへの移動は no-op なので選ばせない
-              disabled={groupId === currentGroupId}
-              // 移動先の末尾に置く。moveTab 側が toIndex をクランプする
-              onSelect={() => moveTab(tabId, groupId, Number.MAX_SAFE_INTEGER)}
+              disabled={target.disabled}
+              onSelect={() =>
+                emit({ type: 'tabs/tab-move-requested', tabId, toGroupId: target.groupId })
+              }
             >
-              <span className="context-menu__label">{groupTitles[i]}</span>
+              <span className="context-menu__label">{target.title}</span>
             </ContextMenu.Item>
           ))}
 
@@ -151,12 +96,7 @@ function MoveToGroupSubmenu({
           {/* サイドバー下部の「+ 新規グループに追加」drop エリアと同じ操作 */}
           <ContextMenu.Item
             className="context-menu__item"
-            onSelect={() => {
-              const newGroupId = createGroup(
-                nextNewGroupTitle(groupTitles.map((title) => ({ title }))),
-              );
-              moveTab(tabId, newGroupId, 0);
-            }}
+            onSelect={() => emit({ type: 'tabs/tab-move-to-new-group-requested', tabId })}
           >
             <span className="context-menu__label">+ 新規グループへ移動</span>
           </ContextMenu.Item>
@@ -171,46 +111,53 @@ export const TabItem = memo(function TabItem({
   isActive,
   variant = 'vertical',
 }: TabItemProps) {
-  // 個別 subscribe で他タブの status 変化による再レンダを防ぐ
-  const tab = useAppStore((s) => s.tabs[tabId]);
-  // M3: boolean だけ subscribe することで、自分以外の editingId 変化による再レンダーを防ぐ
-  const isEditing = useAppStore((s) => s.editingId === tabId);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
-  const removeTab = useAppStore((s) => s.removeTab);
-  const startEditing = useAppStore((s) => s.startEditing);
-  const updateTabTitle = useAppStore((s) => s.updateTabTitle);
-  const duplicateTab = useAppStore((s) => s.duplicateTab);
-  const addFavorite = useAppStore((s) => s.addFavorite);
-  const clearClaudeSession = useAppStore((s) => s.clearClaudeSession);
-  // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
+  const vm = useTabItemView(tabId);
   const emit = useEmit<TabsEvent>();
 
   // groupId と kind を data に持たせることで onDragEnd で所属グループと D&D 種別を参照できる
   // F-M6: kind は DRAG_KIND 定数経由で指定（typo を型レベルで検出）
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tabId,
-    data: { kind: DRAG_KIND.TAB, groupId: tab?.groupId },
+    data: { kind: DRAG_KIND.TAB, groupId: vm.groupId },
     // 編集中はドラッグ操作を無効にする
-    disabled: isEditing,
+    disabled: vm.isEditing,
   });
 
-  if (!tab) return null;
+  if (!vm.exists) return null;
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  return (
+    <TabItemView
+      tabId={tabId}
+      vm={vm}
+      isActive={isActive}
+      variant={variant}
+      emit={emit}
+      sortable={{ attributes, listeners, setNodeRef, transform, transition, isDragging }}
+    />
+  );
+});
 
-  function handleDoubleClick(e: React.MouseEvent) {
-    // 編集中のダブルクリックは無視
-    if (isEditing) return;
-    e.preventDefault();
-    startEditing(tabId);
-  }
-
-  function handleCommit(newTitle: string) {
-    updateTabTitle(tabId, newTitle);
-  }
+/** 並べるだけの本体。判断はすべて View モデル側にある。 */
+function TabItemView({
+  tabId,
+  vm,
+  isActive,
+  variant,
+  emit,
+  sortable,
+}: {
+  tabId: string;
+  vm: TabItemViewModel;
+  isActive: boolean;
+  variant: TabItemVariant;
+  emit: (event: TabsEvent) => void;
+  sortable: Pick<
+    ReturnType<typeof useSortable>,
+    'attributes' | 'listeners' | 'setNodeRef' | 'transform' | 'transition' | 'isDragging'
+  >;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
+  const style = { transform: CSS.Transform.toString(transform), transition };
 
   return (
     <ContextMenu.Root
@@ -219,10 +166,7 @@ export const TabItem = memo(function TabItem({
       }
     >
       {/* 編集中は右クリックメニューを無効化する */}
-      <ContextMenu.Trigger
-        disabled={isEditing}
-        asChild
-      >
+      <ContextMenu.Trigger disabled={vm.isEditing} asChild>
         <div
           ref={setNodeRef}
           data-dragging={isDragging || undefined}
@@ -230,24 +174,26 @@ export const TabItem = memo(function TabItem({
           {...attributes}
           {...listeners}
           className={`tab-item tab-item--${variant}${isActive ? ' active' : ''}`}
-          onClick={() => setActiveTab(tabId)}
-          onDoubleClick={handleDoubleClick}
+          onClick={() => emit({ type: 'tabs/tab-activated', tabId })}
+          onDoubleClick={(e) => {
+            // 編集中のダブルクリックは無視
+            if (vm.isEditing) return;
+            e.preventDefault();
+            emit({ type: 'tabs/tab-rename-started', tabId });
+          }}
           // N14: Radix の disabled が効かないバージョン互換性対策として onContextMenu も抑制する
-          onContextMenu={isEditing ? (e) => e.preventDefault() : undefined}
+          onContextMenu={vm.isEditing ? (e) => e.preventDefault() : undefined}
         >
-          <span
-            className={statusDotClassName(tab.status, tab.agentState)}
-            title={agentTooltip(tab)}
-          />
+          <span className={vm.statusClass} title={vm.statusTooltip} />
 
           <InlineEdit
             id={tabId}
-            title={getTabDisplayTitle(tab)}
-            onCommit={handleCommit}
+            title={vm.title}
+            onCommit={(title) => emit({ type: 'tabs/tab-renamed', tabId, title })}
             className="tab-item__title"
           />
 
-          <TabPrBadge tab={tab} />
+          <TabPrBadge pr={vm.pr} />
 
           <button
             type="button"
@@ -256,7 +202,7 @@ export const TabItem = memo(function TabItem({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              removeTab(tabId);
+              emit({ type: 'tabs/tab-close-requested', tabId });
             }}
           >
             ×
@@ -268,35 +214,35 @@ export const TabItem = memo(function TabItem({
         <ContextMenu.Content className="context-menu__content">
           <ContextMenu.Item
             className="context-menu__item"
-            onSelect={() => startEditing(tabId)}
+            onSelect={() => emit({ type: 'tabs/tab-rename-started', tabId })}
           >
             リネーム
           </ContextMenu.Item>
 
           <ContextMenu.Item
             className="context-menu__item"
-            onSelect={() => duplicateTab(tabId)}
+            onSelect={() => emit({ type: 'tabs/tab-duplicate-requested', tabId })}
           >
             複製
           </ContextMenu.Item>
 
-          <MoveToGroupSubmenu tabId={tabId} currentGroupId={tab.groupId} />
+          <MoveToGroupSubmenu tabId={tabId} currentGroupId={vm.groupId} />
 
           {/*
             手動起動 claude の紐付けは cwd 一致という緩い根拠で自動採用されるため、
             同じフォルダで動いていた別アプリの会話を掴んでしまうことがありうる。
             そのときにユーザーが打てる唯一の手として、記録を切り離す導線を置く。
-            claudeSessionId を持たないタブには何も出さない（claude を使わない人には
-            存在しないメニュー）。消したあと再び採用されるのは「そのフォルダで
-            実際に claude が 1 つだけ生きている」ときだけなので、消し得にはならない。
+            記録を持たないタブには何も出さない（claude を使わない人には存在しない
+            メニュー）。消したあと再び採用されるのは「そのフォルダで実際に claude が
+            1 つだけ生きている」ときだけなので、消し得にはならない。
           */}
-          {tab.claudeSessionId !== undefined && (
+          {vm.hasClaudeSession && (
             <>
               <ContextMenu.Separator className="context-menu__separator" />
 
               <ContextMenu.Item
                 className="context-menu__item"
-                onSelect={() => clearClaudeSession(tabId)}
+                onSelect={() => emit({ type: 'tabs/claude-session-clear-requested', tabId })}
               >
                 Claude セッションの記録を消す
               </ContextMenu.Item>
@@ -305,21 +251,7 @@ export const TabItem = memo(function TabItem({
 
           <ContextMenu.Item
             className="context-menu__item"
-            onSelect={() => {
-              // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する。
-              // launchClaude / bypassPermissions も引き継ぐ: ここが抜けていたため、
-              // Claude タブを「お気に入りに追加」すると自動起動しないお気に入りになっていた。
-              addFavorite({
-                title: getTabDisplayTitle(tab),
-                shell: tab.shell,
-                cwd: tab.cwd,
-                args: tab.args,    // クローンは addFavorite 内部で行う
-                env: tab.env,
-                launchClaude: tab.launchClaude || undefined,
-                // 権限バイパスは Claude 自動起動が前提。FavoriteDialog の保存と同じ正規化を行う
-                bypassPermissions: (tab.launchClaude && tab.bypassPermissions) || undefined,
-              });
-            }}
+            onSelect={() => emit({ type: 'tabs/tab-favorite-requested', tabId })}
           >
             お気に入りに追加
           </ContextMenu.Item>
@@ -328,7 +260,7 @@ export const TabItem = memo(function TabItem({
 
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
-            onSelect={() => removeTab(tabId)}
+            onSelect={() => emit({ type: 'tabs/tab-close-requested', tabId })}
           >
             閉じる
           </ContextMenu.Item>
@@ -336,4 +268,4 @@ export const TabItem = memo(function TabItem({
       </ContextMenu.Portal>
     </ContextMenu.Root>
   );
-});
+}

@@ -78,6 +78,8 @@ describe('tabs machine', () => {
     const POINTER_COMMANDS: readonly TabsEvent[] = [
       { type: 'tabs/tab-create-requested' },
       { type: 'tabs/group-create-requested' },
+      { type: 'tabs/default-tab-open-requested' },
+      { type: 'tabs/favorite-spawn-requested', favoriteId: 'f1' },
     ];
 
     it('accepting でも suspended でも効果を出す', () => {
@@ -85,6 +87,16 @@ describe('tabs machine', () => {
         expect(transition(initialState, command)?.effects).toHaveLength(1);
         expect(transition(suspended, command)?.effects).toHaveLength(1);
       }
+    });
+
+    it('ポインタ由来の「既定のタブを開く」は Ctrl+T と同じ効果になる', () => {
+      // 同じ結果だが、止める / 止めないが違うのでイベントは分けている
+      expect(effectsOf(initialState, { type: 'tabs/default-tab-open-requested' })).toEqual(
+        effectsOf(initialState, { type: 'tabs/spawn-default-requested' }),
+      );
+      // キーボード由来だけが止まる
+      expect(transition(suspended, { type: 'tabs/spawn-default-requested' })).toBeNull();
+      expect(transition(suspended, { type: 'tabs/default-tab-open-requested' })).not.toBeNull();
     });
 
     it('タブ追加 / グループ追加がそれぞれの効果になる', () => {

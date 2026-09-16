@@ -74,6 +74,13 @@ export type TabsPointerIntent =
   | { readonly type: 'tabs/group-close-requested'; readonly groupId: string }
   /** 指定グループに新しいタブを足す (グループの右クリックメニュー) */
   | { readonly type: 'tabs/tab-create-in-group-requested'; readonly groupId: string }
+  /**
+   * 既定のタブを開く (タイトルバーの + / メニューの「新しいタブ (既定)」)。
+   *
+   * Ctrl+T と同じ動きだが、あちらはキーボード由来なのでイベントを分けている。
+   * ポインタ由来はコンテキストメニュー表示中でも止めない。
+   */
+  | { readonly type: 'tabs/default-tab-open-requested' }
   /** お気に入りからタブを開く */
   | { readonly type: 'tabs/favorite-spawn-requested'; readonly favoriteId: string }
   /** お気に入りを削除する */

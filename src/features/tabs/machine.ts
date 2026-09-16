@@ -152,6 +152,9 @@ const handlers: HandlerMap = {
   'tabs/tab-create-in-group-requested': (state, event) =>
     dispatch(state, { kind: 'create-tab-in-group', groupId: event.groupId }),
 
+  // Ctrl+T と同じ効果だが、こちらは入力モードで止めない
+  'tabs/default-tab-open-requested': (state) => dispatch(state, { kind: 'spawn-default' }),
+
   'tabs/favorite-spawn-requested': (state, event) =>
     dispatch(state, { kind: 'spawn-favorite-by-id', favoriteId: event.favoriteId }),
 

@@ -153,7 +153,7 @@ export const GroupSection = memo(function GroupSection({
             <GroupAgentIndicator agentState={agentState} />
 
             <InlineEdit
-              id={groupId}
+              isEditing={isEditingGroup}
               title={title}
               onCommit={(newTitle) => emit({ type: 'tabs/group-renamed', groupId, title: newTitle })}
               className="group-header__title"

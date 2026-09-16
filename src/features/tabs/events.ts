@@ -85,6 +85,15 @@ export type TabsPointerIntent =
   | { readonly type: 'tabs/favorite-spawn-requested'; readonly favoriteId: string }
   /** お気に入りを削除する */
   | { readonly type: 'tabs/favorite-remove-requested'; readonly favoriteId: string }
+  /** インライン編集を終える (確定 / 取り消しのどちらでも) */
+  | { readonly type: 'tabs/edit-stopped' }
+  /**
+   * フォルダを選んで、そのフォルダで臨時のタブを開く。
+   *
+   * フォルダ選択ダイアログの表示も effects の担当にしてある。View に I/O を
+   * 持たせないためで、「どのテンプレートで開きたいか」だけを流す。
+   */
+  | { readonly type: 'tabs/folder-open-requested'; readonly templateId: string }
   /** 既定のお気に入りを切り替える (既定なら解除、そうでなければ設定) */
   | { readonly type: 'tabs/favorite-default-toggled'; readonly favoriteId: string }
   /** お気に入りを新規登録する */

@@ -1,7 +1,9 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { getVersion } from '@tauri-apps/api/app';
-import { useAppStore } from '../store/appStore';
+import { useEmit } from '../architecture/chain';
+import { useSettingsView } from '../features/settings/SettingsRoot';
+import type { SettingsEvent } from '../features/settings/events';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateSettingsSectionView } from '../features/updater/views/UpdateSettingsSectionView';
 import type { Settings } from '../types';
@@ -74,8 +76,8 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
 }
 
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
-  const settings = useAppStore((s) => s.settings);
-  const updateSettings = useAppStore((s) => s.updateSettings);
+  const settings = useSettingsView();
+  const emit = useEmit<SettingsEvent>();
   // updater の表示は Root から View モデルとして降ってくる。
   const { settingsSection } = useUpdaterView();
 
@@ -112,7 +114,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     const patch = buildSettingsPatch(draft, settings);
 
     if (Object.keys(patch).length > 0) {
-      updateSettings({ ...settings, ...patch });
+      emit({ type: 'settings/changed', patch });
     }
 
     onClose();

@@ -67,6 +67,7 @@ export type TabsEffect =
     }
   /** 掴み始めたら、編集中の入力を確定 / 取り消しして D&D を優先する。 */
   | { readonly kind: 'stop-editing' }
+  | { readonly kind: 'open-folder'; readonly templateId: string }
   /** 落とした先を解決して反映する。 */
   | {
       readonly kind: 'apply-drop';
@@ -201,6 +202,11 @@ const handlers: HandlerMap = {
 
   // Ctrl+T と同じ効果だが、こちらは入力モードで止めない
   'tabs/default-tab-open-requested': (state) => dispatch(state, { kind: 'spawn-default' }),
+
+  'tabs/edit-stopped': (state) => dispatch(state, { kind: 'stop-editing' }),
+
+  'tabs/folder-open-requested': (state, event) =>
+    dispatch(state, { kind: 'open-folder', templateId: event.templateId }),
 
   'tabs/favorite-spawn-requested': (state, event) =>
     dispatch(state, { kind: 'spawn-favorite-by-id', favoriteId: event.favoriteId }),

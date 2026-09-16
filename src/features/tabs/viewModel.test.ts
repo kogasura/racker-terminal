@@ -3,11 +3,13 @@ import {
   agentTooltip,
   selectFavorites,
   selectGroup,
+  selectFolderTemplates,
   selectMoveTargets,
   selectNewTabMenu,
   selectSidebar,
   selectTabBar,
   selectTabItem,
+  selectTerminalPanes,
   statusDotClassName,
 } from './viewModel';
 import type { Tab } from '../../types';
@@ -160,6 +162,33 @@ describe('selectNewTabMenu', () => {
     expect(vm.items[0].shortcut).toBe('Ctrl+Shift+1');
     expect(vm.items[8].shortcut).toBe('Ctrl+Shift+9');
     expect(vm.items[9].shortcut).toBeUndefined();
+  });
+});
+
+describe('selectTerminalPanes', () => {
+  it('1 つも無ければプレースホルダを出す', () => {
+    expect(selectTerminalPanes({}, null).isEmpty).toBe(true);
+  });
+
+  it('アクティブなタブに印を付ける', () => {
+    const t1 = tab({ id: 't1' });
+    const t2 = tab({ id: 't2' });
+    const vm = selectTerminalPanes({ t1, t2 }, 't2');
+    expect(vm.isEmpty).toBe(false);
+    expect(vm.panes.map((p) => p.isActive)).toEqual([false, true]);
+  });
+});
+
+describe('selectFolderTemplates', () => {
+  it('インストール済み WSL distro が先頭に並ぶ', () => {
+    const vm = selectFolderTemplates(['Ubuntu-22.04']);
+    expect(vm[0]).toEqual({ templateId: 'wsl-Ubuntu-22.04', label: 'WSL: Ubuntu-22.04' });
+    // 静的なテンプレート (Nushell など) も後ろに続く
+    expect(vm.length).toBeGreaterThan(1);
+  });
+
+  it('distro が無ければ静的なテンプレートだけになる', () => {
+    expect(selectFolderTemplates([]).every((t) => !t.templateId.startsWith('wsl-'))).toBe(true);
   });
 });
 

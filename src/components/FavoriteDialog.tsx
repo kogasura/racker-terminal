@@ -1,6 +1,5 @@
 import { useState, useMemo, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { useShallow } from 'zustand/shallow';
 import type { Favorite } from '../types';
 import {
   buildProfileTemplates,
@@ -10,7 +9,7 @@ import {
   parseWslArgs,
   isStandardWslArgs,
 } from '../lib/profileTemplates';
-import { useAppStore } from '../store/appStore';
+import { useWslDistrosView } from '../features/tabs/TabsRoot';
 
 interface FavoriteDialogProps {
   mode: 'add' | 'edit';
@@ -249,7 +248,7 @@ function EnvErrorMessage({ error }: { error: string | null }) {
 }
 
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
-  const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
+  const wslDistros = useWslDistrosView();
   const templates = useMemo(() => buildProfileTemplates(wslDistros), [wslDistros]);
 
   // 初期値の導出。useState の初期値としてしか使わないので毎レンダー作り直す必要はない。

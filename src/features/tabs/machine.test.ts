@@ -158,6 +158,16 @@ describe('tabs machine', () => {
       expect(transition(suspended, { type: 'tabs/default-tab-open-requested' })).not.toBeNull();
     });
 
+    it('インライン編集の終了とフォルダを開く要求も止めない', () => {
+      // どちらもポインタ由来。編集の終了は blur でも起きるので、止めると入力が宙に浮く
+      expect(transition(suspended, { type: 'tabs/edit-stopped' })?.effects).toEqual([
+        { kind: 'stop-editing' },
+      ]);
+      expect(
+        transition(suspended, { type: 'tabs/folder-open-requested', templateId: 'nu' })?.effects,
+      ).toEqual([{ kind: 'open-folder', templateId: 'nu' }]);
+    });
+
     it('タブ追加 / グループ追加がそれぞれの効果になる', () => {
       expect(effectsOf(initialState, { type: 'tabs/tab-create-requested' })).toEqual([
         { kind: 'create-tab' },

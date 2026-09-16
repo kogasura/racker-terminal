@@ -31,12 +31,16 @@ import {
   selectMoveTargets,
   selectSidebar,
   selectTabBar,
+  selectFolderTemplates,
   selectTabItem,
+  selectTerminalPanes,
   statusDotClassName,
   type DragOverlayViewModel,
   type FavoritesViewModel,
   type GroupViewModel,
+  type FolderTemplateViewModel,
   type NewTabMenuViewModel,
+  type TerminalPanesViewModel,
   type MoveTargetViewModel,
   type SidebarViewModel,
   type TabBarViewModel,
@@ -151,6 +155,29 @@ export function useDragOverlayView(): DragOverlayViewModel {
     if (!dragId) return EMPTY_DRAG_OVERLAY;
     return { tab, groupTitle, favoriteTitle };
   }, [dragId, tab, groupTitle, favoriteTitle]);
+}
+
+/** ターミナル面の並び。 */
+export function useTerminalPanesView(): TerminalPanesViewModel {
+  const tabs = useAppStore((s) => s.tabs);
+  const activeTabId = useAppStore((s) => s.activeTabId);
+  return useMemo(() => selectTerminalPanes(tabs, activeTabId), [tabs, activeTabId]);
+}
+
+/** フォルダを選んで開くメニュー。インストール済み WSL distro を含む。 */
+export function useFolderTemplatesView(): readonly FolderTemplateViewModel[] {
+  const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
+  return useMemo(() => selectFolderTemplates(wslDistros), [wslDistros]);
+}
+
+/**
+ * お気に入りダイアログのシェル候補。
+ *
+ * 一覧そのものではなく distro 名を返す。ダイアログ側でテンプレートの
+ * 組み立て方 (ラベル・引数) まで必要になるため。
+ */
+export function useWslDistrosView(): string[] {
+  return useAppStore(useShallow((s) => s.wslDistros));
 }
 
 /** タイトルバーの新規タブメニュー。 */

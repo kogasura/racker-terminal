@@ -96,6 +96,32 @@ describe('tabs effects', () => {
     fav.restore();
   });
 
+  it('create-tab: 選択中グループにタブを足す', () => {
+    boot().send({ type: 'tabs/tab-create-requested' });
+    const group = useAppStore.getState().groups.find((g) => g.id === 'g1');
+    expect(group?.tabIds).toHaveLength(3);
+  });
+
+  it('create-tab: グループが無ければ何もしない', () => {
+    useAppStore.setState({ activeGroupId: null });
+    expect(() => boot().send({ type: 'tabs/tab-create-requested' })).not.toThrow();
+  });
+
+  it('create-group: 連番を振って作り、そのまま選択する', () => {
+    const m = boot();
+    m.send({ type: 'tabs/group-create-requested' });
+
+    const state = useAppStore.getState();
+    expect(state.groups).toHaveLength(2);
+    expect(state.groups[1].title).toBe('New Group 1');
+    // 作ったグループを選んでおかないと、直後の Ctrl+T が古いグループにタブを作る
+    expect(state.activeGroupId).toBe(state.groups[1].id);
+
+    // 連番は既存タイトルの最大値を見る（削除 → 追加で番号が崩れない）
+    m.send({ type: 'tabs/group-create-requested' });
+    expect(useAppStore.getState().groups[2].title).toBe('New Group 2');
+  });
+
   it('コンテキストメニュー表示中はどのコマンドも store に届かない', () => {
     const spawn = stubAction('spawnDefaultOrNew');
     const m = boot();

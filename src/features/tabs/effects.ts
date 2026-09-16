@@ -6,6 +6,7 @@
  * 両者を繋いでいます。データを Mediator 側へ移すときも、書き換えるのはここだけです。
  */
 
+import { nextNewGroupTitle } from '../../lib/dndResolve';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
 import type { TabsEffect } from './machine';
@@ -45,6 +46,20 @@ const handlers: HandlerMap = {
   'spawn-default': (state) => state.spawnDefaultOrNew(),
 
   'spawn-favorite': (state, effect) => state.spawnFavoriteByIndex(effect.index),
+
+  'create-tab': (state) => {
+    // グループが 1 つも無い起動直後は何もしない (タブバー自体が出ていない)
+    if (state.activeGroupId) state.createTab(state.activeGroupId);
+  },
+
+  'create-group': (state) => {
+    // 連番の付け直しはここで決める。削除 → 追加で番号が崩れないようにするため、
+    // 既存タイトルの最大値を見る必要がある (nextNewGroupTitle)。
+    const id = state.createGroup(nextNewGroupTitle(state.groups));
+    // 作ったグループをそのまま選択する。選択が前のグループに残っていると、
+    // 直後の Ctrl+T やタイトルバーの + が古いグループにタブを作ってしまう。
+    state.setActiveGroup(id);
+  },
 };
 
 export function createEffectRunner(deps: EffectDeps = defaultDeps) {

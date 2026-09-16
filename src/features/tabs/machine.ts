@@ -31,6 +31,8 @@ export interface TabsState {
 /** 裁定を通ったコマンド。実行は effects.ts の担当。 */
 export type TabsEffect =
   | { readonly kind: 'close-active' }
+  | { readonly kind: 'create-tab' }
+  | { readonly kind: 'create-group' }
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
@@ -78,6 +80,11 @@ const handlers: HandlerMap = {
 
   'tabs/spawn-favorite-requested': (state, event) =>
     accepting(state) ? dispatch(state, { kind: 'spawn-favorite', index: event.index }) : null,
+
+  // --- ポインタ由来。入力モードで止めない (events.ts の TabsPointerIntent 参照) -----
+  'tabs/tab-create-requested': (state) => dispatch(state, { kind: 'create-tab' }),
+
+  'tabs/group-create-requested': (state) => dispatch(state, { kind: 'create-group' }),
 };
 
 /**

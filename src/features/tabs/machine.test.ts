@@ -71,4 +71,29 @@ describe('tabs machine', () => {
       }
     });
   });
+
+  describe('ポインタ由来のコマンドは止めない', () => {
+    // メニューが開いているときにボタンを押せば、まずメニューが閉じてから
+    // クリックが届く。キーボードと違って誤爆の経路が無いので止める理由がない。
+    const POINTER_COMMANDS: readonly TabsEvent[] = [
+      { type: 'tabs/tab-create-requested' },
+      { type: 'tabs/group-create-requested' },
+    ];
+
+    it('accepting でも suspended でも効果を出す', () => {
+      for (const command of POINTER_COMMANDS) {
+        expect(transition(initialState, command)?.effects).toHaveLength(1);
+        expect(transition(suspended, command)?.effects).toHaveLength(1);
+      }
+    });
+
+    it('タブ追加 / グループ追加がそれぞれの効果になる', () => {
+      expect(effectsOf(initialState, { type: 'tabs/tab-create-requested' })).toEqual([
+        { kind: 'create-tab' },
+      ]);
+      expect(effectsOf(initialState, { type: 'tabs/group-create-requested' })).toEqual([
+        { kind: 'create-group' },
+      ]);
+    });
+  });
 });

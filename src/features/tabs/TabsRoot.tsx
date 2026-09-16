@@ -23,10 +23,14 @@ import { createEffectRunner, type EffectDeps } from './effects';
 import type { TabsEvent } from './events';
 import { initialState, transition, type TabsEffect, type TabsState } from './machine';
 import {
+  selectMoveTargets,
   selectSidebar,
   selectTabBar,
+  selectTabItem,
+  type MoveTargetViewModel,
   type SidebarViewModel,
   type TabBarViewModel,
+  type TabItemViewModel,
 } from './viewModel';
 
 export interface TabsViewModel {
@@ -48,6 +52,40 @@ export function useTabsView(): TabsViewModel {
   const vm = useContext(TabsViewContext);
   if (!vm) throw new Error('useTabsView は TabsRoot の内側でしか使えません。');
   return vm;
+}
+
+/**
+ * タブ 1 個ぶんの描画パラメータ。
+ *
+ * 一覧ぶんをまとめて Root から配ると、1 タブの変化で全タブが再描画される。
+ * ここだけは tabId で引く形にして、変わったタブだけが描き直されるようにしている
+ * (移行前のコンポーネントが個別 subscribe していたのと同じ性質)。
+ *
+ * View から見れば「Root から降ってくる View モデル」であることに変わりはなく、
+ * store の形も、そこから何を導くかも知らないままでいられる。
+ */
+export function useTabItemView(tabId: string): TabItemViewModel {
+  const tab = useAppStore((s) => s.tabs[tabId]);
+  // boolean だけ subscribe することで、自分以外の editingId 変化では再描画されない
+  const isEditing = useAppStore((s) => s.editingId === tabId);
+  return useMemo(() => selectTabItem(tab, isEditing), [tab, isEditing]);
+}
+
+/**
+ * 「別のグループへ移動」サブメニューの行。
+ *
+ * 右クリックでメニューを開いたときだけ呼ばれる。タブ本体でグループ一覧を
+ * subscribe すると、全タブがグループのタイトル変更で再描画されてしまう。
+ */
+export function useMoveTargetsView(currentGroupId: string): readonly MoveTargetViewModel[] {
+  // id / title を別々に subscribe する。
+  // オブジェクトの配列にすると useShallow の要素比較が毎回 false になる。
+  const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
+  const groupTitles = useAppStore(useShallow((s) => s.groups.map((g) => g.title)));
+  return useMemo(
+    () => selectMoveTargets(groupIds, groupTitles, currentGroupId),
+    [groupIds, groupTitles, currentGroupId],
+  );
 }
 
 /** 開発時にイベントの流れを追えるようにするリンク。何も消費しない。 */

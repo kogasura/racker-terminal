@@ -21,7 +21,7 @@ import {
   nextNewGroupTitle,
 } from '../lib/dndResolve';
 import { getTabDisplayTitle, type AgentState, type TabStatus } from '../types';
-import { statusDotClassName } from './TabItem';
+import { statusDotClassName } from '../features/tabs/viewModel';
 
 /** B1: グループ自体の並び替え。
  * テスト容易性のため export する。 */

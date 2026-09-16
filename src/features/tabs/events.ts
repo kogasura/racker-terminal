@@ -40,7 +40,29 @@ export type TabsPointerIntent =
   /** 選択中グループに新しいタブを足す (タブバーの +) */
   | { readonly type: 'tabs/tab-create-requested' }
   /** 新しいグループを作って選択する (サイドバーの + New Group) */
-  | { readonly type: 'tabs/group-create-requested' };
+  | { readonly type: 'tabs/group-create-requested' }
+  /** タブをクリックして選んだ */
+  | { readonly type: 'tabs/tab-activated'; readonly tabId: string }
+  /** タブを閉じる (× ボタン / メニューの「閉じる」) */
+  | { readonly type: 'tabs/tab-close-requested'; readonly tabId: string }
+  /** タイトルの編集を始める (ダブルクリック / メニューの「リネーム」) */
+  | { readonly type: 'tabs/tab-rename-started'; readonly tabId: string }
+  /** タイトルの編集を確定した */
+  | { readonly type: 'tabs/tab-renamed'; readonly tabId: string; readonly title: string }
+  /** タブを複製する */
+  | { readonly type: 'tabs/tab-duplicate-requested'; readonly tabId: string }
+  /** タブの内容をお気に入りに登録する */
+  | { readonly type: 'tabs/tab-favorite-requested'; readonly tabId: string }
+  /** Claude セッションの紐付けを切り離す */
+  | { readonly type: 'tabs/claude-session-clear-requested'; readonly tabId: string }
+  /** タブを別のグループの末尾へ移す */
+  | {
+      readonly type: 'tabs/tab-move-requested';
+      readonly tabId: string;
+      readonly toGroupId: string;
+    }
+  /** 新しいグループを作ってそこへ移す */
+  | { readonly type: 'tabs/tab-move-to-new-group-requested'; readonly tabId: string };
 
 /**
  * 入力モードの変化。

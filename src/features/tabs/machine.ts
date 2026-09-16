@@ -33,6 +33,15 @@ export type TabsEffect =
   | { readonly kind: 'close-active' }
   | { readonly kind: 'create-tab' }
   | { readonly kind: 'create-group' }
+  | { readonly kind: 'activate-tab'; readonly tabId: string }
+  | { readonly kind: 'close-tab'; readonly tabId: string }
+  | { readonly kind: 'start-editing'; readonly tabId: string }
+  | { readonly kind: 'rename-tab'; readonly tabId: string; readonly title: string }
+  | { readonly kind: 'duplicate-tab'; readonly tabId: string }
+  | { readonly kind: 'favorite-tab'; readonly tabId: string }
+  | { readonly kind: 'clear-claude-session'; readonly tabId: string }
+  | { readonly kind: 'move-tab'; readonly tabId: string; readonly toGroupId: string }
+  | { readonly kind: 'move-tab-to-new-group'; readonly tabId: string }
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
@@ -85,6 +94,33 @@ const handlers: HandlerMap = {
   'tabs/tab-create-requested': (state) => dispatch(state, { kind: 'create-tab' }),
 
   'tabs/group-create-requested': (state) => dispatch(state, { kind: 'create-group' }),
+
+  'tabs/tab-activated': (state, event) =>
+    dispatch(state, { kind: 'activate-tab', tabId: event.tabId }),
+
+  'tabs/tab-close-requested': (state, event) =>
+    dispatch(state, { kind: 'close-tab', tabId: event.tabId }),
+
+  'tabs/tab-rename-started': (state, event) =>
+    dispatch(state, { kind: 'start-editing', tabId: event.tabId }),
+
+  'tabs/tab-renamed': (state, event) =>
+    dispatch(state, { kind: 'rename-tab', tabId: event.tabId, title: event.title }),
+
+  'tabs/tab-duplicate-requested': (state, event) =>
+    dispatch(state, { kind: 'duplicate-tab', tabId: event.tabId }),
+
+  'tabs/tab-favorite-requested': (state, event) =>
+    dispatch(state, { kind: 'favorite-tab', tabId: event.tabId }),
+
+  'tabs/claude-session-clear-requested': (state, event) =>
+    dispatch(state, { kind: 'clear-claude-session', tabId: event.tabId }),
+
+  'tabs/tab-move-requested': (state, event) =>
+    dispatch(state, { kind: 'move-tab', tabId: event.tabId, toGroupId: event.toGroupId }),
+
+  'tabs/tab-move-to-new-group-requested': (state, event) =>
+    dispatch(state, { kind: 'move-tab-to-new-group', tabId: event.tabId }),
 };
 
 /**

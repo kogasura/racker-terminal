@@ -166,6 +166,25 @@ export function selectFavorites(
   };
 }
 
+/** ドラッグ中に body へ Portal 描画するプレビュー。 */
+export interface DragOverlayViewModel {
+  /** タブを掴んでいるとき。 */
+  readonly tab: {
+    readonly displayTitle: string;
+    readonly statusClass: string;
+  } | null;
+  /** グループを掴んでいるときのタイトル。 */
+  readonly groupTitle: string | null;
+  /** お気に入りを掴んでいるときのタイトル。 */
+  readonly favoriteTitle: string | null;
+}
+
+export const EMPTY_DRAG_OVERLAY: DragOverlayViewModel = {
+  tab: null,
+  groupTitle: null,
+  favoriteTitle: null,
+};
+
 /** タイトルバーの新規タブメニューの 1 行。 */
 export interface NewTabMenuItemViewModel {
   readonly favoriteId: string;

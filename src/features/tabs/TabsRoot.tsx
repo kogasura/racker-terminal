@@ -19,11 +19,12 @@ import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { createMachine, type Machine } from '../../architecture/machine';
 import { DRAG_KIND } from '../../lib/dndResolve';
 import { useAppStore } from '../../store/appStore';
-import { dominantAgentState } from '../../types';
+import { dominantAgentState, getTabDisplayTitle } from '../../types';
 import { createEffectRunner, type EffectDeps } from './effects';
 import type { TabsEvent } from './events';
 import { initialState, transition, type TabsEffect, type TabsState } from './machine';
 import {
+  EMPTY_DRAG_OVERLAY,
   selectFavorites,
   selectGroup,
   selectNewTabMenu,
@@ -31,6 +32,8 @@ import {
   selectSidebar,
   selectTabBar,
   selectTabItem,
+  statusDotClassName,
+  type DragOverlayViewModel,
   type FavoritesViewModel,
   type GroupViewModel,
   type NewTabMenuViewModel,
@@ -54,6 +57,27 @@ export interface TabsViewModel {
 }
 
 const TabsViewContext = createContext<TabsViewModel | null>(null);
+
+/**
+ * Mediator そのものを配るコンテキスト。
+ *
+ * View モデルとは別に持つのは、購読の粒度を分けるため。ここから
+ * `useSyncExternalStore` で個別に購読すれば、関係のない状態変化で
+ * 描き直されずに済む。
+ */
+const TabsMachineContext = createContext<Machine<TabsState, TabsEvent> | null>(null);
+
+/** Mediator の現在の状態を購読する。 */
+export function useTabsMachineState(): TabsState {
+  const machine = useContext(TabsMachineContext);
+  if (!machine) throw new Error('useTabsMachineState は TabsRoot の内側でしか使えません。');
+  return useSyncExternalStore(machine.subscribe, machine.getState, machine.getState);
+}
+
+/** タブを掴んでいる最中か (drop ホバーの見た目、「新規グループに追加」エリアの表示)。 */
+function useIsDraggingTab(): boolean {
+  return useTabsMachineState().drag?.kind === DRAG_KIND.TAB;
+}
 
 export function useTabsView(): TabsViewModel {
   const vm = useContext(TabsViewContext);
@@ -89,6 +113,46 @@ export function useFavoritesView(): FavoritesViewModel {
   return useMemo(() => selectFavorites(favorites, defaultFavoriteId), [favorites, defaultFavoriteId]);
 }
 
+/**
+ * ドラッグプレビュー。
+ *
+ * 何を掴んでいるかは Mediator の状態、表示に要る中身は store から拾う。
+ * Tab オブジェクト全体を返すと OSC タイトル更新などで描き直され、DndContext の
+ * 当たり判定が走り直すので、必要な値だけを取り出す。
+ */
+export function useDragOverlayView(): DragOverlayViewModel {
+  const drag = useTabsMachineState().drag;
+  const dragId = drag?.dragId ?? null;
+  const kind = drag?.kind ?? null;
+
+  const tab = useAppStore(
+    useShallow((s) => {
+      if (!dragId || kind !== DRAG_KIND.TAB) return null;
+      const t = s.tabs[dragId];
+      if (!t) return null;
+      return {
+        displayTitle: getTabDisplayTitle(t),
+        statusClass: statusDotClassName(t.status, t.agentState),
+      };
+    }),
+  );
+
+  const groupTitle = useAppStore((s) => {
+    if (!dragId || kind !== DRAG_KIND.GROUP) return null;
+    return s.groups.find((g) => g.id === dragId)?.title ?? null;
+  });
+
+  const favoriteTitle = useAppStore((s) => {
+    if (!dragId || kind !== DRAG_KIND.FAVORITE) return null;
+    return s.favorites.find((f) => f.id === dragId)?.title ?? null;
+  });
+
+  return useMemo(() => {
+    if (!dragId) return EMPTY_DRAG_OVERLAY;
+    return { tab, groupTitle, favoriteTitle };
+  }, [dragId, tab, groupTitle, favoriteTitle]);
+}
+
 /** タイトルバーの新規タブメニュー。 */
 export function useNewTabMenuView(): NewTabMenuViewModel {
   const favorites = useAppStore(useShallow((s) => s.favorites));
@@ -122,7 +186,7 @@ export function useGroupView(groupId: string): GroupViewModel {
   // boolean だけ subscribe することで、自分以外の editingId 変化では描き直されない
   const isEditing = useAppStore((s) => s.editingId === groupId);
   const groupCount = useAppStore((s) => s.groups.length);
-  const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
+  const isDraggingTab = useIsDraggingTab();
 
   return useMemo(
     () => selectGroup(snapshot, isEditing, groupCount, isDraggingTab),
@@ -181,7 +245,7 @@ export function TabsRoot({ children, deps }: TabsRootProps) {
   // 配列は useShallow で中身比較し、変わっていなければ参照を据え置く
   // (毎回作り直すと memo した View が素通しで再描画される)。
   const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
-  const isDraggingTab = useAppStore((s) => s.dragKind === DRAG_KIND.TAB);
+  const isDraggingTab = state.drag?.kind === DRAG_KIND.TAB;
   const activeGroupId = useAppStore((s) => s.activeGroupId);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const tabIds = useAppStore(
@@ -199,7 +263,9 @@ export function TabsRoot({ children, deps }: TabsRootProps) {
 
   return (
     <EventScope<TabsEvent> links={links}>
-      <TabsViewContext.Provider value={viewModel}>{children}</TabsViewContext.Provider>
+      <TabsMachineContext.Provider value={machine}>
+        <TabsViewContext.Provider value={viewModel}>{children}</TabsViewContext.Provider>
+      </TabsMachineContext.Provider>
     </EventScope>
   );
 }

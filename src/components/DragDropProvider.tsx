@@ -9,80 +9,17 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
-import { useShallow } from 'zustand/shallow';
-import { useAppStore } from '../store/appStore';
-import {
-  resolveDropTarget,
-  GROUP_DROPPABLE_PREFIX,
-  GROUP_HEADER_DROPPABLE_PREFIX,
-  DROP_AS_NEW_GROUP_ID,
-  DRAG_KIND,
-  type DragKind,
-  nextNewGroupTitle,
-} from '../lib/dndResolve';
-import { getTabDisplayTitle, type AgentState, type TabStatus } from '../types';
-import { statusDotClassName } from '../features/tabs/viewModel';
-
-/** B1: グループ自体の並び替え。
- * テスト容易性のため export する。 */
-export function dropGroup(groupId: string, overIdStr: string): void {
-  // F-M1: header (auto-expand 専用) は並び替え対象外
-  // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
-  if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
-
-  // F-M1: 'group-{id}' (droppable) でも生 groupId でもターゲット解決可能にする
-  const overGroupId = overIdStr.startsWith(GROUP_DROPPABLE_PREFIX)
-    ? overIdStr.slice(GROUP_DROPPABLE_PREFIX.length)
-    : overIdStr;
-
-  const toIdx = useAppStore.getState().groups.findIndex((g) => g.id === overGroupId);
-  if (toIdx === -1) return;
-  useAppStore.getState().moveGroup(groupId, toIdx);
-}
-
-/** B2: お気に入りの並び替え。
- * テスト容易性のため export する。 */
-export function dropFavorite(favId: string, overFavId: string): void {
-  const toIdx = useAppStore.getState().favorites.findIndex((f) => f.id === overFavId);
-  if (toIdx === -1) return;
-  useAppStore.getState().moveFavorite(favId, toIdx);
-}
-
-/** タブの D&D。グループ間移動と、新規グループとしての drop (B4b) を扱う。
- * テスト容易性のため export する。 */
-export function dropTab(active: DragEndEvent['active'], overIdStr: string): void {
-  const activeTabId = active.id as string;
-  const fromGroupId = active.data.current?.groupId as string | undefined;
-  if (!fromGroupId) return;
-
-  // B4b: 新規グループとして drop
-  if (overIdStr === DROP_AS_NEW_GROUP_ID) {
-    // F-M3: max suffix + 1 で連番崩壊を防ぐ
-    const newTitle = nextNewGroupTitle(useAppStore.getState().groups);
-    const newGroupId = useAppStore.getState().createGroup(newTitle);
-    useAppStore.getState().moveTab(activeTabId, newGroupId, 0);
-    return;
-  }
-
-  const target = resolveDropTarget(overIdStr, useAppStore.getState());
-  if (!target) return;
-  useAppStore.getState().moveTab(activeTabId, target.toGroupId, target.toIndex);
-}
-
-/** ドラッグプレビュー用に必要な最小タブ情報 */
-interface TabPreviewData {
-  id: string;
-  displayTitle: string;
-  status: TabStatus;
-  agentState?: AgentState;
-}
+import { type DragKind } from '../lib/dndResolve';
+import { useEmit } from '../architecture/chain';
+import { useDragOverlayView } from '../features/tabs/TabsRoot';
+import type { TabsEvent } from '../features/tabs/events';
 
 /** ドラッグ中に Portal 描画される最小プレビュー（status dot + title） */
-function TabItemPreview({ tab }: { tab: TabPreviewData }) {
+function TabItemPreview({ tab }: { tab: { displayTitle: string; statusClass: string } }) {
   return (
     <div className="tab-item tab-item--drag-overlay">
-      {/* ドットの class 生成は TabItem と共有する（見た目を一致させるため） */}
-      <span className={statusDotClassName(tab.status, tab.agentState)} />
+      {/* ドットの class は View モデル側で TabItem と同じ規則で組み立てている */}
+      <span className={tab.statusClass} />
       <span className="tab-item__title">{tab.displayTitle}</span>
     </div>
   );
@@ -125,44 +62,8 @@ export const DragDropProvider = memo(function DragDropProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const dragId = useAppStore((s) => s.dragId);
-  const dragKind = useAppStore((s) => s.dragKind);
-
-  // F2: useShallow で id/displayTitle/status/agentState の 4 フィールドのみ抽出する。
-  // Tab オブジェクト全体を返すと OSC タイトル更新等で再レンダーされ、
-  // DndContext の collision 計算が走り直す問題を防ぐ。
-  const activeDragTab = useAppStore(
-    useShallow((s) => {
-      if (!dragId || dragKind !== DRAG_KIND.TAB) return null;
-      const t = s.tabs[dragId];
-      return t
-        ? {
-            id: t.id,
-            displayTitle: getTabDisplayTitle(t),
-            status: t.status,
-            agentState: t.agentState,
-          }
-        : null;
-    }),
-  );
-
-  // B1: ドラッグ中のグループタイトルを取得（DragOverlay 用）
-  const activeDragGroupTitle = useAppStore(
-    useShallow((s) => {
-      if (!dragId || dragKind !== DRAG_KIND.GROUP) return null;
-      const g = s.groups.find((g) => g.id === dragId);
-      return g ? g.title : null;
-    }),
-  );
-
-  // B2: ドラッグ中のお気に入りタイトルを取得（DragOverlay 用）
-  const activeDragFavoriteTitle = useAppStore(
-    useShallow((s) => {
-      if (!dragId || dragKind !== DRAG_KIND.FAVORITE) return null;
-      const f = s.favorites.find((f) => f.id === dragId);
-      return f ? f.title : null;
-    }),
-  );
+  const overlay = useDragOverlayView();
+  const emit = useEmit<TabsEvent>();
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -172,35 +73,21 @@ export const DragDropProvider = memo(function DragDropProvider({
   );
 
   function handleDragStart(event: DragStartEvent) {
-    const id = event.active.id as string;
-    // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
-    const kind = event.active.data.current?.kind as DragKind | undefined;
-    useAppStore.getState().setDragState(id, kind ?? null);
-    // InlineEdit が編集中なら確定 or キャンセルして D&D を優先する
-    // 注意: GroupSection の useSortable に disabled: isEditingGroup を追加済み (F-M4) のため、
-    // グループ編集中はここに到達しないが、タブ編集中のケースでは引き続き stopEditing が有効。
-    useAppStore.getState().stopEditing();
+    emit({
+      type: 'tabs/drag-started',
+      dragId: event.active.id as string,
+      // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
+      kind: (event.active.data.current?.kind as DragKind | undefined) ?? null,
+    });
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    useAppStore.getState().setDragState(null, null);
-
     const { active, over } = event;
-    if (!over) return;
-    // 同一要素上での drop は no-op（group sentinel 上の drop は別経路で末尾追加扱い）
-    if (active.id === over.id) return;
-
-    // F-M6: DragKind 型（dndResolve.ts 由来）でキャスト
-    const activeKind = active.data.current?.kind as DragKind | undefined;
-    const overIdStr = over.id as string;
-
-    if (activeKind === DRAG_KIND.GROUP) {
-      dropGroup(active.id as string, overIdStr);
-    } else if (activeKind === DRAG_KIND.FAVORITE) {
-      dropFavorite(active.id as string, overIdStr);
-    } else {
-      dropTab(active, overIdStr);
-    }
+    emit({
+      type: 'tabs/drag-ended',
+      overId: over ? (over.id as string) : null,
+      fromGroupId: active.data.current?.groupId as string | undefined,
+    });
   }
 
   return (
@@ -215,15 +102,9 @@ export const DragDropProvider = memo(function DragDropProvider({
       {/* DragOverlay: sidebar / tab bar の overflow に影響されないよう body に Portal 描画 */}
       {createPortal(
         <DragOverlay>
-          {dragKind === DRAG_KIND.TAB && activeDragTab && (
-            <TabItemPreview tab={activeDragTab} />
-          )}
-          {dragKind === DRAG_KIND.GROUP && activeDragGroupTitle && (
-            <GroupHeaderPreview title={activeDragGroupTitle} />
-          )}
-          {dragKind === DRAG_KIND.FAVORITE && activeDragFavoriteTitle && (
-            <FavoriteItemPreview title={activeDragFavoriteTitle} />
-          )}
+          {overlay.tab && <TabItemPreview tab={overlay.tab} />}
+          {overlay.groupTitle && <GroupHeaderPreview title={overlay.groupTitle} />}
+          {overlay.favoriteTitle && <FavoriteItemPreview title={overlay.favoriteTitle} />}
         </DragOverlay>,
         document.body,
       )}

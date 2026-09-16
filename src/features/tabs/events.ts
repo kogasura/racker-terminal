@@ -7,7 +7,7 @@
  */
 
 import type { ChainEvent } from '../../architecture/chain';
-import type { Favorite } from '../../types';
+import type { DragKind, Favorite } from '../../types';
 
 /** タブの移動方向。 */
 export type NavigateDirection = 'next' | 'prev';
@@ -97,6 +97,29 @@ export type TabsPointerIntent =
     };
 
 /**
+ * D&D の進行。
+ *
+ * ドラッグは「掴んでいる / いない」という状態そのものなので、フラグではなく
+ * Mediator の状態として持つ。掴んでいる間だけ出す UI (「新規グループに追加」
+ * エリア、グループ行の drop ホバー) は、その状態から導く。
+ */
+export type TabsDragEvent =
+  | {
+      readonly type: 'tabs/drag-started';
+      readonly dragId: string;
+      readonly kind: DragKind | null;
+    }
+  /**
+   * 掴んでいたものを離した。`overId` が null なら、どこにも落とさなかった (取り消し)。
+   * `fromGroupId` はタブを掴んでいたときだけ入る。
+   */
+  | {
+      readonly type: 'tabs/drag-ended';
+      readonly overId: string | null;
+      readonly fromGroupId: string | undefined;
+    };
+
+/**
  * 入力モードの変化。
  *
  * コンテキストメニューが開いている間はキーコマンドを止める。以前は store の
@@ -107,7 +130,7 @@ export type TabsModeChange =
   | { readonly type: 'tabs/context-menu-opened' }
   | { readonly type: 'tabs/context-menu-closed' };
 
-export type TabsEvent = TabsIntent | TabsPointerIntent | TabsModeChange;
+export type TabsEvent = TabsIntent | TabsPointerIntent | TabsDragEvent | TabsModeChange;
 
 /** チェーンに流せる形であることを型で確かめておく (実行時のコードは生まない)。 */
 type _AssertChainEvent = TabsEvent extends ChainEvent ? true : never;

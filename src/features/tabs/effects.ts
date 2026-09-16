@@ -6,7 +6,14 @@
  * 両者を繋いでいます。データを Mediator 側へ移すときも、書き換えるのはここだけです。
  */
 
-import { nextNewGroupTitle } from '../../lib/dndResolve';
+import {
+  DRAG_KIND,
+  DROP_AS_NEW_GROUP_ID,
+  GROUP_DROPPABLE_PREFIX,
+  GROUP_HEADER_DROPPABLE_PREFIX,
+  nextNewGroupTitle,
+  resolveDropTarget,
+} from '../../lib/dndResolve';
 import { getTabDisplayTitle } from '../../types';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
@@ -18,6 +25,51 @@ export interface EffectDeps {
 }
 
 const defaultDeps: EffectDeps = { getState: useAppStore.getState };
+
+/** グループ自体の並び替え。 */
+function dropGroup(state: StoreState, groupId: string, overIdStr: string): void {
+  // header (auto-expand 専用) は並び替え対象外。
+  // 注意: 'group-header-' は 'group-' のサブストリングなので header チェックを先に行う
+  if (overIdStr.startsWith(GROUP_HEADER_DROPPABLE_PREFIX)) return;
+
+  // 'group-{id}' (droppable) でも生の groupId でもターゲットを解決できるようにする
+  const overGroupId = overIdStr.startsWith(GROUP_DROPPABLE_PREFIX)
+    ? overIdStr.slice(GROUP_DROPPABLE_PREFIX.length)
+    : overIdStr;
+
+  const toIndex = state.groups.findIndex((g) => g.id === overGroupId);
+  if (toIndex === -1) return;
+  state.moveGroup(groupId, toIndex);
+}
+
+/** お気に入りの並び替え。 */
+function dropFavorite(state: StoreState, favId: string, overFavId: string): void {
+  const toIndex = state.favorites.findIndex((f) => f.id === overFavId);
+  if (toIndex === -1) return;
+  state.moveFavorite(favId, toIndex);
+}
+
+/** タブの D&D。グループ間移動と、新規グループとしての drop を扱う。 */
+function dropTab(
+  state: StoreState,
+  tabId: string,
+  overIdStr: string,
+  fromGroupId: string | undefined,
+): void {
+  if (!fromGroupId) return;
+
+  // 新規グループとして drop
+  if (overIdStr === DROP_AS_NEW_GROUP_ID) {
+    // max suffix + 1 で連番崩壊を防ぐ
+    const groupId = state.createGroup(nextNewGroupTitle(state.groups));
+    state.moveTab(tabId, groupId, 0);
+    return;
+  }
+
+  const target = resolveDropTarget(overIdStr, state);
+  if (!target) return;
+  state.moveTab(tabId, target.toGroupId, target.toIndex);
+}
 
 /** store の現在値。effect ハンドラが使う分だけを型で示す。 */
 type StoreState = ReturnType<typeof useAppStore.getState>;
@@ -118,6 +170,20 @@ const handlers: HandlerMap = {
   },
 
   'update-favorite': (state, effect) => state.updateFavorite(effect.favoriteId, effect.favorite),
+
+  'stop-editing': (state) => state.stopEditing(),
+
+  'apply-drop': (state, effect) => {
+    if (effect.dragKind === DRAG_KIND.GROUP) {
+      dropGroup(state, effect.dragId, effect.overId);
+      return;
+    }
+    if (effect.dragKind === DRAG_KIND.FAVORITE) {
+      dropFavorite(state, effect.dragId, effect.overId);
+      return;
+    }
+    dropTab(state, effect.dragId, effect.overId, effect.fromGroupId);
+  },
 
   'create-group': (state) => {
     // 連番の付け直しはここで決める。削除 → 追加で番号が崩れないようにするため、

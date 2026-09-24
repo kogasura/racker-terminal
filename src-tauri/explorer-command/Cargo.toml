@@ -1,6 +1,6 @@
 [package]
 name = "racker-explorer-command"
-version = "1.9.12"
+version = "1.9.13"
 description = "Windows 11 の新コンテキストメニューに「Racker Terminal で開く」を出す shell extension"
 authors = ["yokubo"]
 license = "MIT"

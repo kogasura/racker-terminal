@@ -57,8 +57,20 @@ chore: v<版> にバージョン bump（<一番大きい変更を一言>）
 ...
 ```
 
-push → `gh pr create` → `gh pr checks <番号> --watch` で CI を待つ →
-`gh pr merge <番号> --squash --delete-branch` → `git switch main && git pull --ff-only`。
+push → `gh pr create` → CI を待つ → `gh pr merge <番号> --squash --delete-branch` →
+`git switch main && git pull --ff-only`。
+
+**CI は「登録されるのを待ってから」見る。** PR を作った直後は checks がまだ無く、
+`gh pr checks --watch` は「No checks reported」で即座に抜けてしまう（そのままマージすると
+CI を見ずに入る）。次のように、checks が出てくるまで待ってから `--watch` し、
+**終了コードが 0 のときだけ**マージする:
+
+```bash
+# checks が無いあいだは stdout が空（「no checks reported」は stderr に出る）。
+# 終了コードで待つと、pending(8) や失敗(1) と区別できないので出力の有無で見る
+until [ -n "$(gh pr checks "$PR" 2>/dev/null)" ]; do sleep 10; done
+gh pr checks "$PR" --watch --interval 20 --fail-fast && gh pr merge "$PR" --squash --delete-branch
+```
 
 ## 2. 署名ビルドして GitHub Release を公開する
 

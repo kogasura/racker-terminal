@@ -65,7 +65,7 @@ npm run tauri build
 
 ### Step 4. リリースノート準備
 
-`CHANGELOG-<version>.md` または同等のテキストファイルを用意。
+`docs/changelog/<version>.md` を用意（`npm run release` はこのパスを読む）。
 
 > **形式の注意**:
 > - エンコーディング: UTF-8 (BOM なし)
@@ -78,11 +78,11 @@ npm run tauri build
 ```powershell
 npm run release:manifest -- `
   --version 1.1.1 `
-  --notes-file ./CHANGELOG-1.1.1.md `
+  --notes-file ./docs/changelog/1.1.1.md `
   --installer-path "src-tauri/target/release/bundle/nsis/Racker Terminal_1.1.1_x64-setup.exe" `
   --signature-path "src-tauri/target/release/bundle/nsis/Racker Terminal_1.1.1_x64-setup.exe.sig" `
   --download-url-prefix https://github.com/kogasura/racker-terminal/releases/download/v1.1.1 `
-  --output ./latest.json
+  --output ./dist-installer/latest.json
 ```
 
 ### Step 6. GitHub Release 作成
@@ -91,9 +91,9 @@ npm run release:manifest -- `
 gh release create v1.1.1 `
   "src-tauri/target/release/bundle/nsis/Racker Terminal_1.1.1_x64-setup.exe" `
   "src-tauri/target/release/bundle/nsis/Racker Terminal_1.1.1_x64-setup.exe.sig" `
-  ./latest.json `
+  ./dist-installer/latest.json `
   --title "v1.1.1" `
-  --notes-file ./CHANGELOG-1.1.1.md
+  --notes-file ./docs/changelog/1.1.1.md
 ```
 
 ### Step 7. 検証

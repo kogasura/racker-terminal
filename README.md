@@ -126,9 +126,9 @@ cd src-tauri && cargo test --workspace && cargo clippy --workspace --all-targets
 
 関連ドキュメント: [互換性マトリクス](docs/compatibility-matrix.md) / [リリースプロセス](docs/release-process.md) / [自動更新](docs/auto-update.md)
 
-初期の設計経緯は `docs/phase1-plan.md` 〜 `docs/phase4-plan.md` に残してあります（v1.0 までの記録で、現状とは差があります）。
+初期の計画・設計書（Phase 1〜4 の計画と各 Unit の設計）は [docs/archive/](docs/archive/) に残してあります（v1.0 までの記録で、現状とは差があります）。
 
-各バージョンの変更点は `CHANGELOG-<version>.md` を参照してください。
+各バージョンの変更点は [docs/changelog/](docs/changelog/) を参照してください（ファイル名は `<version>.md`）。
 
 ## バグ報告
 

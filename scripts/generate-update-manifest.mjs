@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 const { values } = parseArgs({
@@ -10,7 +10,7 @@ const { values } = parseArgs({
     'installer-path': { type: 'string' },
     'signature-path': { type: 'string' },
     'download-url-prefix': { type: 'string' },
-    output: { type: 'string', default: './latest.json' },
+    output: { type: 'string', default: './dist-installer/latest.json' },
     'pub-date': { type: 'string' },
   },
 });
@@ -74,5 +74,6 @@ const manifest = {
 };
 
 // Write output
+mkdirSync(path.dirname(output), { recursive: true });
 writeFileSync(output, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 console.log(`wrote ${output}`);

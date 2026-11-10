@@ -9,7 +9,7 @@
 // 事前準備:
 //   1. `.env.release.example` を `.env.release` にコピーし、鍵パスとパスフレーズを記入。
 //   2. `gh auth login` 済みであること。
-//   3. リリースノート `CHANGELOG-<version>.md` を用意しておくこと。
+//   3. リリースノート `docs/changelog/<version>.md` を用意しておくこと。
 //
 // バージョンは package.json の version を自動採用する（先に bump しておくこと）。
 
@@ -58,7 +58,7 @@ for (const name of ['TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASS
   }
 }
 
-const notesFile = `./CHANGELOG-${VERSION}.md`;
+const notesFile = `./docs/changelog/${VERSION}.md`;
 if (!existsSync(path.join(root, notesFile))) {
   fail(`リリースノート ${notesFile} が見つかりません。先に作成してください。`);
 }
@@ -92,13 +92,13 @@ run(
     `--installer-path "${installer}" ` +
     `--signature-path "${sig}" ` +
     `--download-url-prefix https://github.com/${REPO}/releases/download/${TAG} ` +
-    `--output ./latest.json`,
+    `--output ./dist-installer/latest.json`,
 );
 
 // 3. GitHub Release 作成（タグ ${TAG} もここで作成される）
 run(
   `gh release create ${TAG} ` +
-    `"${installer}" "${sig}" ./latest.json ` +
+    `"${installer}" "${sig}" ./dist-installer/latest.json ` +
     `--title ${TAG} --notes-file "${notesFile}"`,
 );
 

@@ -104,6 +104,9 @@ const showBadge = updatePhase === 'ready' || updatePhase === 'error';
   各更新インストール時に SmartScreen 警告が出ます。「詳細情報 → 実行」で続行可能
 - **チェック間隔は 1 時間**: 起動時に 1 回、以降は 1 時間ごと。リリース直後に
   「今すぐ再起動」を押した場合、最大 1 時間前の版が入ることがあります (次回チェックで最新に追いつきます)
+- **外からの即時チェック**: `racker-terminal.exe --check-update` を実行すると、single-instance 経由で
+  起動済みインスタンスに `check-update-requested` イベントが届き、定期チェックを待たずに確認と DL を始めます
+  (ウィンドウは前面に出ません)。リリース直後に Claude Code (`racker-ship` スキル) が使います
 - **`'error'` phase では再チェックしない**: インストールに失敗した状態は保持され、
   ユーザーがリトライするか `resetUpdateError()` で idle に戻すまで新しい版を取りに行きません
 - **バックグラウンド DL 失敗は無音**: DL エラーはユーザーに通知せず idle に戻し、次回起動でリトライします

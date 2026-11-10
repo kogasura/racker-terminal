@@ -43,6 +43,12 @@ pub fn run() {
         // Explorer「Racker Terminal で開く」で 2 回目以降に起動されたときは、
         // 新しいプロセスを立ち上げず既存ウィンドウへ argv のフォルダパスを転送する。
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `--check-update` は「更新を今すぐ確認して」という裏方の合図。
+            // ユーザーの操作ではないのでウィンドウを前面に出さない。
+            if launch::has_check_update_flag(&argv) {
+                let _ = app.emit("check-update-requested", ());
+                return;
+            }
             if let Some(path) = launch::extract_dir_arg(&argv) {
                 let _ = app.emit("open-path", path);
             }

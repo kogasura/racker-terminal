@@ -14,19 +14,52 @@ import {
 } from './claudeMeta';
 
 describe('contextLimitFor', () => {
-  it('1: 既定は 200k', () => {
-    expect(contextLimitFor('claude-opus-5', 50_000)).toBe(DEFAULT_CONTEXT_LIMIT);
+  it('1: 1M が標準のモデルは、消費が少なくても最初から 1M', () => {
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-6',
+      'claude-sonnet-5-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-5-5',
+      'claude-fable-5-2',
+      'claude-mythos-5-1',
+    ]) {
+      expect(contextLimitFor(model, 50_000), model).toBe(LARGE_CONTEXT_LIMIT);
+    }
   });
 
-  it('2: 実測が 200k を超えたら 1M 版とみなす（transcript に上限が書かれていないため）', () => {
-    expect(contextLimitFor('claude-opus-5', 250_000)).toBe(LARGE_CONTEXT_LIMIT);
+  it('2: 200k のモデル（Haiku 4.5、Opus / Sonnet 4.5 以前、3 系）は 200k', () => {
+    for (const model of [
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-5',
+      'claude-sonnet-4-5-20250929',
+      'claude-opus-4-1',
+      'claude-opus-4-20250514',
+      'claude-3-5-sonnet-20241022',
+    ]) {
+      expect(contextLimitFor(model, 50_000), model).toBe(DEFAULT_CONTEXT_LIMIT);
+    }
   });
 
-  it('3: モデル ID に 1m があれば実測を待たずに 1M 扱いにする', () => {
-    expect(contextLimitFor('claude-opus-5[1m]', 10_000)).toBe(LARGE_CONTEXT_LIMIT);
+  it('3: [1m] が付いていれば 200k のモデルでも 1M', () => {
+    expect(contextLimitFor('claude-sonnet-4-5[1m]', 10_000)).toBe(LARGE_CONTEXT_LIMIT);
+    expect(contextLimitFor('claude-opus-5-5[1m]', 10_000)).toBe(LARGE_CONTEXT_LIMIT);
   });
 
-  it('4: モデル・トークンが未取得でも既定値を返す', () => {
+  it('4: クラウド経由の ID 表記（接頭辞・接尾辞付き）でも判別できる', () => {
+    expect(contextLimitFor('us.anthropic.claude-sonnet-4-6-v1', 10_000)).toBe(LARGE_CONTEXT_LIMIT);
+    expect(contextLimitFor('claude-opus-4-5@20251101', 10_000)).toBe(DEFAULT_CONTEXT_LIMIT);
+  });
+
+  it('5: 判別できないモデルは 200k、実測が超えたら 1M（125% のような破綻表示を出さない）', () => {
+    expect(contextLimitFor('some-proxy-model', 50_000)).toBe(DEFAULT_CONTEXT_LIMIT);
+    expect(contextLimitFor('some-proxy-model', 250_000)).toBe(LARGE_CONTEXT_LIMIT);
+    expect(contextLimitFor('claude-sonnet-4-5', 250_000)).toBe(LARGE_CONTEXT_LIMIT);
+  });
+
+  it('6: モデル・トークンが未取得でも既定値を返す', () => {
     expect(contextLimitFor(undefined, undefined)).toBe(DEFAULT_CONTEXT_LIMIT);
   });
 });
@@ -73,6 +106,7 @@ describe('formatTokens', () => {
 
   it('13: 100 万以上は M 単位', () => {
     expect(formatTokens(1_240_000)).toBe('1.2M');
+    expect(formatTokens(1_000_000)).toBe('1M');
   });
 });
 

@@ -37,34 +37,72 @@ export interface ClaudeUsageLimits {
   sevenDayResetsAt?: string;
 }
 
-/**
- * 標準のコンテキストウィンドウ (トークン)。
- *
- * transcript には**コンテキスト長の上限が書かれていない**。モデル ID も
- * `claude-opus-5` としか出ず、1M 版かどうかを区別できない。
- * そこで既定を 200k とし、実測がそれを超えたときだけ 1M 版とみなす
- * (`contextLimitFor` 参照)。
- */
+/** 200k コンテキストのモデル (Haiku 4.5、Opus / Sonnet 4.5 以前) の上限。 */
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
 
-/** 1M コンテキストのモデルを使っていると判断したときの上限。 */
+/** 1M コンテキストのモデル (Opus / Sonnet 4.6 以降、Haiku 5 以降、Fable / Mythos) の上限。 */
 export const LARGE_CONTEXT_LIMIT = 1_000_000;
+
+/**
+ * モデル ID からファミリーとバージョンを取り出す。
+ *
+ * `claude-opus-5-5` / `claude-opus-4-20250514` / `us.anthropic.claude-sonnet-4-6-v1`
+ * / `claude-opus-5-5[1m]` のような表記ゆれを吸収するため、先頭固定にせず
+ * `claude-<family>-<major>[-<minor>]` を探す。minor は 1〜2 桁に限る
+ * (8 桁の日付サフィックスを minor と読み違えないため)。
+ */
+function parseModel(model: string): { family: string; major: number; minor: number } | undefined {
+  const match = /claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)/i.exec(model);
+  if (match === null) return undefined;
+  return {
+    family: match[1].toLowerCase(),
+    major: Number(match[2]),
+    minor: match[3] === undefined ? 0 : Number(match[3]),
+  };
+}
+
+/**
+ * ファミリーごとに「1M が標準になった最初のバージョン」。
+ * これ以上なら 1M、未満なら 200k。Fable / Mythos は最初から 1M。
+ */
+const FIRST_1M_VERSION: Record<string, number> = {
+  opus: 4.6,
+  sonnet: 4.6,
+  haiku: 5,
+  fable: 0,
+  mythos: 0,
+};
+
+/** モデル ID から分かるコンテキスト上限。判別できなければ undefined。 */
+function knownContextLimit(model: string): number | undefined {
+  // `[1m]` は Claude Code が 1M 版を選んだときに付ける印。それ以外の判断より優先する
+  if (/\[1m\]/i.test(model)) return LARGE_CONTEXT_LIMIT;
+  // 旧命名 (`claude-3-5-sonnet-...`) は全部 200k
+  if (/claude-3/i.test(model)) return DEFAULT_CONTEXT_LIMIT;
+
+  const parsed = parseModel(model);
+  if (parsed === undefined) return undefined;
+
+  const version = parsed.major + parsed.minor / 10;
+  return version >= FIRST_1M_VERSION[parsed.family] ? LARGE_CONTEXT_LIMIT : DEFAULT_CONTEXT_LIMIT;
+}
 
 /**
  * コンテキストの上限を決める。
  *
- * モデル ID に `1m` が付いていればそれを信じ、無ければ実測から判断する。
- * 200k を超えた時点で 1M 版だと確定できるため、表示が破綻する
- * (「250k / 200k = 125%」) ことはない。
+ * transcript には**上限そのものは書かれていない**ため、モデル ID から決める。
+ * Opus / Sonnet 4.6 以降・Haiku 5 以降・Fable / Mythos は 1M が標準
+ * (1M が既定かつ最大)、それより前のモデルは 200k。
  *
- * 逆に「1M 版を使っているが、まだ 200k に達していない」あいだは 200k として
- * 表示される。実害は「残りが実際より少なく見える」ことだけなので許容する
- * (見誤って詰め込みすぎるより安全側に倒れる)。
+ * モデル ID から判別できない場合 (未取得・想定外の形) は 200k とし、
+ * 実測がそれを超えたら 1M とみなす。どの場合でも実測が上限を超えたら
+ * 1M に引き上げるので、「250k / 200k = 125%」のような破綻した表示にはならない。
  */
 export function contextLimitFor(model: string | undefined, tokens: number | undefined): number {
-  if (model !== undefined && /1m/i.test(model)) return LARGE_CONTEXT_LIMIT;
-  if (tokens !== undefined && tokens > DEFAULT_CONTEXT_LIMIT) return LARGE_CONTEXT_LIMIT;
-  return DEFAULT_CONTEXT_LIMIT;
+  const known = model === undefined ? undefined : knownContextLimit(model);
+  const limit = known ?? DEFAULT_CONTEXT_LIMIT;
+  if (tokens !== undefined && tokens > limit) return LARGE_CONTEXT_LIMIT;
+  return limit;
 }
 
 /**
@@ -95,16 +133,17 @@ export function shortModelName(model: string | undefined): string | undefined {
 }
 
 /**
- * トークン数を短く表す。`55_002` → `55k` / `1_240_000` → `1.2M`
+ * トークン数を短く表す。`55_002` → `55k` / `1_240_000` → `1.2M` / `1_000_000` → `1M`
  *
  * 1000 未満はそのまま、10k 未満は小数第 1 位まで残す
  * (`8.4k` と `8k` では読み取れる情報が違う)。
+ * M 単位で端数が無いときは `.0` を落とす (上限の `1M` が `1.0M` と出るのを避ける)。
  */
 export function formatTokens(tokens: number): string {
   if (tokens < 1_000) return String(tokens);
   if (tokens < 10_000) return `${(tokens / 1_000).toFixed(1)}k`;
   if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
-  return `${(tokens / 1_000_000).toFixed(1)}M`;
+  return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
 }
 
 /** 使用率の表示。小数は落とす (0.5% の差に意味はない)。 */

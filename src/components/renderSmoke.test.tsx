@@ -400,7 +400,7 @@ describe('コンポーネントの操作', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('Opus 5');
     expect(text).toContain('high');
-    expect(text).toContain('55k / 200k (28%)');
+    expect(text).toContain('55k / 1M (6%)');
     expect(text).toContain('5h 13%');
     expect(text).toContain('週 22%');
   });

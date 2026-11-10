@@ -126,4 +126,4 @@ npm run tauri build
 
 ## Phase / Unit について
 
-実装は Phase × Unit で管理: `docs/phase4-plan.md` 参照。
+v1.0 までの実装は Phase × Unit で管理していました。当時の計画・設計書は `docs/archive/` にあります（現状とは差があります）。

@@ -31,20 +31,15 @@ Public: <base64 string>
 
 ### Step 1. バージョン bump
 
-3 ファイルすべてを更新:
-- `src-tauri/tauri.conf.json` の `version`
-- `src-tauri/Cargo.toml` の `version`
-- `package.json` の `version`
+版を持つ全ファイル（`package.json` / `package-lock.json` / `src-tauri/tauri.conf.json` /
+`src-tauri/Cargo.toml` / `src-tauri/explorer-command/Cargo.toml` / `src-tauri/Cargo.lock`）を一括で更新する:
 
 ```powershell
-# 例: 1.1.0 → 1.1.1
-# (各ファイルを手動編集)
-
-# Cargo.lock も更新
-cd src-tauri
-cargo update -p racker-terminal --offline
-cd ..
+npm run bump -- patch      # 1.1.0 → 1.1.1 （minor / major / x.y.z も指定可）
 ```
+
+> Claude Code から作業している場合は、`racker-ship` スキル（`.claude/skills/racker-ship/`）が
+> 版上げ・リリースノート・`npm run release`・手元アプリへの通知までをまとめて行う。
 
 ### Step 2. 環境変数設定 (リリースビルド用)
 

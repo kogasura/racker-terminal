@@ -32,6 +32,18 @@ pub fn extract_dir_arg(argv: &[String]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// 「いますぐ更新を確認して」を起動済みインスタンスへ伝えるフラグ。
+///
+/// `racker-terminal.exe --check-update` として 2 回目の起動をすると、single-instance が
+/// argv を起動済みインスタンスへ転送する。Claude Code がリリース直後に叩き、
+/// 1 時間ごとの定期チェックを待たずに新しい版の DL を始めさせるために使う。
+pub const CHECK_UPDATE_FLAG: &str = "--check-update";
+
+/// argv に [`CHECK_UPDATE_FLAG`] が含まれるか。argv[0]（実行ファイル自身）は見ない。
+pub fn has_check_update_flag(argv: &[String]) -> bool {
+    argv.iter().skip(1).any(|s| s.trim() == CHECK_UPDATE_FLAG)
+}
+
 /// 起動時、自インスタンスの argv からフォルダパスを取り出して返す Tauri command。
 /// Explorer から「Racker Terminal で開く」で起動された場合は対象フォルダを返す。
 /// 通常起動（引数なし）や該当ディレクトリが無い場合は `None`。
@@ -56,6 +68,21 @@ mod tests {
         assert!(!is_path_candidate("-x"));
         assert!(is_path_candidate("C:\\Users"));
         assert!(is_path_candidate("/home/user"));
+    }
+
+    #[test]
+    fn check_update_flag_is_detected_only_as_an_argument() {
+        let argv = |args: &[&str]| args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let has = |args: &[&str]| has_check_update_flag(&argv(args));
+        assert!(has(&["racker.exe", "--check-update"]));
+        assert!(has(&["racker.exe", r"C:\work", " --check-update "]));
+        assert!(!has(&["racker.exe"]));
+        assert!(!has(&["racker.exe", "--check-updates"]));
+        // argv[0] は実行ファイルのパスなので数えない
+        assert!(!has(&["--check-update"]));
+        // フラグはフォルダパスとして扱われない
+        let flag_only = argv(&["racker.exe", "--check-update"]);
+        assert_eq!(extract_dir_arg(&flag_only), None);
     }
 
     #[test]

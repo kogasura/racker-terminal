@@ -25,6 +25,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { createMachine, type Machine } from '../../architecture/machine';
 import { takeFailedUpdateAttempt } from '../../lib/updater';
@@ -46,6 +47,9 @@ import { UpdateFailureNoticeView } from './views/UpdateFailureNoticeView';
 
 /** 起動しっぱなしの運用でも更新に気付けるよう、1 時間ごとに確認する。 */
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Rust の single-instance が `--check-update` を受けたときに送るイベント名。 */
+const CHECK_UPDATE_REQUESTED_EVENT = 'check-update-requested';
 
 export interface UpdaterViewModels {
   readonly badge: BadgeViewModel;
@@ -132,9 +136,23 @@ export function UpdaterRoot({ children, ready, deps }: UpdaterRootProps) {
     fire();
     const intervalId = setInterval(fire, UPDATE_CHECK_INTERVAL_MS);
 
+    // `racker-terminal.exe --check-update` で外から「今すぐ確認して」と頼まれたとき。
+    // リリース直後に Claude Code が叩き、定期チェックの 1 時間を待たずに DL を始める。
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const off = await listen(CHECK_UPDATE_REQUESTED_EVENT, fire);
+        if (cancelled) off();
+        else unlisten = off;
+      } catch (e) {
+        console.warn('[updater] listen(check-update-requested) failed:', e);
+      }
+    })();
+
     return () => {
       cancelled = true;
       clearInterval(intervalId);
+      unlisten?.();
     };
   }, [machine, ready]);
 

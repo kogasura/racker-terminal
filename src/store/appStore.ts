@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AgentState, AppState, ClosedTab, Favorite, Group, Settings, Tab, TabStatus } from '../types';
+import type { AgentState, AppState, ClosedTab, Favorite, Group, QuickAccessFolder, Settings, Tab, TabStatus } from '../types';
 import { applyIdleTransition } from '../types';
 import { newId } from '../lib/id';
 import {
@@ -896,6 +896,9 @@ interface AppActions {
    */
   setWslDistros: (distros: string[]) => void;
 
+  /** クイックアクセスのフォルダ一覧を差し替える。persist 対象外（ランタイム状態）。 */
+  setQuickAccess: (folders: QuickAccessFolder[]) => void;
+
 
   /**
    * タブのエージェント状態を設定する。
@@ -989,6 +992,7 @@ export const useAppStore = create<Store>()(
   editingId: null,
   settings: defaultSettings,
   wslDistros: [],
+  quickAccess: [],
   closedTabs: [],
 
   addFavorite: (fav) => {
@@ -1583,6 +1587,8 @@ export const useAppStore = create<Store>()(
 
   setWslDistros: (distros) => set({ wslDistros: distros }),
 
+  setQuickAccess: (folders) => set({ quickAccess: folders }),
+
   setTabAgentState: (tabId, agentState) =>
     set((state) => {
       const tab = state.tabs[tabId];
@@ -1716,7 +1722,7 @@ export const useAppStore = create<Store>()(
         // 選択中グループだけは保存する。再起動で別のフォルダに飛ぶと、そのまま
         // Ctrl+T したときに意図しないグループへタブが入るため。
         activeGroupId: state.activeGroupId,
-        // activeTabId / editingId / wslDistros は OFF
+        // activeTabId / editingId / wslDistros / quickAccess は OFF
         // updater は store ではなく features/updater の Mediator が持つ。
         // closedTabs は永続化対象外（再起動でクリア）。
       }),

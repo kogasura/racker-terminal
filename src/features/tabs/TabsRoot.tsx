@@ -29,6 +29,7 @@ import {
   selectGroup,
   selectNewTabMenu,
   selectMoveTargets,
+  selectQuickAccess,
   selectSidebar,
   selectTabBar,
   selectFolderTemplates,
@@ -40,6 +41,7 @@ import {
   type GroupViewModel,
   type FolderTemplateViewModel,
   type NewTabMenuViewModel,
+  type QuickAccessViewModel,
   type TerminalPanesViewModel,
   type MoveTargetViewModel,
   type SidebarViewModel,
@@ -168,6 +170,12 @@ export function useTerminalPanesView(): TerminalPanesViewModel {
 export function useFolderTemplatesView(): readonly FolderTemplateViewModel[] {
   const wslDistros = useAppStore(useShallow((s) => s.wslDistros));
   return useMemo(() => selectFolderTemplates(wslDistros), [wslDistros]);
+}
+
+/** サイドバーの Quick Access セクション。お気に入りと同じく 1 つしか無いので引数は取らない。 */
+export function useQuickAccessView(): QuickAccessViewModel {
+  const folders = useAppStore((s) => s.quickAccess);
+  return useMemo(() => selectQuickAccess(folders), [folders]);
 }
 
 /**

@@ -13,6 +13,7 @@ import {
   AGENT_STATE_LABEL,
   type AgentState,
   type Favorite,
+  type QuickAccessFolder,
   type Tab,
   type TabStatus,
 } from '../../types';
@@ -195,6 +196,32 @@ export function selectFolderTemplates(
   wslDistros: readonly string[],
 ): readonly FolderTemplateViewModel[] {
   return buildProfileTemplates(wslDistros).map((t) => ({ templateId: t.id, label: t.label }));
+}
+
+/** クイックアクセスの 1 行。 */
+export interface QuickAccessItemViewModel {
+  readonly path: string;
+  readonly name: string;
+  /** ホバーで出す説明。同名のフォルダを見分けられるようパスも添える。 */
+  readonly tooltip: string;
+}
+
+/** サイドバーの Quick Access セクション。 */
+export interface QuickAccessViewModel {
+  /** 1 件も取れていなければセクションごと出さない (取得前 / 取得失敗 / Windows 以外)。 */
+  readonly visible: boolean;
+  readonly items: readonly QuickAccessItemViewModel[];
+}
+
+export function selectQuickAccess(folders: readonly QuickAccessFolder[]): QuickAccessViewModel {
+  return {
+    visible: folders.length > 0,
+    items: folders.map((f) => ({
+      path: f.path,
+      name: f.name,
+      tooltip: `${f.path} で claude を開く`,
+    })),
+  };
 }
 
 /** ドラッグ中に body へ Portal 描画するプレビュー。 */

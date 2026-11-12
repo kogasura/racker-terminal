@@ -97,6 +97,7 @@ describe('コンポーネントのレンダリング', () => {
       favorites: [],
       editingId: null,
       wslDistros: [],
+      quickAccess: [],
       // ステータスバーの表示設定はテスト間で持ち越さない（既定 = 有効に戻す）
       settings: { ...useAppStore.getState().settings, statusBarEnabled: undefined },
     });
@@ -271,6 +272,32 @@ describe('コンポーネントのレンダリング', () => {
         </DragDropProvider>,
       ),
     ).not.toThrow();
+  });
+
+  it('Sidebar: クイックアクセスが無ければセクションを出さず、あれば行をクリックで claude タブを開く', () => {
+    useAppStore.setState({ quickAccess: [] });
+    const empty = render(
+      <DragDropProvider>
+        <Sidebar />
+      </DragDropProvider>,
+    );
+    expect(empty.container.querySelector('.quick-access-item')).toBeNull();
+    cleanup();
+
+    useAppStore.setState({ quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }] });
+    const { container } = render(
+      <DragDropProvider>
+        <Sidebar />
+      </DragDropProvider>,
+    );
+    const row = container.querySelector<HTMLButtonElement>('.quick-access-item');
+    expect(row?.textContent).toContain('dev');
+
+    act(() => row?.click());
+    const opened = Object.values(useAppStore.getState().tabs).find(
+      (t) => t.cwd === 'C:/Users/me/dev',
+    );
+    expect(opened).toMatchObject({ userTitle: 'dev', launchClaude: true });
   });
 
   it('SettingsDialog が描画できる', () => {

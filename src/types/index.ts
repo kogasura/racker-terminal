@@ -294,6 +294,14 @@ export interface Group {
   tabIds: string[];
 }
 
+/** エクスプローラーの「クイックアクセス」に並ぶフォルダ 1 件。 */
+export interface QuickAccessFolder {
+  /** エクスプローラーに出ている表示名。 */
+  name: string;
+  /** Windows パス (WSL のフォルダは `\\wsl.localhost\<distro>\...`)。 */
+  path: string;
+}
+
 export interface Favorite {
   id: string;
   title: string;
@@ -488,6 +496,8 @@ export interface AppState {
   /** インストール済 WSL distro 一覧。App 起動時に Rust 側から取得し、persist 対象外。
    *  Phase 4 P-K で追加。 */
   wslDistros: string[];
+  /** エクスプローラーのクイックアクセスのフォルダ。起動時に Rust 側から取得し、persist 対象外。 */
+  quickAccess: QuickAccessFolder[];
 
   // --- Claude の実行情報スライス (persist 対象外) ---
 

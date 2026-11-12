@@ -94,6 +94,10 @@ export type TabsPointerIntent =
    * 持たせないためで、「どのテンプレートで開きたいか」だけを流す。
    */
   | { readonly type: 'tabs/folder-open-requested'; readonly templateId: string }
+  /** クイックアクセスのフォルダを選んだ (そのフォルダで claude を開く) */
+  | { readonly type: 'tabs/quick-access-open-requested'; readonly path: string }
+  /** クイックアクセスの一覧を読み直したい (エクスプローラー側でピン留めを変えたあと) */
+  | { readonly type: 'tabs/quick-access-refresh-requested' }
   /** 既定のお気に入りを切り替える (既定なら解除、そうでなければ設定) */
   | { readonly type: 'tabs/favorite-default-toggled'; readonly favoriteId: string }
   /** お気に入りを新規登録する */

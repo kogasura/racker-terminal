@@ -18,6 +18,7 @@ import { getTabDisplayTitle } from '../../types';
 import { open as pickFolder } from '@tauri-apps/plugin-dialog';
 import { buildProfileTemplates } from '../../lib/profileTemplates';
 import { buildFolderLaunch } from '../../lib/openFolder';
+import { buildQuickAccessLaunch, listQuickAccess } from '../../lib/quickAccess';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
 import type { TabsEffect } from './machine';
@@ -203,6 +204,17 @@ const handlers: HandlerMap = {
         args: launch.args,
       });
     })();
+  },
+
+  'open-quick-access': (state, effect) => {
+    // 一覧に無いパスは開かない (View が出している行だけが対象)
+    const folder = state.quickAccess.find((f) => f.path === effect.path);
+    if (!folder) return;
+    state.createTab(undefined, buildQuickAccessLaunch(folder));
+  },
+
+  'refresh-quick-access': (state) => {
+    void listQuickAccess().then((folders) => state.setQuickAccess(folders));
   },
 
   'apply-drop': (state, effect) => {

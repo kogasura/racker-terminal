@@ -7,6 +7,7 @@ import { useTabsView } from '../features/tabs/TabsRoot';
 import type { TabsEvent } from '../features/tabs/events';
 import { GroupSection } from './GroupSection';
 import { FavoritesSection } from './FavoritesSection';
+import { QuickAccessSection } from './QuickAccessSection';
 import { OpenFolderButton } from './OpenFolderButton';
 import { DROP_AS_NEW_GROUP_ID } from '../lib/dndResolve';
 import '../styles/sidebar.css';
@@ -44,6 +45,9 @@ export const Sidebar = memo(function Sidebar() {
       <div className="sidebar__scroll-area">
         {/* B2: FavoritesSection 内で SortableContext を自己管理しているため、ここでは直接配置 */}
         <FavoritesSection />
+
+        {/* エクスプローラーのクイックアクセス。クリックでそのフォルダの claude を開く */}
+        <QuickAccessSection />
 
         {/* B1: グループ用 SortableContext */}
         <SortableContext

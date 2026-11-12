@@ -168,6 +168,16 @@ describe('tabs machine', () => {
       ).toEqual([{ kind: 'open-folder', templateId: 'nu' }]);
     });
 
+    it('クイックアクセスを開く / 読み直す要求も止めない', () => {
+      expect(
+        transition(suspended, { type: 'tabs/quick-access-open-requested', path: 'C:/dev' })
+          ?.effects,
+      ).toEqual([{ kind: 'open-quick-access', path: 'C:/dev' }]);
+      expect(
+        transition(suspended, { type: 'tabs/quick-access-refresh-requested' })?.effects,
+      ).toEqual([{ kind: 'refresh-quick-access' }]);
+    });
+
     it('タブ追加 / グループ追加がそれぞれの効果になる', () => {
       expect(effectsOf(initialState, { type: 'tabs/tab-create-requested' })).toEqual([
         { kind: 'create-tab' },

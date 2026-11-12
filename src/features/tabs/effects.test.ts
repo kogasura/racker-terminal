@@ -256,6 +256,42 @@ describe('tabs effects', () => {
     expect(useAppStore.getState().favorites).toHaveLength(0);
   });
 
+  it('open-quick-access: 一覧にあるフォルダで claude タブを開く', () => {
+    useAppStore.setState({ quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }] });
+    const before = new Set(Object.keys(useAppStore.getState().tabs));
+
+    boot().send({ type: 'tabs/quick-access-open-requested', path: 'C:/Users/me/dev' });
+
+    const added = Object.values(useAppStore.getState().tabs).filter((t) => !before.has(t.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      userTitle: 'dev',
+      cwd: 'C:/Users/me/dev',
+      launchClaude: true,
+    });
+    // 1 クリックで開く導線なので、権限バイパスは付けない
+    expect(added[0].bypassPermissions).toBeUndefined();
+  });
+
+  it('open-quick-access: 一覧に無いパスでは何も開かない', () => {
+    useAppStore.setState({ quickAccess: [] });
+    boot().send({ type: 'tabs/quick-access-open-requested', path: 'C:/elsewhere' });
+    expect(Object.keys(useAppStore.getState().tabs)).toHaveLength(2);
+  });
+
+  it('refresh-quick-access: 取り直した一覧で store を差し替える', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    vi.mocked(invoke).mockResolvedValueOnce([{ name: 'new', path: 'C:/new' }]);
+    useAppStore.setState({ quickAccess: [{ name: 'old', path: 'C:/old' }] });
+
+    boot().send({ type: 'tabs/quick-access-refresh-requested' });
+
+    await vi.waitFor(() =>
+      expect(useAppStore.getState().quickAccess).toEqual([{ name: 'new', path: 'C:/new' }]),
+    );
+    expect(invoke).toHaveBeenCalledWith('list_quick_access');
+  });
+
   it('コンテキストメニュー表示中はどのコマンドも store に届かない', () => {
     const spawn = stubAction('spawnDefaultOrNew');
     const m = boot();

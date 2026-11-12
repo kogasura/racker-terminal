@@ -37,6 +37,7 @@ function resetStore() {
       transparency: 1.0,
     },
     wslDistros: [],
+    quickAccess: [],
     closedTabs: [],
   });
 }
@@ -1535,6 +1536,7 @@ function makeState(
     lastActiveTabByGroup: {},
     editingId: null,
     wslDistros: [],
+    quickAccess: [],
     closedTabs: [],
     settings: { theme: 'tokyo-night', fontFamily: 'monospace', fontSize: 12.5, scrollback: 10000, transparency: 1.0 },
   };

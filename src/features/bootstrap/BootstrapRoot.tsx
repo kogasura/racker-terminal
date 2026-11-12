@@ -1,11 +1,13 @@
 /**
  * 起動時の下ごしらえをする Root。
  *
- * 画面を出す前に一度だけ整えるもの (最初のグループ / タブ、WSL distro 一覧) を
+ * 画面を出す前に一度だけ整えるもの (最初のグループ / タブ、WSL distro 一覧、
+ * クイックアクセスのフォルダ) を
  * まとめてある。どちらもユーザー操作が起点ではないので、裁定するものはない。
  */
 
 import { useEffect, type ReactNode } from 'react';
+import { listQuickAccess } from '../../lib/quickAccess';
 import { listWslDistros } from '../../lib/wsl';
 import { useAppStore } from '../../store/appStore';
 
@@ -48,6 +50,19 @@ export function BootstrapRoot({ children }: { children: ReactNode }) {
       const distros = await listWslDistros();
       if (!cancelled) {
         useAppStore.getState().setWslDistros(distros);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // エクスプローラーのクイックアクセスを取得して store に保存する。
+  // 以後の読み直しはサイドバーの ↻ から (tabs の effects が担当)。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const folders = await listQuickAccess();
+      if (!cancelled) {
+        useAppStore.getState().setQuickAccess(folders);
       }
     })();
     return () => { cancelled = true; };

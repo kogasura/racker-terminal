@@ -19,6 +19,7 @@ mod job;
 mod launch;
 mod proc;
 mod pty;
+mod quick_access;
 mod scrollback;
 mod wsl;
 
@@ -71,6 +72,7 @@ pub fn run() {
             pty::pty_kill,
             pty::pty_set_read_paused,
             wsl::list_wsl_distros,
+            quick_access::list_quick_access,
             launch::get_launch_path,
             claude_sessions::list_claude_sessions,
             claude_transcript::get_claude_transcript_meta,

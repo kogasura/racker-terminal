@@ -68,6 +68,8 @@ export type TabsEffect =
   /** 掴み始めたら、編集中の入力を確定 / 取り消しして D&D を優先する。 */
   | { readonly kind: 'stop-editing' }
   | { readonly kind: 'open-folder'; readonly templateId: string }
+  | { readonly kind: 'open-quick-access'; readonly path: string }
+  | { readonly kind: 'refresh-quick-access' }
   /** 落とした先を解決して反映する。 */
   | {
       readonly kind: 'apply-drop';
@@ -207,6 +209,12 @@ const handlers: HandlerMap = {
 
   'tabs/folder-open-requested': (state, event) =>
     dispatch(state, { kind: 'open-folder', templateId: event.templateId }),
+
+  'tabs/quick-access-open-requested': (state, event) =>
+    dispatch(state, { kind: 'open-quick-access', path: event.path }),
+
+  'tabs/quick-access-refresh-requested': (state) =>
+    dispatch(state, { kind: 'refresh-quick-access' }),
 
   'tabs/favorite-spawn-requested': (state, event) =>
     dispatch(state, { kind: 'spawn-favorite-by-id', favoriteId: event.favoriteId }),

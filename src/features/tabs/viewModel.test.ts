@@ -6,6 +6,7 @@ import {
   selectFolderTemplates,
   selectMoveTargets,
   selectNewTabMenu,
+  selectQuickAccess,
   selectSidebar,
   selectTabBar,
   selectTabItem,
@@ -189,6 +190,23 @@ describe('selectFolderTemplates', () => {
 
   it('distro が無ければ静的なテンプレートだけになる', () => {
     expect(selectFolderTemplates([]).every((t) => !t.templateId.startsWith('wsl-'))).toBe(true);
+  });
+});
+
+describe('selectQuickAccess', () => {
+  it('1 件も無ければセクションごと出さない', () => {
+    expect(selectQuickAccess([])).toEqual({ visible: false, items: [] });
+  });
+
+  it('表示名を並べ、tooltip にはパスを添える (同名フォルダを見分けるため)', () => {
+    const vm = selectQuickAccess([
+      { name: 'output', path: 'C:/a/output' },
+      { name: 'output', path: 'C:/b/output' },
+    ]);
+    expect(vm.visible).toBe(true);
+    expect(vm.items.map((i) => i.name)).toEqual(['output', 'output']);
+    expect(vm.items[0].tooltip).toContain('C:/a/output');
+    expect(vm.items[1].tooltip).toContain('C:/b/output');
   });
 });
 

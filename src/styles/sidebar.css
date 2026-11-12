@@ -242,6 +242,34 @@
   white-space: nowrap;
 }
 
+/* ----- QuickAccessSection (カードの見た目は Favorites と共有) ----- */
+/* ヘッダ右端の小さなボタン (読み直し) */
+.favorites-header__action {
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.favorites-header__action:hover {
+  opacity: 1;
+  background: var(--tab-item-bg-active);
+}
+
+/* 行を <button> にしているぶんの既定スタイルを打ち消す */
+.quick-access-item {
+  width: 100%;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+}
+
 /* ----- GroupSection ----- */
 .group-header {
   display: flex;

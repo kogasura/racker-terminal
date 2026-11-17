@@ -11,7 +11,8 @@
  *      ダイアログ・ターミナルの手入れが使う）
  *   3a. 試しに表示しているテーマの ID を `useThemePreviewId()` で配る（ターミナルの手入れが、
  *      アクティブなタブのターミナルにも窓と同じテーマを当てるのに使う）
- *   3b. 窓の背景（SVG・止めるか・エージェントの状態）を `useBackdropView()` で配る
+ *   3b. 窓の背景（SVG・止めるか・エージェントの状態・下地の色）を `useBackdropView()` で配る。
+ *      窓が最小化中・hidden の間は止める
  *      （BackdropLayer が使う）。起動直後は、設定の復元や themes フォルダの読み込みを待たずに
  *      前回の窓のテーマの背景を出す
  *   4. 読み込んだ自作テーマを localStorage に覚えておき、次回の起動直後のカタログに
@@ -44,6 +45,7 @@ import type { ThemeDefinition } from '../../lib/theme/types';
 import { useAppStore } from '../../store/appStore';
 import { useSettingsView } from '../settings/SettingsRoot';
 import { createEffectRunner, type EffectDeps } from './effects';
+import { useWindowSuspended } from './useWindowSuspended';
 import type { ThemeEvent } from './events';
 import { createInitialState, transition, type ThemeEffect, type ThemeState } from './machine';
 import {
@@ -220,9 +222,11 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   const backdropTheme =
     windowTheme ?? view.catalog.find((theme) => theme.id === startupThemeId) ?? null;
   const backdropMotion = settings.backdropMotion;
+  // 最小化中・文書が hidden の間は背景を止める (設定値は変えない)
+  const windowSuspended = useWindowSuspended();
   const backdropView = useMemo(
-    () => selectBackdropView(backdropTheme, { backdropMotion }, activeAgentState),
-    [backdropTheme, backdropMotion, activeAgentState],
+    () => selectBackdropView(backdropTheme, { backdropMotion }, activeAgentState, windowSuspended),
+    [backdropTheme, backdropMotion, activeAgentState, windowSuspended],
   );
 
   return (

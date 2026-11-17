@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import { useEmit } from '../architecture/chain';
@@ -267,6 +267,20 @@ function TransparencyField({
   );
 }
 
+/**
+ * 開いたときのフォーカス先。選択中のテーマのカードがあればそこに当てる。
+ * Radix の既定（最初のカード）のままだと、フォーカスの枠が選択中の枠と同じに見え、
+ * 選択中が 2 つあるように見えるため。無ければ既定どおりにする。
+ */
+function focusSelectedThemeCard(event: Event, content: HTMLElement | null): void {
+  const selected = content?.querySelector<HTMLButtonElement>(
+    'button.theme-card[aria-pressed="true"]',
+  );
+  if (!selected) return;
+  event.preventDefault();
+  selected.focus();
+}
+
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useSettingsView();
   const emit = useEmit<SettingsEvent>();
@@ -277,6 +291,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
   const [draft, setDraft] = useState<Settings>(settings);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Tauri アプリのバージョンを取得 (Cargo.toml の version)。
   // Tauri 環境外 (vite dev / テスト) では失敗するため、catch でフォールバックする。
@@ -349,7 +364,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     <Dialog.Root open={true} onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content">
+        <Dialog.Content
+          ref={contentRef}
+          className="dialog-content"
+          onOpenAutoFocus={(event) => focusSelectedThemeCard(event, contentRef.current)}
+        >
           <Dialog.Title className="dialog-title">Settings</Dialog.Title>
           <Dialog.Description className="dialog-description">
             テーマ・背景の動き・フォント・スクロールバック・透明度を変更します。

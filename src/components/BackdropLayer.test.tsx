@@ -11,6 +11,22 @@ vi.mock('../lib/theme/backdropDocument', async (importOriginal) => ({
   applyBackdropSignals,
 }));
 
+// 時計の中身 (間引きと進め方) は backdropClock.test.ts が見ている。ここでは「いつ動かし、いつ止めるか」を見る。
+const clock = vi.hoisted(() => ({
+  stop: vi.fn(),
+  getDocuments: null as (() => Iterable<Document>) | null,
+}));
+const startBackdropClock = vi.hoisted(() =>
+  vi.fn((getDocuments: () => Iterable<Document>) => {
+    clock.getDocuments = getDocuments;
+    return clock.stop;
+  }),
+);
+vi.mock('../lib/theme/backdropClock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/theme/backdropClock')>()),
+  startBackdropClock,
+}));
+
 const SVG_A = '<svg xmlns="http://www.w3.org/2000/svg"><rect id="a"/></svg>';
 const SVG_B = '<svg xmlns="http://www.w3.org/2000/svg"><rect id="b"/></svg>';
 
@@ -35,6 +51,9 @@ function load(iframe: HTMLIFrameElement): Document {
 
 beforeEach(() => {
   applyBackdropSignals.mockReset();
+  startBackdropClock.mockClear();
+  clock.stop.mockReset();
+  clock.getDocuments = null;
 });
 
 afterEach(() => {
@@ -266,6 +285,57 @@ describe('BackdropFrames', () => {
     );
     const doc = load(frames(container)[0]);
     expect(doc.body.childNodes).toHaveLength(0);
+  });
+
+  it('動かしている間だけ時計を動かし、止めると止め、動かし直すとまた動かす', () => {
+    const { rerender } = render(<BackdropFrames {...BASE} />);
+    expect(startBackdropClock).toHaveBeenCalledTimes(1);
+
+    // 連動の値が変わっても時計は動かし直さない
+    rerender(<BackdropFrames {...BASE} context={0.5} agent="working" />);
+    expect(startBackdropClock).toHaveBeenCalledTimes(1);
+
+    rerender(<BackdropFrames {...BASE} paused />);
+    expect(clock.stop).toHaveBeenCalledTimes(1);
+    expect(startBackdropClock).toHaveBeenCalledTimes(1);
+
+    rerender(<BackdropFrames {...BASE} />);
+    expect(startBackdropClock).toHaveBeenCalledTimes(2);
+  });
+
+  it('止めている (paused) ときや、背景が無いときは時計を動かさない', () => {
+    render(<BackdropFrames {...BASE} paused />);
+    render(<BackdropFrames {...BASE} svg={null} />);
+    expect(startBackdropClock).not.toHaveBeenCalled();
+  });
+
+  it('時計が進めるのは、並んでいる iframe の文書 (フェード中の下の 1 枚も含む)', () => {
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+    const first = load(frames(container)[0]);
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+    const second = load(frames(container)[1]);
+
+    expect([...(clock.getDocuments?.() ?? [])]).toEqual([first, second]);
+  });
+
+  it('外すと時計を止める', () => {
+    const { unmount } = render(<BackdropFrames {...BASE} />);
+    unmount();
+    expect(clock.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('SVG が出るまでは背景の層を下地の色で塗り、出たら塗らない', () => {
+    const { container } = render(<BackdropFrames {...BASE} underlay="#102030" />);
+    const layer = container.querySelector<HTMLElement>('.backdrop-layer');
+    expect(layer?.style.backgroundColor).toMatch(/^(#102030|rgb\(16, 32, 48\))$/);
+
+    load(frames(container)[0]);
+    expect(layer?.style.backgroundColor).toBe('');
+  });
+
+  it('下地の色が無ければ塗らない', () => {
+    const { container } = render(<BackdropFrames {...BASE} underlay={null} />);
+    expect(container.querySelector<HTMLElement>('.backdrop-layer')?.style.backgroundColor).toBe('');
   });
 
   it('背景の無いテーマに切り替えたら何も描かない', () => {

@@ -17,6 +17,10 @@
  * - 見えている背景に戻すときは iframe を作り直さない（アニメーションが最初からやり直しに
  *   ならないように）。
  * - 背景の無いテーマ（配色だけ）では何も描かない。
+ * - 背景の SVG が出るまでの間（起動直後など）は、背景の層を不透明な下地の色で塗っておく
+ *   （窓は透明なので、塗らないとデスクトップが透ける）。
+ * - アニメーションはブラウザに任せず、親の 1 本の時計で BACKDROP_MAX_FPS に間引いて進める
+ *   （startBackdropClock。負荷を抑えるため）。止めている間は時計を止める。
  *
  * 描く SVG と止めるか・エージェントの状態は ThemeRoot から、コンテキストの使用率は
  * ステータスバーの Claude の情報から受け取る。ClaudeStatusRoot の内側に置くこと。
@@ -35,15 +39,24 @@ import {
   mountBackdropSvg,
   type BackdropAgent,
 } from '../lib/theme/backdropDocument';
+import { startBackdropClock } from '../lib/theme/backdropClock';
 
 /** テーマを切り替えたときのクロスフェードの長さ（title-bar.css の transition と揃える）。 */
 export const BACKDROP_FADE_MS = 300;
 
 /** 窓の背景。App の最背面に置く。 */
 export function BackdropLayer() {
-  const { svg, paused, agent } = useBackdropView();
+  const { svg, paused, agent, underlay } = useBackdropView();
   const { meta } = useStatusBarView();
-  return <BackdropFrames svg={svg} paused={paused} context={backdropContext(meta)} agent={agent} />;
+  return (
+    <BackdropFrames
+      svg={svg}
+      paused={paused}
+      context={backdropContext(meta)}
+      agent={agent}
+      underlay={underlay}
+    />
+  );
 }
 
 export interface BackdropFramesProps {
@@ -55,6 +68,8 @@ export interface BackdropFramesProps {
   readonly context: number;
   /** アクティブなタブのエージェントの状態 */
   readonly agent: BackdropAgent;
+  /** 背景の SVG が出るまでの間、背景の層を塗る不透明な色。null・省略なら塗らない */
+  readonly underlay?: string | null;
 }
 
 /** iframe 1 枚ぶん。 */
@@ -151,8 +166,16 @@ function frameClassName(frame: Frame): string {
   return name;
 }
 
+/** 並んでいる iframe の文書。時計が進める先。 */
+function* frameDocuments(iframes: ReadonlyMap<number, HTMLIFrameElement>): Generator<Document> {
+  for (const iframe of iframes.values()) {
+    const doc = iframe.contentDocument;
+    if (doc) yield doc;
+  }
+}
+
 /** 描く SVG と連動の値から iframe を並べる。テスト用に export する。 */
-export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesProps) {
+export function BackdropFrames({ svg, paused, context, agent, underlay }: BackdropFramesProps) {
   const [stack, setStack] = useState<FrameStack>(() => initialStack(svg));
   // 描く SVG が変わったら、描画中に並びを作り直す (props から導く状態)
   const next = nextFrames(stack, svg);
@@ -170,6 +193,14 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
       if (doc) applyBackdropSignals(doc, signals.current);
     }
   }, [paused, context, agent]);
+
+  // 動かしている間だけ、時計でアニメーションを間引いて進める。フェード中の下の 1 枚も進める。
+  // 上の effect の後に置く (動かし直すとき、止める class を外してから時計で止め直すため)
+  const hasFrames = frames.length > 0;
+  useEffect(() => {
+    if (paused || !hasFrames) return undefined;
+    return startBackdropClock(() => frameDocuments(iframes.current));
+  }, [paused, hasFrames]);
 
   // フェードインの終わりを待つタイマー (iframe ごと)。外されていても、終わったら何もしない
   const fadeTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -221,8 +252,14 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
   }, []);
 
   if (frames.length === 0) return null;
+  // SVG がまだ 1 枚も出ていない間は、下地の色で塗る
+  const covering = underlay != null && !frames.some((frame) => frame.loaded);
   return (
-    <div className="backdrop-layer" aria-hidden="true">
+    <div
+      className="backdrop-layer"
+      aria-hidden="true"
+      style={covering ? { backgroundColor: underlay } : undefined}
+    >
       {frames.map((frame) => (
         <iframe
           key={frame.id}

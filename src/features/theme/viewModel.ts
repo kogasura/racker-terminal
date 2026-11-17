@@ -198,10 +198,15 @@ export function resolveRuntimeThemes<R>(
 export interface BackdropViewModel {
   /** 描く SVG。背景の無いテーマ（配色だけ）では null で、何も描かない */
   readonly svg: string | null;
-  /** アニメーションを止めるか（「背景を動かす」がオフ） */
+  /** アニメーションを止めるか（「背景を動かす」がオフ、または窓が見えていない） */
   readonly paused: boolean;
   /** アクティブなタブのエージェントの状態。SVG のルートの data-agent になる */
   readonly agent: BackdropAgent;
+  /**
+   * 背景の SVG が出るまでの間、背景の層を塗る不透明な色（glass.tint、無ければ ui.bg）。
+   * 窓は透明なので、塗らないとデスクトップが透ける。背景の無いテーマでは null
+   */
+  readonly underlay: string | null;
 }
 
 /** テーマの背景の SVG。組み込みはシーンの ID から作り、自作はファイルの中身。無ければ null。 */
@@ -226,15 +231,22 @@ export function toBackdropAgent(state: AgentState | undefined): BackdropAgent {
   return 'idle';
 }
 
+/**
+ * @param suspended - 窓が見えていない（最小化中・文書が hidden）か。見えていない間は
+ *   「背景を動かす」の設定に関わらず止める
+ */
 export function selectBackdropView(
   theme: ThemeDefinition | null,
   settings: Pick<Settings, 'backdropMotion'>,
   agentState: AgentState | undefined,
+  suspended = false,
 ): BackdropViewModel {
+  const svg = selectBackdropSvg(theme);
   return {
-    svg: selectBackdropSvg(theme),
-    paused: isBackdropPaused(settings),
+    svg,
+    paused: isBackdropPaused(settings) || suspended,
     agent: toBackdropAgent(agentState),
+    underlay: svg === null || theme === null ? null : (theme.glass?.tint ?? theme.ui.bg),
   };
 }
 

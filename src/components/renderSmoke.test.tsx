@@ -694,6 +694,29 @@ describe('コンポーネントの操作', () => {
     }
   });
 
+  it('SettingsDialog: 開いたときは選択中のテーマのカードにフォーカスを当てる', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'nord' },
+    });
+    renderSettings();
+    await act(async () => {});
+
+    expect(document.activeElement).toBe(themeCard('Nord'));
+    expect(pressedCards()).toEqual(['Nord']);
+  });
+
+  it('SettingsDialog: 選択中のカードが無ければ、従来どおり最初の要素にフォーカスを当てる', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'user:deleted' },
+    });
+    renderSettings();
+    await act(async () => {});
+
+    const active = document.activeElement as HTMLElement | null;
+    expect(active?.closest('.dialog-content')).not.toBeNull();
+    expect(active?.getAttribute('aria-pressed')).not.toBe('true');
+  });
+
   it('SettingsDialog: 試しに表示して Esc で閉じると、窓が元のテーマに戻る', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },

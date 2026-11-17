@@ -354,13 +354,33 @@ describe('動く背景', () => {
     expect(toBackdropAgent(undefined)).toBe('idle');
   });
 
-  it('selectBackdropView は SVG・止めるか・エージェントの状態をまとめる', () => {
-    expect(selectBackdropView(neon, {}, 'working')).toEqual({ svg: NEON_SVG, paused: false, agent: 'working' });
+  it('selectBackdropView は SVG・止めるか・エージェントの状態・下地の色をまとめる', () => {
+    expect(selectBackdropView(neon, {}, 'working')).toEqual({
+      svg: NEON_SVG,
+      paused: false,
+      agent: 'working',
+      underlay: '#1a0f2e',
+    });
     expect(selectBackdropView(TOKYO_NIGHT, { backdropMotion: false }, undefined)).toEqual({
       svg: null,
       paused: true,
       agent: 'idle',
+      underlay: null,
     });
+  });
+
+  it('窓が見えていない (最小化中・hidden) 間は、「背景を動かす」がオンでも止める', () => {
+    expect(selectBackdropView(neon, {}, undefined, true).paused).toBe(true);
+    expect(selectBackdropView(neon, { backdropMotion: true }, undefined, true).paused).toBe(true);
+    expect(selectBackdropView(neon, { backdropMotion: true }, undefined, false).paused).toBe(false);
+  });
+
+  it('下地の色は glass.tint、glass が無ければ ui.bg。背景の無いテーマでは塗らない', () => {
+    expect(selectBackdropView(HONU, {}, undefined).underlay).toBe(HONU.glass?.tint);
+    const noGlass: ThemeDefinition = { ...neon, glass: undefined };
+    expect(selectBackdropView(noGlass, {}, undefined).underlay).toBe(TOKYO_NIGHT.ui.bg);
+    expect(selectBackdropView(null, {}, undefined).underlay).toBeNull();
+    expect(selectBackdropView(TOKYO_NIGHT, {}, undefined).underlay).toBeNull();
   });
 
   describe('backdropContext', () => {

@@ -3,7 +3,7 @@ import type { Tab } from '../types';
 import { useAppStore } from '../store/appStore';
 import { useEmit } from '../architecture/chain';
 import { useTabsView } from '../features/tabs/TabsRoot';
-import { useThemeView } from '../features/theme/ThemeRoot';
+import { useThemeCatalogRef } from '../features/theme/ThemeRoot';
 import { resolveTabTheme } from '../features/theme/viewModel';
 import { tabCommandForKey } from '../features/tabs/keys';
 import type { TabsIntent } from '../features/tabs/events';
@@ -232,8 +232,9 @@ export const TerminalPane = memo(function TerminalPane({
   emitRef.current = emit;
   const suspendedRef = useRef(commandsSuspended);
   suspendedRef.current = commandsSuspended;
-  // 生成時の配色。生成後の差し替えは TerminalUpkeepRoot が全タブへ配る。
-  const { catalog: themeCatalog } = useThemeView();
+  // 生成時の配色を決めるカタログ。生成後の差し替えは TerminalUpkeepRoot が全タブへ配る。
+  // 購読しない参照で受け取り、テーマの読み込みのたびに全タブを描き直さないようにする。
+  const themeCatalogRef = useThemeCatalogRef();
 
   const divRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalRuntime | null>(null);
@@ -242,7 +243,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   // 初回 mount [tabId]: acquireRuntime + setOnEvent + 必要なら startSpawn + cleanup
   useEffect(() => {
-    const initialTheme = resolveTabTheme(themeCatalog, tab.themeId, settings.theme);
+    const initialTheme = resolveTabTheme(themeCatalogRef.current, tab.themeId, settings.theme);
     const runtime = acquireRuntime(tabId, () =>
       createRuntime(divRef.current!, settings, tabId, initialTheme, {
         onLive: (ptyId) => setTabStatus(tabId, 'live', ptyId),

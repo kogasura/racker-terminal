@@ -89,12 +89,15 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
 function ThemeSettingsSection({
   value,
   onChange,
-  onLeaveForClaude,
+  onCreateWithClaude,
 }: {
   value: string;
   onChange: (themeId: string) => void;
-  /** 「Claude でテーマを作る」で claude タブへ移るとき、設定ダイアログを閉じてもらう。 */
-  onLeaveForClaude: () => void;
+  /**
+   * 「Claude でテーマを作る」が押された。claude タブへ移るので、親が入力中の内容を
+   * 保存してから claude タブを開くよう流し、設定ダイアログを閉じる。
+   */
+  onCreateWithClaude: () => void;
 }) {
   const { options, errors } = useThemeView();
   const emit = useEmit<ThemeEvent>();
@@ -128,10 +131,7 @@ function ThemeSettingsSection({
         <button
           type="button"
           className="dialog-btn dialog-btn--cancel"
-          onClick={() => {
-            emit({ type: 'theme/create-with-claude-requested' });
-            onLeaveForClaude();
-          }}
+          onClick={onCreateWithClaude}
         >
           Claude でテーマを作る
         </button>
@@ -165,6 +165,7 @@ function ThemeSettingsSection({
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useSettingsView();
   const emit = useEmit<SettingsEvent>();
+  const emitTheme = useEmit<ThemeEvent>();
   // updater の表示は Root から View モデルとして降ってくる。
   const { settingsSection } = useUpdaterView();
 
@@ -195,15 +196,25 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     setDraft(settings);
   }, [settings]);
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-
+  /** 入力中の内容のうち、変更のあったものだけを保存する。 */
+  function saveDraft() {
     const patch = buildSettingsPatch(draft, settings);
 
     if (Object.keys(patch).length > 0) {
       emit({ type: 'settings/changed', patch });
     }
+  }
 
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    saveDraft();
+    onClose();
+  }
+
+  // claude タブへ移るときも、入力中の内容は捨てずに保存してから閉じる。
+  function handleCreateWithClaude() {
+    saveDraft();
+    emitTheme({ type: 'theme/create-with-claude-requested' });
     onClose();
   }
 
@@ -220,7 +231,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <ThemeSettingsSection
               value={draft.theme}
               onChange={(theme) => setDraft({ ...draft, theme })}
-              onLeaveForClaude={onClose}
+              onCreateWithClaude={handleCreateWithClaude}
             />
 
             <label className="dialog-field">

@@ -10,6 +10,8 @@
  *      ダイアログ・ターミナルの手入れが使う）
  *   4. 読み込んだ自作テーマを localStorage に覚えておき、次回の起動直後のカタログに
  *      入れる（ターミナルの配色が一瞬 Tokyo Night になるのを防ぐ）
+ *   5. 購読せずに最新のカタログを読む口 `useThemeCatalogRef()` を配る（ターミナルの
+ *      生成時に使う。読み込みのたびに全タブを描き直さないため）
  *
  * 選んだテーマの ID は設定の一部なので SettingsRoot から受け取る。この Root は
  * SettingsRoot の内側に置く。透明度の反映もここが持つ（`--bg-alpha` に依存する背景の
@@ -29,6 +31,7 @@ import {
 import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { createMachine, type Machine } from '../../architecture/machine';
 import { buildCssVars } from '../../lib/theme/cssVars';
+import type { ThemeDefinition } from '../../lib/theme/types';
 import { useSettingsView } from '../settings/SettingsRoot';
 import { createEffectRunner, type EffectDeps } from './effects';
 import type { ThemeEvent } from './events';
@@ -48,6 +51,26 @@ export function useThemeView(): ThemeViewModel {
   const vm = useContext(ThemeViewContext);
   if (!vm) throw new Error('useThemeView は ThemeRoot の内側でしか使えません。');
   return vm;
+}
+
+/** 最新のカタログを指す参照。オブジェクト自体は変わらず、中身 (current) だけが入れ替わる。 */
+export interface ThemeCatalogRef {
+  readonly current: readonly ThemeDefinition[];
+}
+
+const ThemeCatalogRefContext = createContext<ThemeCatalogRef | null>(null);
+
+/**
+ * 購読しないカタログの取得口。
+ *
+ * 返す参照は ThemeRoot の寿命の間ずっと同じなので、これを使うコンポーネントは
+ * テーマの読み込み状況が変わっても描き直されない。`current` は読んだ時点の最新の
+ * カタログ。ターミナルの生成時のように「その瞬間の値が要るだけ」の箇所で使う。
+ */
+export function useThemeCatalogRef(): ThemeCatalogRef {
+  const ref = useContext(ThemeCatalogRefContext);
+  if (!ref) throw new Error('useThemeCatalogRef は ThemeRoot の内側でしか使えません。');
+  return ref;
 }
 
 const traceLink: Link<ThemeEvent> = (event, next) => {
@@ -97,6 +120,9 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   }, [state]);
 
   const view = useMemo(() => selectThemeView(state), [state]);
+  // 描画中に差し替える。子の effect (ターミナルの生成) が同じコミットで読んでも最新になる。
+  const catalogRef = useRef<readonly ThemeDefinition[]>(view.catalog);
+  catalogRef.current = view.catalog;
   const appTheme = ready ? selectAppTheme(view, settings.theme) : null;
   const alpha = settings.transparency ?? 1;
 
@@ -110,7 +136,9 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
 
   return (
     <EventScope<ThemeEvent> links={links}>
-      <ThemeViewContext.Provider value={view}>{children}</ThemeViewContext.Provider>
+      <ThemeViewContext.Provider value={view}>
+        <ThemeCatalogRefContext.Provider value={catalogRef}>{children}</ThemeCatalogRefContext.Provider>
+      </ThemeViewContext.Provider>
     </EventScope>
   );
 }

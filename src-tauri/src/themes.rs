@@ -31,9 +31,9 @@ const GUIDE_FILE_NAME: &str = "CLAUDE.md";
 /// 説明書の本文。リポジトリの `docs/themes.md` をそのまま埋め込む。
 const GUIDE_BODY: &str = include_str!("../../docs/themes.md");
 
-/// 説明書の先頭に付ける注意書き。毎回上書きするので、手で直しても消える。
-const GUIDE_HEADER: &str =
-    "<!-- このファイルは racker が読み込みのたびに上書きします。編集しないでください。 -->\n\n";
+/// 説明書の先頭に付ける注意書き。中身が racker の持つ説明と違えば上書きするので、
+/// 手で直しても消える。
+const GUIDE_HEADER: &str = "<!-- このファイルは racker が内容を更新するときに自動で上書きします。編集しないでください。 -->\n\n";
 
 /// テーマフォルダの 1 ファイルぶんの読み取り結果。
 ///
@@ -121,14 +121,25 @@ pub fn read_theme_files(dir: &Path) -> Vec<UserThemeFile> {
         .collect()
 }
 
-/// 説明書（`CLAUDE.md`）をフォルダに書き出す。既にあっても上書きする。
+/// 説明書を書き出す必要があるか。いまの中身が書きたい内容と同じときだけ書かない。
 ///
-/// racker を更新すると説明も変わりうるので、毎回最新の内容に揃える。
-pub fn write_guide(dir: &Path) -> std::io::Result<()> {
-    fs::write(
-        dir.join(GUIDE_FILE_NAME),
-        format!("{GUIDE_HEADER}{GUIDE_BODY}"),
-    )
+/// `existing` が `None`（ファイルが無い・読めない）のときは書く。
+fn guide_needs_write(existing: Option<&[u8]>, expected: &str) -> bool {
+    existing != Some(expected.as_bytes())
+}
+
+/// 説明書（`CLAUDE.md`）をフォルダに書き出す。書き出したら `true`。
+///
+/// racker を更新すると説明も変わりうるので、中身が違えば最新の内容で上書きする。
+/// 同じなら書かない（テーマを読み込むたびにファイルの更新時刻を動かさないため）。
+pub fn write_guide(dir: &Path) -> std::io::Result<bool> {
+    let path = dir.join(GUIDE_FILE_NAME);
+    let content = format!("{GUIDE_HEADER}{GUIDE_BODY}");
+    if !guide_needs_write(fs::read(&path).ok().as_deref(), &content) {
+        return Ok(false);
+    }
+    fs::write(&path, content)?;
+    Ok(true)
 }
 
 /// テーマフォルダ (`<app_data>/themes`) を用意して返す。
@@ -318,11 +329,47 @@ mod tests {
         let path = dir.join("CLAUDE.md");
         fs::write(&path, "古い説明").unwrap();
 
-        write_guide(&dir).unwrap();
+        assert!(write_guide(&dir).unwrap());
 
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(GUIDE_HEADER));
         assert!(text.ends_with(GUIDE_BODY));
         assert!(!text.contains("古い説明"));
+    }
+
+    #[test]
+    fn writes_guide_when_missing() {
+        let dir = temp_dir("guide-missing");
+
+        assert!(write_guide(&dir).unwrap());
+
+        let text = fs::read_to_string(dir.join("CLAUDE.md")).unwrap();
+        assert_eq!(text, format!("{GUIDE_HEADER}{GUIDE_BODY}"));
+    }
+
+    #[test]
+    fn does_not_rewrite_guide_with_same_content() {
+        let dir = temp_dir("guide-same");
+        let path = dir.join("CLAUDE.md");
+        write_guide(&dir).unwrap();
+        // 更新時刻を過去にずらしておき、書き込まれたら変わるようにする
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        assert!(!write_guide(&dir).unwrap());
+
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), old);
+    }
+
+    #[test]
+    fn guide_needs_write_only_when_content_differs() {
+        assert!(!guide_needs_write(Some(b"same"), "same"));
+        assert!(guide_needs_write(Some(b"old"), "new"));
+        assert!(guide_needs_write(None, "new"));
     }
 }

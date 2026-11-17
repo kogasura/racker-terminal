@@ -11,7 +11,7 @@ import { UpdaterRoot } from '../features/updater/UpdaterRoot';
 import { TabsRoot } from '../features/tabs/TabsRoot';
 import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
 import { SettingsRoot } from '../features/settings/SettingsRoot';
-import { ThemeRoot } from '../features/theme/ThemeRoot';
+import { ThemeRoot, useThemeCatalogRef, type ThemeCatalogRef } from '../features/theme/ThemeRoot';
 import type { EffectDeps as ThemeEffectDeps } from '../features/theme/effects';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
@@ -365,6 +365,24 @@ describe('コンポーネントのレンダリング', () => {
     expect(document.body.textContent).toContain('（見つかりません: user:deleted）');
   });
 
+  it('useThemeCatalogRef: テーマを読み込んでも描き直さず、current は最新のカタログを指す', async () => {
+    let renders = 0;
+    let seen: ThemeCatalogRef | null = null;
+    function Probe() {
+      renders += 1;
+      seen = useThemeCatalogRef();
+      return null;
+    }
+    render(<Probe />);
+    const first = seen as ThemeCatalogRef | null;
+    // 自作テーマの読み込み (Promise) が終わるのを待つ
+    await act(async () => {});
+
+    expect(renders).toBe(1);
+    expect(seen).toBe(first);
+    expect(first!.current.map((t) => t.id)).toContain('user:sunset');
+  });
+
   it('FavoriteDialog: ターミナルの配色の選択肢を出し、先頭は「アプリの設定に従う」', async () => {
     render(
       <FavoriteDialog
@@ -499,14 +517,34 @@ describe('コンポーネントの操作', () => {
     expect(useAppStore.getState().settings.theme).toBe('dracula');
   });
 
-  it('SettingsDialog: 「Claude でテーマを作る」でダイアログを閉じる', async () => {
+  it('SettingsDialog: 「Claude でテーマを作る」は入力中の内容を保存してから claude タブを頼み、ダイアログを閉じる', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    // claude タブを開きに行った時点で、入力中の内容が保存済みかを記録する
+    const themeAtRequest: string[] = [];
+    const ensureSpy = vi.spyOn(themeDeps, 'ensureThemesDir').mockImplementation(() => {
+      themeAtRequest.push(useAppStore.getState().settings.theme);
+      return Promise.resolve(null);
+    });
     const onClose = vi.fn();
-    renderSettings(onClose);
-    const button = [...document.body.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Claude でテーマを作る',
-    );
-    await act(async () => button!.click());
-    expect(onClose).toHaveBeenCalledTimes(1);
+    try {
+      renderSettings(onClose);
+      const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
+      await act(async () => {
+        fireEvent.change(select!, { target: { value: 'dracula' } });
+      });
+      const button = [...document.body.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Claude でテーマを作る',
+      );
+      await act(async () => button!.click());
+
+      expect(useAppStore.getState().settings.theme).toBe('dracula');
+      expect(themeAtRequest).toEqual(['dracula']);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      ensureSpy.mockRestore();
+    }
   });
 
   it('FavoriteDialog: 選んだ配色が onSubmit に渡り、「アプリの設定に従う」なら undefined', async () => {

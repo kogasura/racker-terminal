@@ -104,8 +104,19 @@ describe('resolveTabTheme', () => {
     expect(resolveTabTheme(idleCatalog, 'user:sunset', 'nord')).toBe(sunset);
   });
 
-  it('見つからない ID は Tokyo Night にフォールバックする', () => {
-    expect(resolveTabTheme(catalog, 'user:deleted', 'nord')).toBe(TOKYO_NIGHT);
+  it('上書きの ID がカタログにあれば、アプリの設定より上書きを使う', () => {
+    expect(resolveTabTheme(catalog, 'dracula', 'user:sunset')).toBe(
+      BUILTIN_THEMES.find((t) => t.id === 'dracula'),
+    );
+  });
+
+  it('上書きの ID が見つからなければ、アプリの設定のテーマに従う', () => {
+    expect(resolveTabTheme(catalog, 'user:deleted', 'nord')).toBe(nord);
+    expect(resolveTabTheme(catalog, 'user:deleted', 'user:sunset')).toBe(sunset);
+  });
+
+  it('上書きもアプリの設定も見つからなければ Tokyo Night にフォールバックする', () => {
+    expect(resolveTabTheme(catalog, 'user:deleted', 'no-such-theme')).toBe(TOKYO_NIGHT);
     expect(resolveTabTheme(catalog, undefined, 'no-such-theme')).toBe(TOKYO_NIGHT);
   });
 });
@@ -127,9 +138,12 @@ describe('resolveRuntimeThemes', () => {
     expect(resolveRuntimeThemes([['gone', 'rt']], {}, catalog, 'nord')).toEqual([['rt', nord]]);
   });
 
-  it('見つからない ID は Tokyo Night にフォールバックする', () => {
+  it('上書きの ID が見つからなければアプリの設定のテーマ、それも無ければ Tokyo Night', () => {
     const tabs = { a: { themeId: 'user:deleted' } };
-    expect(resolveRuntimeThemes([['a', 'rt']], tabs, catalog, 'nord')).toEqual([['rt', TOKYO_NIGHT]]);
+    expect(resolveRuntimeThemes([['a', 'rt']], tabs, catalog, 'nord')).toEqual([['rt', nord]]);
+    expect(resolveRuntimeThemes([['a', 'rt']], tabs, catalog, 'no-such-theme')).toEqual([
+      ['rt', TOKYO_NIGHT],
+    ]);
   });
 
   it('runtime が無ければ空', () => {

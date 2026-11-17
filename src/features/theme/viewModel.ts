@@ -54,14 +54,16 @@ export function selectAppTheme(view: ThemeViewModel, themeId: string): ThemeDefi
 
 /**
  * タブのターミナルに当てるテーマ。
- * タブに上書き (themeId) があればそれ、無ければアプリの設定。見つからなければ Tokyo Night。
+ * タブの上書き (themeId) がカタログにあればそれ。無い (未指定・ファイルを消した) ときは
+ * アプリの設定のテーマに従い、それも見つからなければ Tokyo Night。
  */
 export function resolveTabTheme(
   catalog: readonly ThemeDefinition[],
   tabThemeId: string | undefined,
   appThemeId: string,
 ): ThemeDefinition {
-  return resolveTheme(catalog, tabThemeId ?? appThemeId);
+  const override = catalog.find((theme) => theme.id === tabThemeId);
+  return override ?? resolveTheme(catalog, appThemeId);
 }
 
 /**

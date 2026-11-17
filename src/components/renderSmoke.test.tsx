@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act } from 'react';
 import { render as rtlRender, cleanup, fireEvent } from '@testing-library/react';
-import { useEffect, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
 import { GroupSection } from './GroupSection';
@@ -13,12 +13,14 @@ import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
 import { SettingsRoot } from '../features/settings/SettingsRoot';
 import { ThemeRoot, useThemeCatalogRef, type ThemeCatalogRef } from '../features/theme/ThemeRoot';
 import type { EffectDeps as ThemeEffectDeps } from '../features/theme/effects';
+import { WINDOW_THEME_CACHE_KEY } from '../features/theme/themeCache';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
 import { TabBar } from './TabBar';
 import { Sidebar } from './Sidebar';
 import { DragDropProvider } from './DragDropProvider';
+import { BUILTIN_THEMES } from '../lib/theme/builtinThemes';
 
 // Tauri の invoke / plugin はテスト環境に存在しないのでスタブする。
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
@@ -36,6 +38,11 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue
  * テーマの読み込みの差し替え。自作テーマ 1 件と、壊れたファイル 1 件を返す。
  * 選択肢の optgroup と、読み込めなかったファイルの一覧が出ることを見るため。
  */
+/** 窓に当たったテーマを accent で見分ける。 */
+const accentOf = (id: string) => BUILTIN_THEMES.find((t) => t.id === id)!.ui.accent;
+const TOKYO_NIGHT_ACCENT = accentOf('tokyo-night');
+const DRACULA_ACCENT = accentOf('dracula');
+
 const themeDeps: ThemeEffectDeps = {
   listUserThemes: () =>
     Promise.resolve([
@@ -80,6 +87,25 @@ function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
 
 function renderSettings(onClose: () => void = () => {}) {
   return render(<SettingsDialog onClose={onClose} />);
+}
+
+/** 設定ダイアログのテーマのカード (名前で引く)。 */
+function themeCard(name: string): HTMLButtonElement | undefined {
+  return [...document.body.querySelectorAll<HTMLButtonElement>('button.theme-card')].find(
+    (b) => b.querySelector('.theme-card__name')?.textContent === name,
+  );
+}
+
+/** 押されている (選択中の) カードの名前。 */
+function pressedCards(): string[] {
+  return [...document.body.querySelectorAll('button.theme-card[aria-pressed="true"]')].map(
+    (b) => b.querySelector('.theme-card__name')?.textContent ?? '',
+  );
+}
+
+/** 窓に当たっている accent の色。試しに表示の反映を見るのに使う。 */
+function windowAccent(): string {
+  return document.documentElement.style.getPropertyValue('--rk-accent');
 }
 
 /**
@@ -332,19 +358,26 @@ describe('コンポーネントのレンダリング', () => {
     expect(() => renderSettings()).not.toThrow();
   });
 
-  it('SettingsDialog: テーマの選択肢を組み込みと自分のテーマに分けて出し、読めなかったファイルを並べる', async () => {
+  it('SettingsDialog: テーマをカードの一覧 (4 グループ) で出し、読めなかったファイルを並べる', async () => {
     renderSettings();
     // 自作テーマの読み込み (Promise) が終わるのを待つ
     await act(async () => {});
 
-    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
-    expect(select, 'テーマの select が見つからない').toBeTruthy();
-    const groups = [...select!.querySelectorAll('optgroup')].map((g) => g.label);
-    expect(groups).toEqual(['組み込み', '自分のテーマ']);
-    const values = [...select!.querySelectorAll('option')].map((o) => o.value);
-    expect(values).toContain('tokyo-night');
-    expect(values).toContain('user:sunset');
-    expect(select!.value).toBe(useAppStore.getState().settings.theme);
+    const list = document.body.querySelector('.theme-cards');
+    expect(list, 'テーマのカードの一覧が見つからない').toBeTruthy();
+    const groups = [...list!.querySelectorAll('.theme-card-group')].map((g) =>
+      g.getAttribute('aria-label'),
+    );
+    expect(groups).toEqual(['配色だけ', '動く背景（ダーク）', '動く背景（ライト）', '自分のテーマ']);
+    expect(themeCard('Tokyo Night')).toBeTruthy();
+    expect(themeCard('Honu Lagoon')).toBeTruthy();
+    expect(themeCard('Sunset')).toBeTruthy();
+    // 選択中は設定のテーマ 1 枚だけ
+    expect(pressedCards()).toEqual(['Tokyo Night']);
+    // 背景付きのカードには、ひとこと説明とライト / ダークが出る
+    const honu = themeCard('Honu Lagoon')!;
+    expect(honu.querySelector('.theme-card__meta')?.textContent).toBe('ライト');
+    expect(honu.querySelector('.theme-card__blurb')?.textContent).toBeTruthy();
 
     const text = document.body.textContent ?? '';
     expect(text).toContain('broken.json');
@@ -353,16 +386,35 @@ describe('コンポーネントのレンダリング', () => {
     expect(text).toContain('再読み込み');
   });
 
-  it('SettingsDialog: 設定のテーマがカタログに無ければ「見つかりません」で値を保持する', async () => {
+  it('SettingsDialog: 設定のテーマがカタログに無ければ「見つかりません」と出し、値を保持する', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'user:deleted' },
     });
     renderSettings();
     await act(async () => {});
 
-    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
-    expect(select!.value).toBe('user:deleted');
     expect(document.body.textContent).toContain('（見つかりません: user:deleted）');
+    expect(pressedCards()).toEqual([]);
+    // 何も押さずに保存しても、別のテーマに変わらない
+    const form = document.body.querySelector('form');
+    await act(async () => {
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(useAppStore.getState().settings.theme).toBe('user:deleted');
+  });
+
+  it('SettingsDialog: 自分のテーマが無ければ、カードの一覧は 3 グループ', async () => {
+    const spy = vi.spyOn(themeDeps, 'listUserThemes').mockResolvedValue([]);
+    try {
+      renderSettings();
+      await act(async () => {});
+      const groups = [...document.body.querySelectorAll('.theme-card-group')].map((g) =>
+        g.getAttribute('aria-label'),
+      );
+      expect(groups).toEqual(['配色だけ', '動く背景（ダーク）', '動く背景（ライト）']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('useThemeCatalogRef: テーマを読み込んでも描き直さず、current は最新のカタログを指す', async () => {
@@ -387,7 +439,7 @@ describe('コンポーネントのレンダリング', () => {
     expect(first!.current.map((t) => t.id)).toContain('user:sunset');
   });
 
-  it('FavoriteDialog: ターミナルの配色の選択肢を出し、先頭は「アプリの設定に従う」', async () => {
+  it('FavoriteDialog: テーマの選択肢を 4 グループで出し (背景付きも選べる)、先頭は「アプリの設定に従う」', async () => {
     render(
       <FavoriteDialog
         mode="edit"
@@ -401,11 +453,21 @@ describe('コンポーネントのレンダリング', () => {
     const select = [...document.body.querySelectorAll('select')].find((s) =>
       s.querySelector('option[value="racker-ember"]'),
     );
-    expect(select, '配色の select が見つからない').toBeTruthy();
+    expect(select, 'テーマの select が見つからない').toBeTruthy();
     expect(select!.options[0].value).toBe('');
     expect(select!.options[0].textContent).toBe('アプリの設定に従う');
     expect(select!.value).toBe('racker-ember');
+    expect([...select!.querySelectorAll('optgroup')].map((g) => g.label)).toEqual([
+      '配色だけ',
+      '動く背景（ダーク）',
+      '動く背景（ライト）',
+      '自分のテーマ',
+    ]);
+    expect(select!.querySelector('option[value="scene:honu-lagoon"]')).not.toBeNull();
+    expect(select!.querySelector('option[value="scene:night-reef"]')).not.toBeNull();
     expect(select!.querySelector('option[value="user:sunset"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('テーマ');
+    expect(document.body.textContent).not.toContain('ターミナルの配色');
   });
 });
 
@@ -502,23 +564,160 @@ describe('コンポーネントの操作', () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ title: 'テスト', shell: 'pwsh.exe' });
   });
 
-  it('SettingsDialog: テーマを選んで保存すると設定に入る', async () => {
+  it('SettingsDialog: カードを押すと窓に試しに表示し、保存すると設定に入って試しに表示を終える', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
     });
-    renderSettings();
-    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
-    await act(async () => {
-      fireEvent.change(select!, { target: { value: 'dracula' } });
-    });
-    // 保存するまでは適用しない
+    const onClose = vi.fn();
+    renderSettings(onClose);
+    await act(async () => {});
+    expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
+
+    await act(async () => themeCard('Dracula')!.click());
+    // 保存するまでは設定を変えないが、窓には試しに表示する
     expect(useAppStore.getState().settings.theme).toBe('tokyo-night');
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+    expect(pressedCards()).toEqual(['Dracula']);
 
     const form = document.body.querySelector('form');
     await act(async () => {
       form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
     expect(useAppStore.getState().settings.theme).toBe('dracula');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // 試しに表示を終えても、確定したテーマのまま
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+    // アプリの設定に戻しても窓が追従する (試しに表示が残っていない)
+    await act(async () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+      });
+    });
+    expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
+  });
+
+  it('SettingsDialog: 試しに表示してキャンセルすると、設定は変えず窓が元のテーマに戻る', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    const onClose = vi.fn();
+    renderSettings(onClose);
+    await act(async () => {});
+
+    await act(async () => themeCard('Dracula')!.click());
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+
+    const cancel = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'キャンセル',
+    );
+    await act(async () => cancel!.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().settings.theme).toBe('tokyo-night');
+    expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
+  });
+
+  it('SettingsDialog: 試しに表示の間は、起動時のキャッシュに試したテーマを保存しない', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    localStorage.clear();
+    renderSettings(() => {});
+    await act(async () => {});
+    expect(localStorage.getItem(WINDOW_THEME_CACHE_KEY)).toBe('tokyo-night');
+
+    await act(async () => themeCard('Dracula')!.click());
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+    expect(localStorage.getItem(WINDOW_THEME_CACHE_KEY)).toBe('tokyo-night');
+
+    const cancel = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'キャンセル',
+    );
+    await act(async () => cancel!.click());
+    expect(localStorage.getItem(WINDOW_THEME_CACHE_KEY)).toBe('tokyo-night');
+  });
+
+  it('SettingsDialog: 試しに表示して Esc で閉じると、窓が元のテーマに戻る', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    const onClose = vi.fn();
+    renderSettings(onClose);
+    await act(async () => {});
+
+    await act(async () => themeCard('Dracula')!.click());
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().settings.theme).toBe('tokyo-night');
+    expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
+  });
+
+  it('SettingsDialog: 試しに表示したままダイアログが外されても、窓が元のテーマに戻る', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    // ダイアログだけを外せるよう、Root の内側で出し分ける
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" className="test-unmount" onClick={() => setOpen(false)} />
+          {open && <SettingsDialog onClose={() => {}} />}
+        </>
+      );
+    }
+    render(<Host />);
+    await act(async () => {});
+
+    await act(async () => themeCard('Dracula')!.click());
+    expect(windowAccent()).toBe(DRACULA_ACCENT);
+
+    await act(async () => document.body.querySelector<HTMLButtonElement>('.test-unmount')!.click());
+    expect(themeCard('Dracula')).toBeUndefined();
+    expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
+  });
+
+  it('SettingsDialog: 背景付きのテーマを選んでいる間は、透明度のスライダーを無効にしてその旨を出す', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    renderSettings();
+    await act(async () => {});
+    const range = document.body.querySelector<HTMLInputElement>('input[aria-label="背景透明度"]');
+    expect(range!.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain('背景付きのテーマでは使いません');
+
+    await act(async () => themeCard('Honu Lagoon')!.click());
+    expect(range!.disabled).toBe(true);
+    expect(document.body.textContent).toContain('背景付きのテーマでは使いません');
+
+    await act(async () => themeCard('Dracula')!.click());
+    expect(range!.disabled).toBe(false);
+  });
+
+  it('SettingsDialog: 「背景を動かす」は未設定ならオンで、切って保存すると設定に入る', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, backdropMotion: undefined },
+    });
+    renderSettings();
+    const checkbox = [...document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
+      (c) => c.closest('label')?.textContent?.includes('背景を動かす'),
+    );
+    expect(checkbox, '「背景を動かす」が見つからない').toBeTruthy();
+    expect(checkbox!.checked).toBe(true);
+
+    await act(async () => checkbox!.click());
+    // 保存するまでは設定を変えない
+    expect(useAppStore.getState().settings.backdropMotion).toBeUndefined();
+
+    const form = document.body.querySelector('form');
+    await act(async () => {
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(useAppStore.getState().settings.backdropMotion).toBe(false);
   });
 
   it('SettingsDialog: 既定のフォントサイズ 12.5 でもフォントサイズ欄が検証を通る（保存ボタンが効く）', () => {
@@ -549,10 +748,7 @@ describe('コンポーネントの操作', () => {
     const onClose = vi.fn();
     try {
       renderSettings(onClose);
-      const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
-      await act(async () => {
-        fireEvent.change(select!, { target: { value: 'dracula' } });
-      });
+      await act(async () => themeCard('Dracula')!.click());
       const button = [...document.body.querySelectorAll('button')].find(
         (b) => b.textContent === 'Claude でテーマを作る',
       );

@@ -1,8 +1,8 @@
 /**
  * Mediator が要求した副作用を実行する層。ここだけが I/O を持つ。
  *
- * - load: themes フォルダの *.json を読み、parseThemeFile で検証して
- *   使えるテーマと読めなかったファイルに分ける
+ * - load: themes フォルダの *.json と *.svg を読み、*.json を parseThemeFile で検証して
+ *   使えるテーマと読めなかったファイルに分ける。*.svg は背景の中身として JSON から参照される
  * - open-folder: themes フォルダを Explorer で開く
  * - create-with-claude: themes フォルダを cwd にして claude タブを開く。
  *   フォルダには形式の説明書 (CLAUDE.md) が置かれるので、claude はそれを読んでテーマを作れる
@@ -36,14 +36,35 @@ export function openClaudeTab(path: string): void {
 
 const defaultDeps: EffectDeps = { listUserThemes, ensureThemesDir, openThemesDir, openClaudeTab };
 
+/** 背景の SVG のファイルか（拡張子で見分ける。Windows のファイル名なので大小は問わない）。 */
+function isSvgFile(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith('.svg');
+}
+
+/** 読めた *.svg を「ファイル名 → 中身」の対応表にする。 */
+function collectSvgFiles(files: readonly UserThemeFile[]): Record<string, string> {
+  const svgFiles: Record<string, string> = {};
+  for (const file of files) {
+    if (isSvgFile(file.fileName) && file.content !== null && file.error === null) {
+      svgFiles[file.fileName] = file.content;
+    }
+  }
+  return svgFiles;
+}
+
 /**
  * 読み込んだファイルを検証し、使えるテーマとエラーに分ける純関数。
- * Rust 側で読めなかったもの（大きすぎる・読み取りエラー）はそのまま errors へ。
+ *
+ * - Rust 側で読めなかったもの（大きすぎる・読み取りエラー）はそのまま errors へ。
+ * - *.svg はテーマではなく背景の中身。ファイル名 → 中身の対応表にして parseThemeFile に渡し、
+ *   JSON の `backdrop.svg` から引けるようにする（どの JSON からも参照されない SVG は使わない）。
+ * - エラーはファイルの並び順のまま返す。
  */
 export function partitionThemeFiles(files: readonly UserThemeFile[]): {
   themes: ThemeDefinition[];
   errors: ThemeFileError[];
 } {
+  const svgFiles = collectSvgFiles(files);
   const themes: ThemeDefinition[] = [];
   const errors: ThemeFileError[] = [];
   for (const file of files) {
@@ -51,7 +72,8 @@ export function partitionThemeFiles(files: readonly UserThemeFile[]): {
       errors.push({ fileName: file.fileName, error: file.error ?? 'ファイルを読めませんでした' });
       continue;
     }
-    const result = parseThemeFile(file.fileName, file.content);
+    if (isSvgFile(file.fileName)) continue;
+    const result = parseThemeFile(file.fileName, file.content, svgFiles);
     if (result.ok) themes.push(result.theme);
     else errors.push({ fileName: result.fileName, error: result.error });
   }

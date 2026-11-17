@@ -221,3 +221,144 @@ describe('parseThemeFile: 失敗', () => {
     }
   });
 });
+
+describe('parseThemeFile: 背景 (backdrop)', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
+  const SVG_FILES = { 'neon-sunset.svg': SVG };
+
+  function parseWith(json: unknown, svgFiles: Readonly<Record<string, string>> = SVG_FILES) {
+    return parseThemeFile('neon.json', JSON.stringify(json), svgFiles);
+  }
+
+  it('backdrop.svg を対応表から引き、glass を読む', () => {
+    const theme = okTheme(
+      parseWith({
+        name: 'Neon Sunset',
+        appearance: 'dark',
+        backdrop: {
+          svg: 'neon-sunset.svg',
+          glass: { blur: 14, tint: '#1A0F2E', opacity: 0.4 },
+        },
+        ui: { accent: '#ff4fa3' },
+      }),
+    );
+    expect(theme.backdrop).toEqual({ kind: 'user', fileName: 'neon-sunset.svg', svg: SVG });
+    expect(theme.glass).toEqual({ blur: 14, tint: '#1a0f2e', opacity: 0.4 });
+    expect(theme.id).toBe('user:neon');
+    expect(theme.ui.accent).toBe('#ff4fa3');
+  });
+
+  it('SVG の中身は改変しない', () => {
+    const raw = '<svg><style>@keyframes a{to{opacity:0}}</style><text>&amp; "x"</text></svg>';
+    const theme = okTheme(parseWith({ name: 'x', backdrop: { svg: 'a.svg' } }, { 'a.svg': raw }));
+    expect(theme.backdrop).toEqual({ kind: 'user', fileName: 'a.svg', svg: raw });
+  });
+
+  it('glass を省略すると blur 14・tint は ui.bg・opacity 0.4', () => {
+    const theme = okTheme(
+      parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg' }, ui: { bg: '#102030' } }),
+    );
+    expect(theme.glass).toEqual({ blur: 14, tint: '#102030', opacity: 0.4 });
+  });
+
+  it('glass はキーごとに省略でき、省略したキーだけ既定値になる', () => {
+    const theme = okTheme(
+      parseWith({
+        name: 'x',
+        appearance: 'light',
+        backdrop: { svg: 'neon-sunset.svg', glass: { blur: 3 } },
+      }),
+    );
+    expect(theme.glass).toEqual({ blur: 3, tint: RACKER_PAPER.ui.bg, opacity: 0.4 });
+  });
+
+  it('glass の範囲の両端（blur 0 / 40、opacity 0 / 1）は受け付ける', () => {
+    for (const glass of [
+      { blur: 0, opacity: 0 },
+      { blur: 40, opacity: 1 },
+    ]) {
+      const theme = okTheme(parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg', glass } }));
+      expect(theme.glass).toMatchObject(glass);
+    }
+  });
+
+  it('backdrop が無ければ backdrop も glass も持たない', () => {
+    const theme = okTheme(parseWith({ name: 'x' }));
+    expect(theme).not.toHaveProperty('backdrop');
+    expect(theme).not.toHaveProperty('glass');
+  });
+
+  it('SVG の対応表を渡さなくても、backdrop の無いテーマは従来どおり読める', () => {
+    expect(okTheme(parse({ name: 'x' })).ui).toEqual(TOKYO_NIGHT.ui);
+  });
+
+  it('SVG が themes フォルダに無い', () => {
+    expect(errorOf(parseWith({ name: 'x', backdrop: { svg: 'x.svg' } }))).toBe(
+      'backdrop.svg: "x.svg" が themes フォルダにありません',
+    );
+    // 対応表を渡さなかったときも、無いものとして扱う
+    expect(errorOf(parse({ name: 'x', backdrop: { svg: 'neon-sunset.svg' } }))).toBe(
+      'backdrop.svg: "neon-sunset.svg" が themes フォルダにありません',
+    );
+  });
+
+  it('継承したキー（__proto__ など）を SVG として拾わない', () => {
+    for (const name of ['__proto__', 'constructor', 'toString']) {
+      expect(errorOf(parseWith({ name: 'x', backdrop: { svg: name } }))).toBe(
+        `backdrop.svg: "${name}" が themes フォルダにありません`,
+      );
+    }
+  });
+
+  it.each([['sub/a.svg'], ['sub\\a.svg'], ['..'], ['../a.svg'], ['C:\\a.svg'], ['/a.svg']])(
+    'backdrop.svg にパスの区切り（%s）があればエラー',
+    (svg) => {
+      expect(errorOf(parseWith({ name: 'x', backdrop: { svg } }, { [svg]: SVG }))).toBe(
+        `backdrop.svg: ${JSON.stringify(svg)} にはフォルダを含めず、themes フォルダ内のファイル名だけを書いてください`,
+      );
+    },
+  );
+
+  it('backdrop.svg が無い・文字列でない・空', () => {
+    expect(errorOf(parseWith({ name: 'x', backdrop: {} }))).toBe(
+      'backdrop.svg がありません。themes フォルダに置いた SVG のファイル名を書いてください',
+    );
+    expect(errorOf(parseWith({ name: 'x', backdrop: { svg: 1 } }))).toBe(
+      'backdrop.svg: 1 は SVG のファイル名（文字列）で書いてください',
+    );
+    expect(errorOf(parseWith({ name: 'x', backdrop: { svg: ' ' } }))).toBe(
+      'backdrop.svg: " " は SVG のファイル名（文字列）で書いてください',
+    );
+  });
+
+  it('backdrop / glass がオブジェクトでない', () => {
+    expect(errorOf(parseWith({ name: 'x', backdrop: 'neon-sunset.svg' }))).toBe(
+      'backdrop はオブジェクト（{ ... }）で書いてください',
+    );
+    expect(errorOf(parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg', glass: [1] } }))).toBe(
+      'backdrop.glass はオブジェクト（{ ... }）で書いてください',
+    );
+  });
+
+  it.each([[-1], [40.5], ['14'], [null]])('glass.blur: %s は範囲外としてエラー', (blur) => {
+    expect(
+      errorOf(parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg', glass: { blur } } })),
+    ).toBe(`backdrop.glass.blur: ${JSON.stringify(blur)} は 0〜40 の数で書いてください`);
+  });
+
+  it.each([[-0.1], [1.01], ['0.4'], [null]])('glass.opacity: %s は範囲外としてエラー', (opacity) => {
+    expect(
+      errorOf(parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg', glass: { opacity } } })),
+    ).toBe(`backdrop.glass.opacity: ${JSON.stringify(opacity)} は 0〜1 の数で書いてください`);
+  });
+
+  it('glass.tint が色でない', () => {
+    expect(
+      errorOf(
+        parseWith({ name: 'x', backdrop: { svg: 'neon-sunset.svg', glass: { tint: 'navy' } } }),
+      ),
+    ).toBe(
+      'backdrop.glass.tint: "navy" は色として読めません（#rgb か #rrggbb で書いてください）',
+    );
+  });
+});

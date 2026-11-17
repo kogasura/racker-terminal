@@ -161,7 +161,7 @@ export function buildFavorite(p: {
   args: string[];
   env: Record<string, string>;
   defaultTabTitle: string;
-  /** ターミナルの配色。空文字 = アプリの設定に従う */
+  /** テーマ。空文字 = アプリの設定に従う */
   themeId: string;
   launchClaude: boolean;
   bypassPermissions: boolean;
@@ -537,9 +537,10 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
             </label>
 
             <label className="dialog-field">
-              <span className="dialog-label">ターミナルの配色</span>
+              <span className="dialog-label">テーマ</span>
               <select
                 className="dialog-input"
+                aria-label="テーマ"
                 value={themeId}
                 onChange={(e) => setThemeId(e.target.value)}
               >
@@ -547,8 +548,8 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 <ThemeOptionGroups options={themeOptions} value={themeId} />
               </select>
               <small className="dialog-hint">
-                このお気に入りから開いたタブだけ、ターミナル部分の配色を変えます。
-                変更は次に開くタブから効きます。
+                このお気に入りから開いたタブを表示している間、窓全体（配色と背景）を
+                このテーマにします。変更は次に開くタブから効きます。
               </small>
             </label>
 

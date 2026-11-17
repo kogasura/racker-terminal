@@ -12,6 +12,8 @@
   flex-shrink: 0;
   background: var(--title-bar-bg, rgba(26, 27, 38, 0.95));
   border-top: 1px solid var(--panel-divider);
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
+  backdrop-filter: blur(var(--rk-glass-blur, 0px));
   color: var(--status-bar-fg);
   font-size: 11px;
   line-height: 1;

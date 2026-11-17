@@ -4,6 +4,7 @@ import { DragDropProvider } from './components/DragDropProvider';
 import { TitleBar } from './components/TitleBar';
 import { TerminalPaneContainer } from './components/TerminalPaneContainer';
 import { StatusBar } from './components/StatusBar';
+import { BackdropLayer } from './components/BackdropLayer';
 import { useFileDropToTerminal } from './hooks/useFileDropToTerminal';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import './styles/variables.css';
@@ -23,6 +24,8 @@ function App() {
 
   return (
     <div className="app-root">
+      {/* 背景付きのテーマの動く背景。最背面に敷き、背景の無いテーマでは何も描かない */}
+      <BackdropLayer />
       <TitleBar />
       <div className="app-body">
         {/* D&D は Sidebar と TabBar をまたぐため、両方を包む位置に DndContext を置く

@@ -3,11 +3,13 @@
  *
  * - `--rk-*`: 色トークン 22 個（ui の 19 個 + appearance から決める hoverTint / scrim / shadow）
  * - 透明度を掛けた背景: `--sidebar-bg` など。variables.css の既定値と同じ `rgba(r, g, b, a)` 形式
- * - `--bg-alpha`: 透明度そのもの
+ * - `--bg-alpha`: 透明度そのもの（glass のあるテーマでは 1）
+ * - `--rk-glass-blur`: すりガラスのぼかし（glass の無いテーマでは 0px）
  *
  * @module theme/cssVars
  */
 
+import { glassSurfaces } from './builtinThemes';
 import type { ThemeAppearance, ThemeDefinition, UiPalette } from './types';
 
 /** ui のキーと CSS 変数名の対応。変数名は variables.css と一致させる。 */
@@ -59,9 +61,20 @@ function rgba(hex: string, alpha: number): string {
 }
 
 /**
+ * 背景付きのテーマで、ターミナルの面に使う最低の濃さ。
+ * ターミナルは文字が読めることを優先し、glass.opacity がこれより薄くてもこの濃さにする。
+ */
+export const TERMINAL_VEIL_MIN = 0.72;
+
+/**
  * テーマと透明度から CSS 変数一式を作る。
+ *
+ * glass のあるテーマ（背景付き）では、背景の絵が下地になるため透明度 (alpha) は使わない。
+ * パネルは glass.tint から作った面の色を glass.opacity で重ね（すりガラス）、
+ * ターミナルの面は max(glass.opacity, TERMINAL_VEIL_MIN) の濃さにする。
+ *
  * @param theme - 適用するテーマ（色は `#rrggbb`）
- * @param alpha - 背景の透明度（設定の transparency。1 で不透明）
+ * @param alpha - 背景の透明度（設定の transparency。1 で不透明）。glass のあるテーマでは使わない
  */
 export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -69,13 +82,30 @@ export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<stri
     vars[UI_VAR_NAMES[key]] = theme.ui[key];
   }
   Object.assign(vars, APPEARANCE_VARS[theme.appearance]);
-
-  vars['--bg-alpha'] = String(alpha);
-  vars['--sidebar-bg'] = rgba(theme.ui.bgSidebar, alpha);
-  vars['--sidebar-bg-elevated'] = rgba(theme.ui.bgElevated, alpha);
-  vars['--group-header-bg'] = rgba(theme.ui.bg, alpha);
-  vars['--title-bar-bg'] = rgba(theme.ui.bg, alpha);
-  vars['--terminal-bg'] = rgba(theme.terminal.background, alpha);
   vars['--crashed-overlay-bg'] = rgba(theme.ui.danger, CRASHED_OVERLAY_ALPHA);
+
+  const glass = theme.glass;
+  if (glass === undefined) {
+    vars['--bg-alpha'] = String(alpha);
+    vars['--sidebar-bg'] = rgba(theme.ui.bgSidebar, alpha);
+    vars['--sidebar-bg-elevated'] = rgba(theme.ui.bgElevated, alpha);
+    vars['--group-header-bg'] = rgba(theme.ui.bg, alpha);
+    vars['--title-bar-bg'] = rgba(theme.ui.bg, alpha);
+    vars['--terminal-bg'] = rgba(theme.terminal.background, alpha);
+    vars['--rk-glass-blur'] = '0px';
+    return vars;
+  }
+
+  const surfaces = glassSurfaces(glass.tint, theme.appearance);
+  vars['--bg-alpha'] = '1';
+  vars['--sidebar-bg'] = rgba(surfaces.bgSidebar, glass.opacity);
+  vars['--sidebar-bg-elevated'] = rgba(surfaces.bgElevated, glass.opacity);
+  vars['--group-header-bg'] = rgba(surfaces.bg, glass.opacity);
+  vars['--title-bar-bg'] = rgba(surfaces.bg, glass.opacity);
+  vars['--terminal-bg'] = rgba(
+    theme.terminal.background,
+    Math.max(glass.opacity, TERMINAL_VEIL_MIN),
+  );
+  vars['--rk-glass-blur'] = `${glass.blur}px`;
   return vars;
 }

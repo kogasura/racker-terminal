@@ -131,7 +131,8 @@ Passive View の条件を満たせないものが 1 種類だけあります。*
 | `features/tabs/` | タブ UI の View モデルとコマンド、D&D、キーコマンドの裁定。タブのデータ（`groups` / `tabs` / `favorites`）はまだ store |
 | `features/settings/` `features/terminalUpkeep/` `features/prStatus/` `features/notifications/` `features/claudeSessions/` `features/bootstrap/` `features/launch/` | 副作用だけを持つ Root（状態・イベントなし） |
 | `features/terminalLaunch/` | 起動シーケンスの決定。`TerminalPane` から判断を外に出すためのもの |
-| `features/theme/` | 完了。自作テーマの読み込み状況を Mediator が持つ。選んだテーマ ID は設定の一部なので store のまま。CSS 変数の適用は Root、タブごとのテーマの解決は `viewModel.ts` の純関数。`TerminalPane` は生成時のカタログを購読しない参照（`useThemeCatalogRef`）で読む。store 参照ではないので、下の 7 箇所には数えない |
+| `features/theme/` | 完了。自作テーマ（JSON と背景の SVG）の読み込み状況を Mediator が持つ。選んだテーマ ID は設定の一部なので store のまま。窓に当てるテーマ（試しに表示 → アクティブなタブの上書き → アプリの設定）とタブごとのテーマの解決は `viewModel.ts` の純関数で、CSS 変数の適用は Root。Root はアクティブなタブの上書きとエージェントの状態を store から読み、窓の背景を `useBackdropView` で配る。`TerminalPane` は生成時のカタログを購読しない参照（`useThemeCatalogRef`）で読む。store 参照ではないので、下の 7 箇所には数えない |
+| `components/BackdropLayer` | 窓の動く背景。sandbox した iframe の中の文書という命令的なリソースを世話するので、`TerminalPane` と同じ例外にあたる。描く SVG・止めるか・連動の値は View モデル（`useBackdropView` とステータスバーの Claude の情報）から受け取り、自分では判断しない。store 参照は 0 |
 
 **移行は一巡した。** 残る課題は「タブのデータ自体を store から Mediator へ移すか」で、
 これは別の判断（永続化・migrate をどう扱うか）を伴うため、いまは store のままにしてある。

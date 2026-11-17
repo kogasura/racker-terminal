@@ -13,6 +13,32 @@
   overflow: hidden;
 }
 
+/* 動く背景 (BackdropLayer)。画面全体の最背面に敷き、操作は素通しする。
+   z-index: -1 で、どのパネルよりも後ろ (html / body の透明な下地の上) に描く。 */
+.backdrop-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 背景 1 枚。切り替えでは新しい 1 枚を上に重ね、読み込めたら 300ms でフェードインする。
+   下の 1 枚はフェードが終わるまで不透明のまま残す (透明な窓の下地を見せないため)。 */
+.backdrop-layer__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.backdrop-layer__frame--shown {
+  opacity: 1;
+}
+
 .app-body {
   flex: 1;
   display: flex;
@@ -39,6 +65,8 @@
   height: 32px;
   background: var(--title-bar-bg, rgba(26, 27, 38, 0.95));
   border-bottom: 1px solid var(--panel-divider);
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
+  backdrop-filter: blur(var(--rk-glass-blur, 0px));
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;

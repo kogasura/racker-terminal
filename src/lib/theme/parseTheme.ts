@@ -3,7 +3,8 @@
  *
  * - 書かれたキーだけ上書きする。書かれていない色は appearance に応じたベース
  *   （dark は Tokyo Night、light は Racker Paper）から補う。
- * - 未知のキー（第 2 段の `effect` など）は無視する。古い版で新しいファイルを読んでも壊れない。
+ * - 未知のキーは無視する。古い版で新しいファイルを読んでも壊れない。
+ * - `backdrop.svg` は themes フォルダの SVG のファイル名。中身は呼び出し側が渡す対応表から引く。
  * - 値が読めないキーが 1 つでもあればファイル全体を無効にし、直せるよう具体的な理由を返す。
  *
  * I/O は持たない純関数。ファイルの読み込みは Rust 側（list_user_themes）が行う。
@@ -12,7 +13,14 @@
  */
 
 import { RACKER_PAPER, TOKYO_NIGHT } from './builtinThemes';
-import type { TerminalPalette, ThemeAppearance, ThemeDefinition, UiPalette } from './types';
+import type {
+  TerminalPalette,
+  ThemeAppearance,
+  ThemeBackdrop,
+  ThemeDefinition,
+  ThemeGlass,
+  UiPalette,
+} from './types';
 
 export type ParseThemeResult =
   | { ok: true; theme: ThemeDefinition }
@@ -23,6 +31,12 @@ const NAME_MAX_LENGTH = 40;
 
 const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
+/** glass を省略したときの値。tint の既定は ui.bg。 */
+const DEFAULT_GLASS_BLUR = 14;
+const DEFAULT_GLASS_OPACITY = 0.4;
+/** glass.blur の上限（px）。強いぼかしは描画が重くなる。 */
+const GLASS_BLUR_MAX = 40;
+
 type JsonObject = Record<string, unknown>;
 
 /** 検証に失敗したことを表す。メッセージはそのまま設定画面に出す。 */
@@ -32,10 +46,16 @@ class ThemeFileError extends Error {}
  * テーマファイルの中身を検証して ThemeDefinition にする。
  * @param fileName - themes フォルダ内のファイル名（例: `sunset.json`）。ID は `user:<stem>` になる
  * @param content - ファイルの中身（JSON 文字列）
+ * @param svgFiles - themes フォルダの SVG のファイル名 → 中身。`backdrop.svg` をここから引く。
+ *   省略すると空とみなす（backdrop の無いテーマは従来どおり読める）
  */
-export function parseThemeFile(fileName: string, content: string): ParseThemeResult {
+export function parseThemeFile(
+  fileName: string,
+  content: string,
+  svgFiles: Readonly<Record<string, string>> = {},
+): ParseThemeResult {
   try {
-    return { ok: true, theme: buildTheme(fileName, content) };
+    return { ok: true, theme: buildTheme(fileName, content, svgFiles) };
   } catch (e) {
     if (e instanceof ThemeFileError) return { ok: false, fileName, error: e.message };
     // 想定外の失敗でも 1 ファイルの問題に留める。投げると読み込み全体が止まる。
@@ -44,7 +64,11 @@ export function parseThemeFile(fileName: string, content: string): ParseThemeRes
   }
 }
 
-function buildTheme(fileName: string, content: string): ThemeDefinition {
+function buildTheme(
+  fileName: string,
+  content: string,
+  svgFiles: Readonly<Record<string, string>>,
+): ThemeDefinition {
   const root = parseRoot(content);
   const name = readName(root.name);
   const appearance = readAppearance(root.appearance);
@@ -60,7 +84,17 @@ function buildTheme(fileName: string, content: string): ThemeDefinition {
   };
   const terminal = mergePalette<TerminalPalette>('terminal', terminalBase, terminalInput);
 
-  return { id: `user:${stemOf(fileName)}`, name, appearance, source: 'user', ui, terminal };
+  const theme: ThemeDefinition = {
+    id: `user:${stemOf(fileName)}`,
+    name,
+    appearance,
+    source: 'user',
+    ui,
+    terminal,
+  };
+  if (root.backdrop === undefined) return theme;
+  const { backdrop, glass } = readBackdrop(root.backdrop, svgFiles, ui.bg);
+  return { ...theme, backdrop, glass };
 }
 
 /**
@@ -126,6 +160,78 @@ function readSection(root: JsonObject, key: 'ui' | 'terminal'): JsonObject {
   if (value === undefined) return {};
   if (!isObject(value)) {
     throw new ThemeFileError(`${key} はオブジェクト（{ ... }）で書いてください`);
+  }
+  return value;
+}
+
+/**
+ * backdrop: { svg, glass? } を読む。
+ * svg はファイル名だけを受け付け（フォルダを辿らせない）、svgFiles から中身を引く。
+ * glass はキーごとに省略でき、省略したキーは既定値（blur 14・tint は ui.bg・opacity 0.4）になる。
+ */
+function readBackdrop(
+  value: unknown,
+  svgFiles: Readonly<Record<string, string>>,
+  uiBg: string,
+): { backdrop: ThemeBackdrop; glass: ThemeGlass } {
+  if (!isObject(value)) {
+    throw new ThemeFileError('backdrop はオブジェクト（{ ... }）で書いてください');
+  }
+  const fileName = readSvgFileName(value.svg);
+  // __proto__ などの継承したキーを拾わないよう、自前のキーだけを見る
+  if (!Object.prototype.hasOwnProperty.call(svgFiles, fileName)) {
+    throw new ThemeFileError(
+      `backdrop.svg: ${describeValue(fileName)} が themes フォルダにありません`,
+    );
+  }
+  const backdrop: ThemeBackdrop = { kind: 'user', fileName, svg: svgFiles[fileName] };
+  return { backdrop, glass: readGlass(value.glass, uiBg) };
+}
+
+/** backdrop.svg を読む。themes フォルダ内のファイル名だけを受け付ける。 */
+function readSvgFileName(svgName: unknown): string {
+  if (svgName === undefined) {
+    throw new ThemeFileError(
+      'backdrop.svg がありません。themes フォルダに置いた SVG のファイル名を書いてください',
+    );
+  }
+  if (typeof svgName !== 'string' || svgName.trim() === '') {
+    throw new ThemeFileError(
+      `backdrop.svg: ${describeValue(svgName)} は SVG のファイル名（文字列）で書いてください`,
+    );
+  }
+  if (svgName.includes('/') || svgName.includes('\\') || svgName.includes('..')) {
+    throw new ThemeFileError(
+      `backdrop.svg: ${describeValue(svgName)} にはフォルダを含めず、themes フォルダ内のファイル名だけを書いてください`,
+    );
+  }
+  return svgName;
+}
+
+/** backdrop.glass を読む。省略したキーは既定値（tint は ui.bg）。 */
+function readGlass(value: unknown, uiBg: string): ThemeGlass {
+  const input = value === undefined ? {} : value;
+  if (!isObject(input)) {
+    throw new ThemeFileError('backdrop.glass はオブジェクト（{ ... }）で書いてください');
+  }
+  return {
+    blur: readRange('backdrop.glass.blur', input.blur, DEFAULT_GLASS_BLUR, 0, GLASS_BLUR_MAX),
+    tint: input.tint === undefined ? uiBg : normalizeColor('backdrop.glass.tint', input.tint),
+    opacity: readRange('backdrop.glass.opacity', input.opacity, DEFAULT_GLASS_OPACITY, 0, 1),
+  };
+}
+
+/** min〜max（両端を含む）の数を読む。省略なら fallback。 */
+function readRange(
+  path: string,
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new ThemeFileError(`${path}: ${describeValue(value)} は ${min}〜${max} の数で書いてください`);
   }
   return value;
 }

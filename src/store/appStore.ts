@@ -18,6 +18,7 @@ const defaultSettings: Settings = {
   fontSize: 12.5,
   scrollback: 10000,
   transparency: 1.0,
+  backdropMotion: true,
 };
 
 /**

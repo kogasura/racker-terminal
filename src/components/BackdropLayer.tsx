@@ -8,7 +8,10 @@
  *   直接書き込む（applyBackdropSignals）。srcdoc を差し替えないので、アニメーションが
  *   最初からやり直しにならない。
  * - テーマが変わったら、新しい iframe を上に重ね、読み込めたら 300ms でフェードインする。
- *   下の 1 枚はフェードが終わるまで残す（窓は透明なので、両方を薄めると下地が透けるため）。
+ *   下の 1 枚はフェードが終わるまで不透明のまま残す（窓は透明なので、両方を薄めると
+ *   下地が透けるため）。フェードの途中で切り替えても、フェードを終えた 1 枚を下地に残す。
+ * - 見えている背景に戻すときは iframe を作り直さない（アニメーションが最初からやり直しに
+ *   ならないように）。
  * - 背景の無いテーマ（配色だけ）では何も描かない。
  *
  * 描く SVG と止めるか・エージェントの状態は ThemeRoot から、コンテキストの使用率は
@@ -18,7 +21,7 @@
  * （src/architecture/README.md）。判断はしない（何を描くか・止めるかは View モデルが決める）。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefCallback } from 'react';
 import { useStatusBarView } from '../features/claudeStatus/ClaudeStatusRoot';
 import { useBackdropView } from '../features/theme/ThemeRoot';
 import { backdropContext } from '../features/theme/viewModel';
@@ -57,33 +60,83 @@ interface Frame {
   readonly doc: string;
   /** 読み込めたか。読み込めたらフェードインする */
   readonly loaded: boolean;
+  /** フェードインが終わったか（不透明になったか）。下地に残すのはこれが立った 1 枚 */
+  readonly settled: boolean;
 }
 
 function newFrame(id: number, svg: string): Frame {
-  return { id, svg, doc: buildBackdropDocument(svg), loaded: false };
+  return { id, svg, doc: buildBackdropDocument(svg), loaded: false, settled: false };
+}
+
+/** 並んでいる iframe と、最後に振った id。 */
+interface FrameStack {
+  readonly frames: readonly Frame[];
+  /**
+   * 最後に振った id。切り詰めて外した iframe の id を使い回さないために持つ
+   * (外した 1 枚のフェードのタイマーが、新しい 1 枚に効いてしまうため)
+   */
+  readonly lastId: number;
+}
+
+function initialStack(svg: string | null): FrameStack {
+  return svg === null ? { frames: [], lastId: 0 } : { frames: [newFrame(1, svg)], lastId: 1 };
+}
+
+/** 条件に合う最後の 1 枚の位置。無ければ -1。 */
+function lastIndexOf(frames: readonly Frame[], match: (frame: Frame) => boolean): number {
+  for (let i = frames.length - 1; i >= 0; i--) {
+    if (match(frames[i])) return i;
+  }
+  return -1;
 }
 
 /**
  * 次に並べる iframe。描く SVG が変わったときだけ新しい配列を返し、変わらなければ null。
- * 新しい 1 枚は、いま見えている 1 枚（読み込み済みの最後）の上に重ねる。
- * 読み込み中だった 1 枚は捨てる（切り替えを続けて押しても、重ねるのは 2 枚まで）。
+ *
+ * - 描きたい SVG の読み込み済みの 1 枚がもう並んでいれば、作り直さずにそこまで切り詰める
+ *   （見えている背景に戻すとき。アニメーションを続きから見せる）。
+ * - そうでなければ、新しい 1 枚を下地の上に重ねる。下地はフェードを終えた最後の 1 枚。
+ *   まだ 1 枚もフェードを終えていなければ、フェード中のもの（読み込み済み）を残す。
+ *   読み込み中だった 1 枚は捨てる（切り替えを続けて押しても、重なりすぎないように）。
  */
-function nextFrames(frames: readonly Frame[], svg: string | null): readonly Frame[] | null {
-  if (svg === null) return frames.length === 0 ? null : [];
+function nextFrames(stack: FrameStack, svg: string | null): FrameStack | null {
+  const { frames, lastId } = stack;
+  if (svg === null) return frames.length === 0 ? null : { frames: [], lastId };
   const top = frames[frames.length - 1];
   if (top?.svg === svg) return null;
-  const shown = frames.filter((frame) => frame.loaded).slice(-1);
-  return [...shown, newFrame((top?.id ?? 0) + 1, svg)];
+  const reuse = lastIndexOf(frames, (frame) => frame.loaded && frame.svg === svg);
+  if (reuse >= 0) return { frames: frames.slice(0, reuse + 1), lastId };
+  const settled = lastIndexOf(frames, (frame) => frame.settled);
+  const base = settled >= 0 ? [frames[settled]] : frames.filter((frame) => frame.loaded);
+  return { frames: [...base, newFrame(lastId + 1, svg)], lastId: lastId + 1 };
+}
+
+/**
+ * フェードを終えた 1 枚に印を付け、その下の (もう見えない) iframe を外す。
+ * 該当する 1 枚が無ければ (フェード中に外された) 何もしない。
+ */
+function settleFrame(stack: FrameStack, id: number): FrameStack {
+  const index = stack.frames.findIndex((frame) => frame.id === id);
+  if (index < 0) return stack;
+  const frames = stack.frames
+    .slice(index)
+    .map((frame) => (frame.id === id ? { ...frame, settled: true } : frame));
+  return { ...stack, frames };
+}
+
+/** 読み込めた 1 枚に印を付ける。 */
+function loadFrame(stack: FrameStack, id: number): FrameStack {
+  const frames = stack.frames.map((frame) => (frame.id === id ? { ...frame, loaded: true } : frame));
+  return { ...stack, frames };
 }
 
 /** 描く SVG と連動の値から iframe を並べる。テスト用に export する。 */
 export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesProps) {
-  const [frames, setFrames] = useState<readonly Frame[]>(() =>
-    svg === null ? [] : [newFrame(1, svg)],
-  );
+  const [stack, setStack] = useState<FrameStack>(() => initialStack(svg));
   // 描く SVG が変わったら、描画中に並びを作り直す (props から導く状態)
-  const next = nextFrames(frames, svg);
-  if (next !== null) setFrames(next);
+  const next = nextFrames(stack, svg);
+  if (next !== null) setStack(next);
+  const { frames } = stack;
 
   const iframes = useRef(new Map<number, HTMLIFrameElement>());
   const signals = useRef({ paused, context, agent });
@@ -97,23 +150,47 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
     }
   }, [paused, context, agent]);
 
-  // 新しい 1 枚のフェードインが終わったら、下の古い 1 枚を外す
-  const top = frames[frames.length - 1];
-  const fadeDone = top?.loaded === true && frames.length > 1;
+  // フェードインの終わりを待つタイマー (iframe ごと)。外されていても、終わったら何もしない
+  const fadeTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   useEffect(() => {
-    if (!fadeDone || top === undefined) return;
-    const timer = setTimeout(() => {
-      setFrames((current) => current.filter((frame) => frame.id >= top.id));
-    }, BACKDROP_FADE_MS);
-    return () => clearTimeout(timer);
-  }, [fadeDone, top]);
+    const timers = fadeTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
 
   const handleLoad = useCallback((id: number) => {
     const doc = iframes.current.get(id)?.contentDocument;
     if (doc) applyBackdropSignals(doc, signals.current);
-    setFrames((current) =>
-      current.map((frame) => (frame.id === id ? { ...frame, loaded: true } : frame)),
+    setStack((current) => loadFrame(current, id));
+    // フェードインが終わったら不透明になったと印を付け、下の古い iframe を外す
+    if (fadeTimers.current.has(id)) return;
+    fadeTimers.current.set(
+      id,
+      setTimeout(() => {
+        fadeTimers.current.delete(id);
+        setStack((current) => settleFrame(current, id));
+      }, BACKDROP_FADE_MS),
     );
+  }, []);
+
+  // iframe の ref は id ごとに 1 つ覚えておく。描画のたびに作り直すと、React が古い ref を
+  // null で、新しい ref を要素で呼び直すため
+  const refCallbacks = useRef(new Map<number, RefCallback<HTMLIFrameElement>>());
+  const iframeRef = useCallback((id: number): RefCallback<HTMLIFrameElement> => {
+    const cached = refCallbacks.current.get(id);
+    if (cached) return cached;
+    const callback: RefCallback<HTMLIFrameElement> = (el) => {
+      if (el) {
+        iframes.current.set(id, el);
+      } else {
+        iframes.current.delete(id);
+        if (refCallbacks.current.get(id) === callback) refCallbacks.current.delete(id);
+      }
+    };
+    refCallbacks.current.set(id, callback);
+    return callback;
   }, []);
 
   if (frames.length === 0) return null;
@@ -122,10 +199,7 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
       {frames.map((frame) => (
         <iframe
           key={frame.id}
-          ref={(el) => {
-            if (el) iframes.current.set(frame.id, el);
-            else iframes.current.delete(frame.id);
-          }}
+          ref={iframeRef(frame.id)}
           className={`backdrop-layer__frame${frame.loaded ? ' backdrop-layer__frame--shown' : ''}`}
           title="背景"
           sandbox="allow-same-origin"

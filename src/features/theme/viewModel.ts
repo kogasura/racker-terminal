@@ -56,12 +56,23 @@ function toOption(theme: ThemeDefinition): ThemeOption {
   };
 }
 
-export function selectThemeView(state: ThemeState): ThemeViewModel {
+/**
+ * 選択肢とカタログを作るのに要る、読み込み状況の値。
+ * 試しに表示 (previewThemeId) は含めない。カードを押すたびにカタログを作り直さないため。
+ */
+export interface ThemeLoadSnapshot {
+  readonly status: ThemeState['status'];
+  readonly themes: ThemeState['themes'];
+  /** 読み込めなかったファイル。idle (まだ読みに行っていない) では無い */
+  readonly errors?: readonly ThemeFileError[];
+}
+
+export function selectThemeView(state: ThemeLoadSnapshot): ThemeViewModel {
   // idle でもキャッシュ済みのテーマはカタログに入れる (起動直後のちらつき対策)
   const catalog = buildCatalog([...state.themes]);
   return {
     options: catalog.map(toOption),
-    errors: state.status === 'idle' ? [] : [...state.errors],
+    errors: state.status === 'idle' ? [] : [...(state.errors ?? [])],
     loading: state.status !== 'loaded',
     catalog,
   };
@@ -126,21 +137,42 @@ export function resolveTabTheme(
   return override ?? resolveTheme(catalog, appThemeId);
 }
 
+/** 試しに表示しているテーマを、どのタブのターミナルに当てるか。 */
+export interface RuntimePreview {
+  /** アクティブなタブ。試しに表示のテーマはこのタブのターミナルにだけ当てる */
+  readonly activeTabId: string | null;
+  /** 設定ダイアログで試しに表示しているテーマ。試していなければ null */
+  readonly previewThemeId: string | null;
+}
+
 /**
  * 開いている各ターミナルに当てるテーマを決める。
  * runtime はあるのにタブが無い (閉じている途中など) ときは、アプリの設定のテーマにする。
+ *
+ * 試しに表示の間は、アクティブなタブのターミナルにだけ試しのテーマを当てる。窓
+ * (selectWindowTheme) と同じテーマにそろえるため。画面に見えるターミナルはアクティブな
+ * タブだけなので、ほかのタブは元のテーマのままにしておく。試しのテーマがカタログに
+ * 無ければ、試していないときと同じに解決する (selectWindowTheme と同じ)。
  * @param entries - tabId と runtime の組 (terminalRegistry の getAllRuntimeEntries)
  * @param tabs - いまのタブ。tabId で引き、上書き (themeId) を見る
+ * @param preview - 試しに表示の状態。省略したら試していないものとして扱う
  */
 export function resolveRuntimeThemes<R>(
   entries: readonly (readonly [string, R])[],
   tabs: Readonly<Record<string, { readonly themeId?: string } | undefined>>,
   catalog: readonly ThemeDefinition[],
   appThemeId: string,
+  preview: RuntimePreview = { activeTabId: null, previewThemeId: null },
 ): [R, ThemeDefinition][] {
+  const previewTheme =
+    preview.previewThemeId === null
+      ? undefined
+      : catalog.find((theme) => theme.id === preview.previewThemeId);
   return entries.map(([tabId, runtime]) => [
     runtime,
-    resolveTabTheme(catalog, tabs[tabId]?.themeId, appThemeId),
+    previewTheme !== undefined && tabId === preview.activeTabId
+      ? previewTheme
+      : resolveTabTheme(catalog, tabs[tabId]?.themeId, appThemeId),
   ]);
 }
 

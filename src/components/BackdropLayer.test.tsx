@@ -126,6 +126,71 @@ describe('BackdropFrames', () => {
     expect(srcdocs).toEqual([buildBackdropDocument(SVG_A), buildBackdropDocument(SVG_C)]);
   });
 
+  it('フェード中に切り替えても、フェードを終えた不透明な下地が残る', () => {
+    vi.useFakeTimers();
+    const SVG_C = '<svg xmlns="http://www.w3.org/2000/svg"><rect id="c"/></svg>';
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+    const [first] = frames(container);
+    load(first);
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+
+    // B が読み込めてフェードしている途中で C へ切り替える
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+    load(frames(container)[1]);
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS / 2);
+    });
+    rerender(<BackdropFrames {...BASE} svg={SVG_C} />);
+
+    const [base, top] = frames(container);
+    expect(frames(container)).toHaveLength(2);
+    expect(base).toBe(first);
+    expect(base.classList.contains('backdrop-layer__frame--shown')).toBe(true);
+    expect(top.getAttribute('srcdoc')).toBe(buildBackdropDocument(SVG_C));
+
+    // 外した B のフェードが終わる時刻を過ぎても、読み込み中の C の下の A は外さない
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+    expect(frames(container)).toEqual([first, top]);
+
+    load(top);
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+    expect(frames(container)).toEqual([top]);
+  });
+
+  it('見えている背景に戻すと、iframe を作り直さない', () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+    const [first] = frames(container);
+    load(first);
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+
+    // 読み込み中の B から戻す
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+    rerender(<BackdropFrames {...BASE} svg={SVG_A} />);
+    expect(frames(container)).toEqual([first]);
+
+    // フェード中の B から戻す
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+    load(frames(container)[1]);
+    rerender(<BackdropFrames {...BASE} svg={SVG_A} />);
+    expect(frames(container)).toEqual([first]);
+    expect(first.classList.contains('backdrop-layer__frame--shown')).toBe(true);
+
+    // 外した B のフェードのタイマーが来ても、A はそのまま
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+    expect(frames(container)).toEqual([first]);
+  });
+
   it('背景の無いテーマに切り替えたら何も描かない', () => {
     const { container, rerender } = render(<BackdropFrames {...BASE} />);
     load(frames(container)[0]);

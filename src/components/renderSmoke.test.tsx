@@ -13,7 +13,7 @@ import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
 import { SettingsRoot } from '../features/settings/SettingsRoot';
 import { ThemeRoot, useThemeCatalogRef, type ThemeCatalogRef } from '../features/theme/ThemeRoot';
 import type { EffectDeps as ThemeEffectDeps } from '../features/theme/effects';
-import { WINDOW_THEME_CACHE_KEY } from '../features/theme/themeCache';
+import { USER_THEMES_CACHE_KEY, WINDOW_THEME_CACHE_KEY } from '../features/theme/themeCache';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
@@ -634,6 +634,29 @@ describe('コンポーネントの操作', () => {
     );
     await act(async () => cancel!.click());
     expect(localStorage.getItem(WINDOW_THEME_CACHE_KEY)).toBe('tokyo-night');
+  });
+
+  it('SettingsDialog: 試しに表示しても、自作テーマのキャッシュは書き直さない', async () => {
+    localStorage.clear();
+    renderSettings(() => {});
+    await act(async () => {});
+    // 読み込みが終わった時点で 1 回は保存している
+    expect(localStorage.getItem(USER_THEMES_CACHE_KEY)).not.toBeNull();
+
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    try {
+      await act(async () => themeCard('Dracula')!.click());
+      await act(async () => themeCard('Nord')!.click());
+      const cancel = [...document.body.querySelectorAll('button')].find(
+        (b) => b.textContent === 'キャンセル',
+      );
+      await act(async () => cancel!.click());
+
+      const userThemeWrites = setItem.mock.calls.filter(([key]) => key === USER_THEMES_CACHE_KEY);
+      expect(userThemeWrites).toEqual([]);
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   it('SettingsDialog: 試しに表示して Esc で閉じると、窓が元のテーマに戻る', async () => {

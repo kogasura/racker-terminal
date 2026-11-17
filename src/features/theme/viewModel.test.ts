@@ -100,12 +100,7 @@ describe('selectThemeView', () => {
   });
 
   it('再読み込み中は前回の結果を出しつつ、読み込み中扱い', () => {
-    const vm = selectThemeView({
-      status: 'loading',
-      themes: [sunset],
-      errors: [broken],
-      reloadQueued: false,
-    });
+    const vm = selectThemeView({ status: 'loading', themes: [sunset], errors: [broken] });
     expect(vm.options.map((o) => o.id)).toContain('user:sunset');
     expect(vm.errors).toEqual([broken]);
     expect(vm.loading).toBe(true);
@@ -204,6 +199,55 @@ describe('resolveRuntimeThemes', () => {
 
   it('runtime が無ければ空', () => {
     expect(resolveRuntimeThemes([], { a: {} }, catalog, 'nord')).toEqual([]);
+  });
+
+  it('試しに表示の間はアクティブなタブだけ試しのテーマになり、終えたら戻る', () => {
+    const dracula = BUILTIN_THEMES.find((t) => t.id === 'dracula')!;
+    const tabs = { a: { themeId: 'user:sunset' }, b: {} };
+    const entries: [string, string][] = [
+      ['a', 'rt-a'],
+      ['b', 'rt-b'],
+    ];
+
+    // アクティブなタブに上書きがあっても、試しのテーマを当てる (窓と同じ)
+    expect(
+      resolveRuntimeThemes(entries, tabs, catalog, 'nord', {
+        activeTabId: 'a',
+        previewThemeId: 'dracula',
+      }),
+    ).toEqual([
+      ['rt-a', dracula],
+      ['rt-b', nord],
+    ]);
+    expect(
+      resolveRuntimeThemes(entries, tabs, catalog, 'nord', {
+        activeTabId: 'b',
+        previewThemeId: 'dracula',
+      }),
+    ).toEqual([
+      ['rt-a', sunset],
+      ['rt-b', dracula],
+    ]);
+    // 試しに表示を終えたら元のテーマ
+    expect(
+      resolveRuntimeThemes(entries, tabs, catalog, 'nord', {
+        activeTabId: 'a',
+        previewThemeId: null,
+      }),
+    ).toEqual([
+      ['rt-a', sunset],
+      ['rt-b', nord],
+    ]);
+  });
+
+  it('試しのテーマがカタログに無ければ、試していないときと同じに解決する', () => {
+    const tabs = { a: { themeId: 'user:sunset' } };
+    expect(
+      resolveRuntimeThemes([['a', 'rt']], tabs, catalog, 'nord', {
+        activeTabId: 'a',
+        previewThemeId: 'user:deleted',
+      }),
+    ).toEqual([['rt', sunset]]);
   });
 });
 

@@ -9,6 +9,8 @@
  *      次回起動のちらつき対策に localStorage へ保存する（窓のテーマの ID も）
  *   3. 選択肢とエラーの一覧を `useThemeView()` で配る（設定ダイアログ・お気に入り
  *      ダイアログ・ターミナルの手入れが使う）
+ *   3a. 試しに表示しているテーマの ID を `useThemePreviewId()` で配る（ターミナルの手入れが、
+ *      アクティブなタブのターミナルにも窓と同じテーマを当てるのに使う）
  *   3b. 窓の背景（SVG・止めるか・エージェントの状態）を `useBackdropView()` で配る
  *      （BackdropLayer が使う）。起動直後は、設定の復元や themes フォルダの読み込みを待たずに
  *      前回の窓のテーマの背景を出す
@@ -64,6 +66,23 @@ export function useThemeView(): ThemeViewModel {
   const vm = useContext(ThemeViewContext);
   if (!vm) throw new Error('useThemeView は ThemeRoot の内側でしか使えません。');
   return vm;
+}
+
+/**
+ * 設定ダイアログで試しに表示しているテーマの ID（試していなければ null）。
+ * useThemeView と分けているのは、カードを押すたびに選択肢やカタログの利用者まで
+ * 描き直さないため。
+ */
+const ThemePreviewContext = createContext<string | null | undefined>(undefined);
+
+/**
+ * 試しに表示しているテーマの ID。ターミナルの手入れが、アクティブなタブのターミナルにも
+ * 窓と同じテーマを当てるのに使う。
+ */
+export function useThemePreviewId(): string | null {
+  const id = useContext(ThemePreviewContext);
+  if (id === undefined) throw new Error('useThemePreviewId は ThemeRoot の内側でしか使えません。');
+  return id;
 }
 
 /**
@@ -141,9 +160,11 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   }, [machine]);
 
   // 読み込みが終わったら、次回の起動のために自作テーマを覚えておく。
+  // 試しに表示では state の参照だけが変わるので、読み込み状況とテーマで見る
+  // (背景の SVG ごと書き出すので重い。カードを押すたびに走らせない)。
   useEffect(() => {
     if (state.status === 'loaded') saveUserThemesCache(state.themes);
-  }, [state]);
+  }, [state.status, state.themes]);
 
   // アクティブなタブの上書きとエージェントの状態。窓のテーマと背景の連動に使う。
   const activeTabThemeId = useAppStore((s) =>
@@ -157,7 +178,13 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   // 設定ダイアログで試しに表示しているテーマ (theme/preview-requested / theme/preview-ended)。
   const previewThemeId = state.previewThemeId ?? null;
 
-  const view = useMemo(() => selectThemeView(state), [state]);
+  // 試しに表示では作り直さない (カタログを作り直すと、全ターミナルにテーマを配り直すため)
+  const { status, themes } = state;
+  const errors = state.status === 'idle' ? undefined : state.errors;
+  const view = useMemo(
+    () => selectThemeView({ status, themes, errors }),
+    [status, themes, errors],
+  );
   // 描画中に差し替える。子の effect (ターミナルの生成) が同じコミットで読んでも最新になる。
   const catalogRef = useRef<readonly ThemeDefinition[]>(view.catalog);
   catalogRef.current = view.catalog;
@@ -195,7 +222,9 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
       <ThemeViewContext.Provider value={view}>
         <BackdropViewContext.Provider value={backdropView}>
           <ThemeCatalogRefContext.Provider value={catalogRef}>
-            {children}
+            <ThemePreviewContext.Provider value={previewThemeId}>
+              {children}
+            </ThemePreviewContext.Provider>
           </ThemeCatalogRefContext.Provider>
         </BackdropViewContext.Provider>
       </ThemeViewContext.Provider>

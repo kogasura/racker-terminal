@@ -3,6 +3,8 @@ import type { Tab } from '../types';
 import { useAppStore } from '../store/appStore';
 import { useEmit } from '../architecture/chain';
 import { useTabsView } from '../features/tabs/TabsRoot';
+import { useThemeView } from '../features/theme/ThemeRoot';
+import { resolveTabTheme } from '../features/theme/viewModel';
 import { tabCommandForKey } from '../features/tabs/keys';
 import type { TabsIntent } from '../features/tabs/events';
 import { computeClaudeLaunch, isStillSpawning } from '../features/terminalLaunch/launchPlan';
@@ -230,6 +232,8 @@ export const TerminalPane = memo(function TerminalPane({
   emitRef.current = emit;
   const suspendedRef = useRef(commandsSuspended);
   suspendedRef.current = commandsSuspended;
+  // 生成時の配色。生成後の差し替えは TerminalUpkeepRoot が全タブへ配る。
+  const { catalog: themeCatalog } = useThemeView();
 
   const divRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalRuntime | null>(null);
@@ -238,8 +242,9 @@ export const TerminalPane = memo(function TerminalPane({
 
   // 初回 mount [tabId]: acquireRuntime + setOnEvent + 必要なら startSpawn + cleanup
   useEffect(() => {
+    const initialTheme = resolveTabTheme(themeCatalog, tab.themeId, settings.theme);
     const runtime = acquireRuntime(tabId, () =>
-      createRuntime(divRef.current!, settings, tabId, {
+      createRuntime(divRef.current!, settings, tabId, initialTheme, {
         onLive: (ptyId) => setTabStatus(tabId, 'live', ptyId),
         // 編集中ガード: editingId === tabId のとき OSC タイトルを無視する
         isEditing: () => useAppStore.getState().editingId === tabId,

@@ -245,6 +245,12 @@ export interface Tab {
    * セキュリティ上の影響が大きいため、お気に入りごとの明示 opt-in (既定 false)。
    */
   bypassPermissions?: boolean;
+  /**
+   * このタブのターミナル部分だけに使うテーマ ID。undefined はアプリの設定 (Settings.theme) に従う。
+   * お気に入りの themeId を spawn 時にコピーする。効くのは xterm の配色と
+   * `.terminal-pane` の背景だけで、画面の枠はアプリのテーマのまま。永続化対象。
+   */
+  themeId?: string;
 }
 
 /**
@@ -325,6 +331,12 @@ export interface Favorite {
    * launchClaude=true のときのみ有効。既定 false。
    */
   bypassPermissions?: boolean;
+  /**
+   * このお気に入りから開いたタブのターミナル配色（テーマ ID）。
+   * undefined はアプリの設定に従う。spawn 時に Tab.themeId へコピーするので、
+   * 後から編集しても開いているタブには反映されない（shell / env と同じ扱い）。
+   */
+  themeId?: string;
 }
 
 /**
@@ -334,8 +346,13 @@ export interface Favorite {
  */
 export interface Settings {
   shell?: string;
-  /** 現時点は 'tokyo-night' 固定。Phase 3 でテーマ切替 UI を追加予定 */
-  theme: 'tokyo-night';
+  /**
+   * アプリ全体のテーマ ID。組み込みは `tokyo-night` などの固定値、
+   * themes フォルダの自作テーマは `user:<ファイル名の stem>`。既定は `'tokyo-night'`。
+   * 見つからない ID（ファイルを消したなど）は表示上 Tokyo Night にフォールバックするが、
+   * 値そのものは書き換えない（ファイルを戻せば元のテーマに戻る）。
+   */
+  theme: string;
   fontFamily: string;
   fontSize: number;
   scrollback: number;
@@ -447,6 +464,8 @@ export interface ClosedTab {
   claudeSeenAt?: number;
   /** 権限バイパス (--dangerously-skip-permissions) フラグを復元するため保存する。 */
   bypassPermissions?: boolean;
+  /** ターミナル配色の上書き (Tab.themeId) を復元するため保存する。 */
+  themeId?: string;
 }
 
 /**
@@ -456,7 +475,7 @@ export interface ClosedTab {
  *
  * Phase 4 A1 永続化 partialize 方針:
  * - Persist OFF（ランタイム状態）: activeTabId, lastActiveTabByGroup, editingId, tabs[*].status, tabs[*].ptyId, tabs[*].oscTitle, tabs[*].agentState, wslDistros
- * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, claudeSessionCwd, claudeSessionDistro, claudeSessionLive, claudeSeenAt, bypassPermissions}, favorites, settings, activeGroupId
+ * - Persist ON（復元対象）: groups, tabs[*].{id, groupId, userTitle, shell, cwd, args, env, launchClaude, claudeSessionId, claudeSessionCwd, claudeSessionDistro, claudeSessionLive, claudeSeenAt, bypassPermissions, themeId}, favorites, settings, activeGroupId
  */
 export interface AppState {
   /** グループの表示順序を保持する配列 */

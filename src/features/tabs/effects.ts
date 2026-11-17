@@ -122,7 +122,7 @@ const handlers: HandlerMap = {
   'favorite-tab': (state, effect) => {
     const tab = state.tabs[effect.tabId];
     if (!tab) return;
-    // 元タブの shell / cwd / args / env / userTitle を引き継いでお気に入りに登録する。
+    // 元タブの shell / cwd / args / env / userTitle / themeId を引き継いでお気に入りに登録する。
     // launchClaude / bypassPermissions も引き継ぐ: ここが抜けていたため、
     // Claude タブを「お気に入りに追加」すると自動起動しないお気に入りになっていた。
     state.addFavorite({
@@ -134,6 +134,8 @@ const handlers: HandlerMap = {
       launchClaude: tab.launchClaude || undefined,
       // 権限バイパスは Claude 自動起動が前提。FavoriteDialog の保存と同じ正規化を行う
       bypassPermissions: (tab.launchClaude && tab.bypassPermissions) || undefined,
+      // ターミナル配色の上書きも引き継ぐ。お気に入りから開き直したタブが同じ見た目になる
+      themeId: tab.themeId,
     });
   },
 

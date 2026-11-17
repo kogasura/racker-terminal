@@ -3538,7 +3538,102 @@ describe('persist migrate v6 → v7', () => {
     expect(() => opts.migrate!({ groups: [] }, 0)).not.toThrow();
   });
 
-  it('persist の version が 7 であること', () => {
-    expect(useAppStore.persist.getOptions().version).toBe(7);
+});
+
+// --- テーマ (themeId) ---
+//
+// お気に入りのターミナル配色の上書きは、spawn 時にタブへコピーし、閉じて戻す・複製・
+// 再起動のどれでも失われないこと。persist v8 は optional の追加だけなので、
+// v7 までの保存データ (theme: 'tokyo-night'、themeId なし) はそのまま読める。
+
+describe('テーマ (themeId)', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it('spawnFavorite がお気に入りの themeId をタブにコピーする', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({ title: 'Ember', themeId: 'racker-ember' });
+
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+
+    expect(useAppStore.getState().tabs[tabId!].themeId).toBe('racker-ember');
+  });
+
+  it('spawnFavorite: themeId の無いお気に入りからはアプリの設定に従うタブになる', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({ title: 'Plain' });
+
+    const tabId = useAppStore.getState().spawnFavorite(favId);
+
+    expect(useAppStore.getState().tabs[tabId!].themeId).toBeUndefined();
+  });
+
+  it('spawnAtPath: 既定お気に入りの themeId を引き継ぐ', () => {
+    useAppStore.getState().createGroup();
+    const favId = useAppStore.getState().addFavorite({ title: 'Ember', themeId: 'racker-ember' });
+    useAppStore.getState().setDefaultFavorite(favId);
+
+    const tabId = useAppStore.getState().spawnAtPath('C:\\work');
+
+    expect(useAppStore.getState().tabs[tabId].themeId).toBe('racker-ember');
+  });
+
+  it('duplicateTab: 複製先に themeId が残る', () => {
+    const groupId = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(groupId, { themeId: 'nord' });
+
+    const dupId = useAppStore.getState().duplicateTab(tabId);
+
+    expect(useAppStore.getState().tabs[dupId!].themeId).toBe('nord');
+  });
+
+  it('removeTab → restoreLastClosedTab: 閉じたタブを戻しても themeId が残る', () => {
+    const groupId = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(groupId, { themeId: 'user:sunset' });
+
+    useAppStore.getState().removeTab(tabId);
+    expect(useAppStore.getState().closedTabs[0].themeId).toBe('user:sunset');
+
+    const restoredId = useAppStore.getState().restoreLastClosedTab();
+    expect(useAppStore.getState().tabs[restoredId!].themeId).toBe('user:sunset');
+  });
+
+  it('partialize: tab.themeId が永続化対象に含まれる', () => {
+    const groupId = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(groupId, { themeId: 'dracula' });
+
+    const result = useAppStore.persist.getOptions().partialize!(
+      useAppStore.getState(),
+    ) as { tabs: Record<string, { themeId?: string }> };
+
+    expect(result.tabs[tabId].themeId).toBe('dracula');
+  });
+
+  it('persist の version が 8 であること', () => {
+    expect(useAppStore.persist.getOptions().version).toBe(8);
+  });
+
+  it('v7 の保存データ (theme: tokyo-night、themeId なし) は変換せずそのまま読める', () => {
+    const opts = useAppStore.persist.getOptions();
+    const saved = {
+      groups: [{ id: 'g1', title: 'G1', collapsed: false, tabIds: ['t1'] }],
+      tabs: { t1: { id: 't1', groupId: 'g1', userTitle: 'T', launchClaude: true, claudeSessionId: 's' } },
+      favorites: [{ id: 'f1', title: 'F', shell: 'nu' }],
+      settings: {
+        theme: 'tokyo-night',
+        fontFamily: 'monospace',
+        fontSize: 12.5,
+        scrollback: 10000,
+        transparency: 1.0,
+      },
+      activeGroupId: 'g1',
+    };
+    const expected = structuredClone(saved);
+
+    const migrated = opts.migrate!(saved, 7);
+
+    expect(migrated).toEqual(expected);
   });
 });

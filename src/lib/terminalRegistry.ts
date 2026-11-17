@@ -1,4 +1,4 @@
-import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
+import { Terminal as XTerm, type IDisposable, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -17,6 +17,8 @@ import {
   isTabStatusCleared,
 } from './tabStatusOsc';
 import { SAVE_SCROLLBACK_LINES } from './scrollback';
+import { toXtermTheme } from './theme/resolveTheme';
+import type { TerminalPalette, ThemeDefinition } from './theme/types';
 
 /**
  * Claude Code がタブ状態を送ってくる OSC の番号。
@@ -354,12 +356,49 @@ export function parseOsc7Path(data: string): string | null {
   return path;
 }
 
+/** applyTerminalTheme / 透明度の変更で、ターミナルに書き込む配色。 */
+export interface TerminalThemePaint {
+  /** xterm の theme オプション。background は透明度を反映済み (computeBackground) */
+  theme: ITheme;
+  /**
+   * ホスト要素 (.terminal-pane) の `--terminal-bg` に書く値。buildCssVars と同じ
+   * `rgba(r, g, b, a)` 形式。タブごとの上書きでも、ペインの背景がそのテーマの色になる。
+   */
+  hostBackground: string;
+}
+
+/** テーマと透明度から、ターミナルに書き込む配色を作る純関数。テスト用に export する。 */
+export function buildTerminalThemePaint(theme: ThemeDefinition, alpha: number): TerminalThemePaint {
+  const bg = theme.terminal.background;
+  return {
+    theme: { ...toXtermTheme(theme), background: computeBackground(alpha, bg) },
+    hostBackground: hexToRgba(bg, alpha),
+  };
+}
+
+/** 2 つのテーマで、ターミナルの配色が同じか（id と中身の両方）。 */
+function sameTerminalTheme(a: ThemeDefinition, b: ThemeDefinition): boolean {
+  if (a === b) return true;
+  if (a.id !== b.id) return false;
+  // 同じ ID でも、自作テーマはファイルを直して再読み込みすると中身が変わる
+  const keys = Object.keys(a.terminal) as (keyof TerminalPalette)[];
+  return keys.every((key) => a.terminal[key] === b.terminal[key]);
+}
+
 /**
- * Tokyo Night テーマのデフォルト背景色。
- * applySettings の background 計算および createRuntime の初期 theme 定義で共用する。
- * F-M4: ハードコード hex を 1 箇所に集約する。
+ * テーマの差し替えで書き込む配色を決める純関数。変化が無ければ null（何もしない）。
+ *
+ * theme の差し替えは WebGL のアトラス再構築を伴い描画コストがかかるので、
+ * 同じテーマが配られたときは触らない（F-M3 と同じ考え方）。テスト用に export する。
  */
-const DEFAULT_BG = '#1a1b26';
+export function planTerminalTheme(
+  current: ThemeDefinition,
+  next: ThemeDefinition,
+  alpha: number,
+): TerminalThemePaint | null {
+  if (sameTerminalTheme(current, next)) return null;
+  return buildTerminalThemePaint(next, alpha);
+}
 
 /**
  * TerminalPane のライフサイクル全体を React 外で管理する runtime。
@@ -523,8 +562,16 @@ export interface TerminalRuntime {
    * Settings が変化したとき全タブの xterm オプションをリアクティブに更新する。
    * App.tsx の useAppStore.subscribe から全 runtime に broadcast して呼ぶ。
    * fontSize / fontFamily / scrollback を term.options に直接書き込む。
+   * 透明度が変わったときは、いま当てているテーマの背景色で背景を作り直す。
    */
   applySettings(settings: Settings): void;
+
+  /**
+   * ターミナルの配色（xterm のパレットとペインの背景）を差し替える。
+   * id と中身が今のテーマと同じなら何もしない。dispose 済みも no-op。
+   * TerminalUpkeepRoot が、設定・カタログ・タブの themeId の変化に応じて全タブへ配る。
+   */
+  applyTerminalTheme(theme: ThemeDefinition): void;
 
   /**
    * 全リソース解放。§3.2 の順序を厳守。
@@ -646,6 +693,8 @@ export function createRuntime(
   divEl: HTMLDivElement,
   settings: Settings,
   tabId: string,
+  /** 初期の配色。タブの上書き (themeId) かアプリの設定から解決したもの */
+  theme: ThemeDefinition,
   callbacks: {
     onLive: (ptyId: string) => void;
     /**
@@ -697,6 +746,9 @@ export function createRuntime(
   let wslDistro: string | undefined;
   // F-M3: applySettings で前回の transparency を保持し、不要な theme 再構築を回避する
   let lastTransparency: number = settings.transparency ?? 1.0;
+  // いま当てているテーマ。透明度が変わったときの背景色と、applyTerminalTheme の変化判定に使う
+  let currentTheme: ThemeDefinition = theme;
+  const initialPaint = buildTerminalThemePaint(theme, lastTransparency);
 
   const term = new XTerm({
     fontFamily: settings.fontFamily,
@@ -711,32 +763,18 @@ export function createRuntime(
     // theme.background に rgba/transparent を設定するときに必要。
     // false (default) だと alpha が無視されて opaque で描画される。
     allowTransparency: true,
-    theme: {
-      // v0.5 改善: 初期 theme.background も transparency を反映する
-      // (旧実装は DEFAULT_BG 固定で、新規タブが常に不透明になっていた)
-      background: computeBackground(lastTransparency),
-      foreground: '#c0caf5',
-      cursor: '#c0caf5',
-      black: '#15161e',
-      red: '#f7768e',
-      green: '#9ece6a',
-      yellow: '#e0af68',
-      blue: '#7aa2f7',
-      magenta: '#bb9af7',
-      cyan: '#7dcfff',
-      white: '#a9b1d6',
-      brightBlack: '#414868',
-      brightRed: '#f7768e',
-      brightGreen: '#9ece6a',
-      brightYellow: '#e0af68',
-      brightBlue: '#7aa2f7',
-      brightMagenta: '#bb9af7',
-      brightCyan: '#7dcfff',
-      brightWhite: '#c0caf5',
-    },
+    // 初期 theme.background も transparency を反映する (buildTerminalThemePaint 参照)
+    theme: initialPaint.theme,
   });
 
   term.open(divEl);
+  divEl.style.setProperty('--terminal-bg', initialPaint.hostBackground);
+
+  /** 配色をターミナルとホスト要素に書き込む。 */
+  function paintTheme(paint: TerminalThemePaint): void {
+    term.options.theme = paint.theme;
+    divEl.style.setProperty('--terminal-bg', paint.hostBackground);
+  }
 
   // 配布バイナリでバンドル済の MonaspiceNe NF が初回起動時にロードされる前に WebGL atlas が
   // 焼かれるとフォールバック (Cascadia 等) で描画される問題を防ぐため、フォントロード完了後に
@@ -802,13 +840,10 @@ export function createRuntime(
     const gpuChanged = lastGpuAcceleration !== targetGpu;
     if (!alphaChanged && !gpuChanged) return;
 
-    // F-M4: DEFAULT_BG 定数を使用（ハードコード排除）
+    // 背景はいま当てているテーマの色で作り直す
     if (alphaChanged) {
       lastTransparency = targetAlpha;
-      term.options.theme = {
-        ...term.options.theme,
-        background: computeBackground(targetAlpha),
-      };
+      paintTheme(buildTerminalThemePaint(currentTheme, targetAlpha));
     }
 
     // v0.5 改善: 透明度 < 1.0 のとき WebGL は alpha 尊重しないため Canvas にフォールバック。
@@ -1170,6 +1205,14 @@ export function createRuntime(
       applyRendererSettings(settings);
     },
 
+    applyTerminalTheme(nextTheme) {
+      if (isDisposed) return;
+      const paint = planTerminalTheme(currentTheme, nextTheme, lastTransparency);
+      if (!paint) return;
+      currentTheme = nextTheme;
+      paintTheme(paint);
+    },
+
     dispose() {
       // §3.2 の順序を厳守。この順序を変えない。
       isDisposed = true;
@@ -1320,6 +1363,14 @@ export function recyclePty(
  */
 export function getAllRuntimes(): TerminalRuntime[] {
   return Array.from(runtimes.values()).map((e) => e.runtime);
+}
+
+/**
+ * 全 runtime を tabId と組にして返す。
+ * タブごとに違う値を配るとき (テーマの上書き) に、どのタブの runtime かを知るために使う。
+ */
+export function getAllRuntimeEntries(): [string, TerminalRuntime][] {
+  return Array.from(runtimes.entries(), ([tabId, e]) => [tabId, e.runtime]);
 }
 
 /**
@@ -1513,14 +1564,14 @@ export function hexToRgba(hex: string, alpha: number): string {
  *   alpha=0 なので合成結果 (見た目の背景) は従来と同じ。
  * - alpha >= 1.0: baseHex をそのまま返す（不透明 hex）
  *
- * F-S1 テスト用に export する。F-M4: DEFAULT_BG をデフォルト値として使用。
+ * F-S1 テスト用に export する。baseHex はテーマの terminal.background。
  * Phase 4 P-B-2 で追加。
  */
-export function computeBackground(alpha: number, baseHex: string = DEFAULT_BG): string {
+export function computeBackground(alpha: number, baseHex: string): string {
   if (alpha >= 1.0) return baseHex;
   const transparent = hexToRgba(baseHex, 0);
   // hexToRgba は #rrggbb 以外を素通しする。不透明値をそのまま返すと 2 重描画になるので、
-  // その場合だけ従来の完全透明へ倒す（現状の呼び出しは DEFAULT_BG のみなので保険）。
+  // その場合だけ従来の完全透明へ倒す（テーマの色は #rrggbb に揃えてあるので保険）。
   return transparent === baseHex ? 'rgba(0, 0, 0, 0)' : transparent;
 }
 

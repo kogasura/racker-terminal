@@ -8,6 +8,10 @@
  * Root どうしの順序は問わない。各 Root は自分宛ての接頭辞のイベントだけを取り、
  * 残りを上へ流すので、どう重ねても他機能のイベントを飲み込まない
  * (`architecture/chain.ts` の `mediatorLink` を参照)。
+ *
+ * ただしコンテキストを引く側は、引かれる側より内側に置く必要がある。
+ * ThemeRoot は設定 (選んだテーマ・透明度) を SettingsRoot から受け取り、
+ * TerminalUpkeepRoot はテーマのカタログを ThemeRoot から受け取る。
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -20,12 +24,14 @@ import { PrStatusRoot } from './features/prStatus/PrStatusRoot';
 import { SettingsRoot } from './features/settings/SettingsRoot';
 import { TerminalUpkeepRoot } from './features/terminalUpkeep/TerminalUpkeepRoot';
 import { TabsRoot } from './features/tabs/TabsRoot';
+import { ThemeRoot } from './features/theme/ThemeRoot';
 import { UpdaterRoot } from './features/updater/UpdaterRoot';
 import { useAppStore } from './store/appStore';
 
 export function Roots({ children }: { children: ReactNode }) {
   // persist の hydration 完了。updater の初回チェックはこれを待ってから走らせる
   // (復元前に走らせると、まだ何も無い状態で更新ダイアログだけが出ることがある)。
+  // テーマの適用も待つ (復元前の既定値で、起動時のキャッシュの色を潰さないため)。
   const [hydrated, setHydrated] = useState(() => useAppStore.persist.hasHydrated());
   useEffect(() => {
     if (hydrated) return;
@@ -35,21 +41,23 @@ export function Roots({ children }: { children: ReactNode }) {
   return (
     <UpdaterRoot ready={hydrated}>
       <SettingsRoot>
-        <TabsRoot>
-          <ClaudeStatusRoot>
-            <ClaudeSessionsRoot>
-              <TerminalUpkeepRoot>
-                <PrStatusRoot>
-                  <NotificationsRoot>
-                    <BootstrapRoot>
-                      <LaunchRoot>{children}</LaunchRoot>
-                    </BootstrapRoot>
-                  </NotificationsRoot>
-                </PrStatusRoot>
-              </TerminalUpkeepRoot>
-            </ClaudeSessionsRoot>
-          </ClaudeStatusRoot>
-        </TabsRoot>
+        <ThemeRoot ready={hydrated}>
+          <TabsRoot>
+            <ClaudeStatusRoot>
+              <ClaudeSessionsRoot>
+                <TerminalUpkeepRoot>
+                  <PrStatusRoot>
+                    <NotificationsRoot>
+                      <BootstrapRoot>
+                        <LaunchRoot>{children}</LaunchRoot>
+                      </BootstrapRoot>
+                    </NotificationsRoot>
+                  </PrStatusRoot>
+                </TerminalUpkeepRoot>
+              </ClaudeSessionsRoot>
+            </ClaudeStatusRoot>
+          </TabsRoot>
+        </ThemeRoot>
       </SettingsRoot>
     </UpdaterRoot>
   );

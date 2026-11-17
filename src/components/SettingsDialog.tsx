@@ -4,6 +4,9 @@ import { getVersion } from '@tauri-apps/api/app';
 import { useEmit } from '../architecture/chain';
 import { useSettingsView } from '../features/settings/SettingsRoot';
 import type { SettingsEvent } from '../features/settings/events';
+import { useThemeView } from '../features/theme/ThemeRoot';
+import type { ThemeEvent } from '../features/theme/events';
+import type { ThemeOption } from '../features/theme/viewModel';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateSettingsSectionView } from '../features/updater/views/UpdateSettingsSectionView';
 import type { Settings } from '../types';
@@ -54,6 +57,8 @@ function numericSettingsPatch(draft: Settings, settings: Settings): Partial<Sett
 export function buildSettingsPatch(draft: Settings, settings: Settings): Partial<Settings> {
   const patch = numericSettingsPatch(draft, settings);
 
+  if (draft.theme !== settings.theme) patch.theme = draft.theme;
+
   if (draft.fontFamily !== settings.fontFamily) patch.fontFamily = draft.fontFamily;
 
   // 未設定 (undefined) は有効扱いなので、比較も「false かどうか」で揃える
@@ -73,6 +78,130 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
   }
 
   return patch;
+}
+
+/**
+ * テーマの選択肢。「組み込み」と「自分のテーマ」を optgroup で分ける。
+ * 自分のテーマが 0 件なら、その optgroup は出さない。
+ *
+ * 選択中の ID がカタログに無い (ファイルを消した・名前を変えた) ときは
+ * 「見つかりません」の選択肢を足して値を保持する。足さないと select が先頭の
+ * 選択肢を表示してしまい、保存時に黙って別のテーマへ変わったように見える。
+ * お気に入りダイアログでも使うため export する。
+ */
+export function ThemeOptionGroups({
+  options,
+  value,
+}: {
+  options: readonly ThemeOption[];
+  value: string;
+}) {
+  const builtin = options.filter((o) => o.source === 'builtin');
+  const user = options.filter((o) => o.source === 'user');
+  const missing = value !== '' && !options.some((o) => o.id === value);
+  return (
+    <>
+      {missing && <option value={value}>（見つかりません: {value}）</option>}
+      <optgroup label="組み込み">
+        {builtin.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </optgroup>
+      {user.length > 0 && (
+        <optgroup label="自分のテーマ">
+          {user.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
+/**
+ * 設定ダイアログのテーマの節。Passive View。
+ *
+ * 選んだテーマは draft に入れ、保存時に他の設定と一緒に適用する。
+ * フォルダ操作と再読み込みは theme 機能へイベントとして流すだけ。
+ */
+function ThemeSettingsSection({
+  value,
+  onChange,
+  onLeaveForClaude,
+}: {
+  value: string;
+  onChange: (themeId: string) => void;
+  /** 「Claude でテーマを作る」で claude タブへ移るとき、設定ダイアログを閉じてもらう。 */
+  onLeaveForClaude: () => void;
+}) {
+  const { options, errors } = useThemeView();
+  const emit = useEmit<ThemeEvent>();
+
+  // ダイアログを開いたときに themes フォルダを読み直す (手で置いたファイルを拾うため)。
+  useEffect(() => {
+    emit({ type: 'theme/reload-requested' });
+    // 開いたときの 1 回だけでよい
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="dialog-field">
+      <span className="dialog-label">テーマ（配色）</span>
+      <select
+        className="dialog-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="テーマ"
+      >
+        <ThemeOptionGroups options={options} value={value} />
+      </select>
+      <div className="settings-theme-actions">
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={() => emit({ type: 'theme/open-folder-requested' })}
+        >
+          フォルダを開く
+        </button>
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={() => {
+            emit({ type: 'theme/create-with-claude-requested' });
+            onLeaveForClaude();
+          }}
+        >
+          Claude でテーマを作る
+        </button>
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={() => emit({ type: 'theme/reload-requested' })}
+        >
+          再読み込み
+        </button>
+      </div>
+      {errors.length > 0 && (
+        <div className="dialog-error">
+          読み込めなかったテーマ:
+          <ul className="settings-theme-errors">
+            {errors.map((e) => (
+              <li key={e.fileName}>
+                <code>{e.fileName}</code>: {e.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <small className="dialog-hint">
+        themes フォルダに JSON を置くか、Claude に頼んで作れます。
+      </small>
+    </div>
+  );
 }
 
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
@@ -127,9 +256,15 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         <Dialog.Content className="dialog-content">
           <Dialog.Title className="dialog-title">Settings</Dialog.Title>
           <Dialog.Description className="dialog-description">
-            フォント・スクロールバック・透明度を変更します。
+            テーマ・フォント・スクロールバック・透明度を変更します。
           </Dialog.Description>
           <form onSubmit={handleSubmit} className="dialog-form">
+            <ThemeSettingsSection
+              value={draft.theme}
+              onChange={(theme) => setDraft({ ...draft, theme })}
+              onLeaveForClaude={onClose}
+            />
+
             <label className="dialog-field">
               <span className="dialog-label">フォントサイズ (px)</span>
               <input

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEnvText, parseArgsText } from './FavoriteDialog';
+import { parseEnvText, parseArgsText, buildFavorite } from './FavoriteDialog';
 
 describe('parseArgsText', () => {
   it('1 行 1 件: 単一行を配列にする', () => {
@@ -108,5 +108,50 @@ describe('parseEnvText', () => {
     const { errors } = parseEnvText('=value');
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/'=' が見つかりません/);
+  });
+});
+
+describe('buildFavorite', () => {
+  /** 最小の入力。テストごとに必要な項目だけ上書きする。 */
+  const input = {
+    title: 'テスト',
+    shell: '',
+    cwd: undefined,
+    args: [],
+    env: {},
+    defaultTabTitle: '',
+    themeId: '',
+    launchClaude: false,
+    bypassPermissions: false,
+  };
+
+  it('themeId が空文字なら undefined にする (アプリの設定に従う)', () => {
+    expect(buildFavorite(input).themeId).toBeUndefined();
+  });
+
+  it('themeId が前後空白だけでも undefined にする', () => {
+    expect(buildFavorite({ ...input, themeId: '  ' }).themeId).toBeUndefined();
+  });
+
+  it('組み込みテーマの ID を保持する', () => {
+    expect(buildFavorite({ ...input, themeId: 'racker-ember' }).themeId).toBe('racker-ember');
+  });
+
+  it('自作テーマ (user:<stem>) の ID を保持する', () => {
+    expect(buildFavorite({ ...input, themeId: 'user:sunset' }).themeId).toBe('user:sunset');
+  });
+
+  it('themeId 以外の項目の扱いは変えない', () => {
+    expect(buildFavorite({ ...input, title: '  名前  ', themeId: 'nord' })).toEqual({
+      title: '名前',
+      shell: undefined,
+      cwd: undefined,
+      args: undefined,
+      env: undefined,
+      defaultTabTitle: undefined,
+      themeId: 'nord',
+      launchClaude: undefined,
+      bypassPermissions: undefined,
+    });
   });
 });

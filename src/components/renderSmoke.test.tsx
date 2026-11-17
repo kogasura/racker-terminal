@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act } from 'react';
-import { render as rtlRender, cleanup } from '@testing-library/react';
+import { render as rtlRender, cleanup, fireEvent } from '@testing-library/react';
 import { useEffect, type ReactElement, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TabItem } from './TabItem';
@@ -11,6 +11,8 @@ import { UpdaterRoot } from '../features/updater/UpdaterRoot';
 import { TabsRoot } from '../features/tabs/TabsRoot';
 import { ClaudeStatusRoot } from '../features/claudeStatus/ClaudeStatusRoot';
 import { SettingsRoot } from '../features/settings/SettingsRoot';
+import { ThemeRoot } from '../features/theme/ThemeRoot';
+import type { EffectDeps as ThemeEffectDeps } from '../features/theme/effects';
 import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
@@ -31,6 +33,25 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue
  * 描画時の例外はアプリ全体が落ちる形で表面化するため、最低限ここで止める。
  */
 /**
+ * テーマの読み込みの差し替え。自作テーマ 1 件と、壊れたファイル 1 件を返す。
+ * 選択肢の optgroup と、読み込めなかったファイルの一覧が出ることを見るため。
+ */
+const themeDeps: ThemeEffectDeps = {
+  listUserThemes: () =>
+    Promise.resolve([
+      {
+        fileName: 'sunset.json',
+        content: JSON.stringify({ name: 'Sunset', ui: { accent: '#ff8800' } }),
+        error: null,
+      },
+      { fileName: 'broken.json', content: '{', error: null },
+    ]),
+  ensureThemesDir: () => Promise.resolve(null),
+  openThemesDir: () => Promise.resolve(false),
+  openClaudeTab: () => {},
+};
+
+/**
  * 機能 Root を敷いたうえで描画する。
  *
  * コンポーネントは View モデルを Root から受け取り、操作をチェーンへ流すため、
@@ -41,10 +62,13 @@ function AppRoots({ children }: { children: ReactNode }) {
   return (
     <UpdaterRoot ready={false}>
       <SettingsRoot>
-        <TabsRoot>
-          {/* fetchUsage={null} でプラン利用量のポーリングを止める（テストで通信させない） */}
-          <ClaudeStatusRoot fetchUsage={null}>{children}</ClaudeStatusRoot>
-        </TabsRoot>
+        {/* テーマは設定を引くので SettingsRoot の内側。ファイルの読み込みは差し替える */}
+        <ThemeRoot ready deps={themeDeps}>
+          <TabsRoot>
+            {/* fetchUsage={null} でプラン利用量のポーリングを止める（テストで通信させない） */}
+            <ClaudeStatusRoot fetchUsage={null}>{children}</ClaudeStatusRoot>
+          </TabsRoot>
+        </ThemeRoot>
       </SettingsRoot>
     </UpdaterRoot>
   );
@@ -98,8 +122,12 @@ describe('コンポーネントのレンダリング', () => {
       editingId: null,
       wslDistros: [],
       quickAccess: [],
-      // ステータスバーの表示設定はテスト間で持ち越さない（既定 = 有効に戻す）
-      settings: { ...useAppStore.getState().settings, statusBarEnabled: undefined },
+      // ステータスバーの表示設定とテーマはテスト間で持ち越さない（既定に戻す）
+      settings: {
+        ...useAppStore.getState().settings,
+        statusBarEnabled: undefined,
+        theme: 'tokyo-night',
+      },
     });
   });
 
@@ -303,6 +331,60 @@ describe('コンポーネントのレンダリング', () => {
   it('SettingsDialog が描画できる', () => {
     expect(() => renderSettings()).not.toThrow();
   });
+
+  it('SettingsDialog: テーマの選択肢を組み込みと自分のテーマに分けて出し、読めなかったファイルを並べる', async () => {
+    renderSettings();
+    // 自作テーマの読み込み (Promise) が終わるのを待つ
+    await act(async () => {});
+
+    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
+    expect(select, 'テーマの select が見つからない').toBeTruthy();
+    const groups = [...select!.querySelectorAll('optgroup')].map((g) => g.label);
+    expect(groups).toEqual(['組み込み', '自分のテーマ']);
+    const values = [...select!.querySelectorAll('option')].map((o) => o.value);
+    expect(values).toContain('tokyo-night');
+    expect(values).toContain('user:sunset');
+    expect(select!.value).toBe(useAppStore.getState().settings.theme);
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('broken.json');
+    expect(text).toContain('フォルダを開く');
+    expect(text).toContain('Claude でテーマを作る');
+    expect(text).toContain('再読み込み');
+  });
+
+  it('SettingsDialog: 設定のテーマがカタログに無ければ「見つかりません」で値を保持する', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'user:deleted' },
+    });
+    renderSettings();
+    await act(async () => {});
+
+    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
+    expect(select!.value).toBe('user:deleted');
+    expect(document.body.textContent).toContain('（見つかりません: user:deleted）');
+  });
+
+  it('FavoriteDialog: ターミナルの配色の選択肢を出し、先頭は「アプリの設定に従う」', async () => {
+    render(
+      <FavoriteDialog
+        mode="edit"
+        initial={{ id: 'f5', title: 'Ember', themeId: 'racker-ember' }}
+        onSubmit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await act(async () => {});
+
+    const select = [...document.body.querySelectorAll('select')].find((s) =>
+      s.querySelector('option[value="racker-ember"]'),
+    );
+    expect(select, '配色の select が見つからない').toBeTruthy();
+    expect(select!.options[0].value).toBe('');
+    expect(select!.options[0].textContent).toBe('アプリの設定に従う');
+    expect(select!.value).toBe('racker-ember');
+    expect(select!.querySelector('option[value="user:sunset"]')).not.toBeNull();
+  });
 });
 
 /**
@@ -396,6 +478,63 @@ describe('コンポーネントの操作', () => {
     });
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ title: 'テスト', shell: 'pwsh.exe' });
+  });
+
+  it('SettingsDialog: テーマを選んで保存すると設定に入る', async () => {
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
+    });
+    renderSettings();
+    const select = document.body.querySelector<HTMLSelectElement>('select[aria-label="テーマ"]');
+    await act(async () => {
+      fireEvent.change(select!, { target: { value: 'dracula' } });
+    });
+    // 保存するまでは適用しない
+    expect(useAppStore.getState().settings.theme).toBe('tokyo-night');
+
+    const form = document.body.querySelector('form');
+    await act(async () => {
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(useAppStore.getState().settings.theme).toBe('dracula');
+  });
+
+  it('SettingsDialog: 「Claude でテーマを作る」でダイアログを閉じる', async () => {
+    const onClose = vi.fn();
+    renderSettings(onClose);
+    const button = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Claude でテーマを作る',
+    );
+    await act(async () => button!.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('FavoriteDialog: 選んだ配色が onSubmit に渡り、「アプリの設定に従う」なら undefined', async () => {
+    const onSubmit = vi.fn();
+    render(
+      <FavoriteDialog
+        mode="edit"
+        initial={{ id: 'f1', title: 'テスト', themeId: 'nord' }}
+        onSubmit={onSubmit}
+        onClose={() => {}}
+      />,
+    );
+    const form = document.body.querySelector('form');
+    await act(async () => {
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ themeId: 'nord' });
+
+    const select = [...document.body.querySelectorAll('select')].find((s) =>
+      s.querySelector('option[value="nord"]'),
+    );
+    await act(async () => {
+      fireEvent.change(select!, { target: { value: '' } });
+    });
+    await act(async () => {
+      form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(onSubmit.mock.calls[1][0].themeId).toBeUndefined();
   });
 
   it('SettingsDialog: 送信しても落ちない', async () => {

@@ -11,7 +11,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--rk-scrim) 90%, black);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -24,9 +24,9 @@
 }
 
 .file-drop-overlay__panel {
-  background: #1a1b26;
-  color: #c0caf5;
-  border: 1px solid #414868;
+  background: var(--rk-bg);
+  color: var(--rk-fg);
+  border: 1px solid var(--rk-border-strong);
   border-radius: 8px;
   padding: 24px 32px;
   display: flex;

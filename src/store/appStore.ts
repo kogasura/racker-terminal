@@ -188,6 +188,7 @@ type CreateTabOptions = Partial<
     | 'launchClaude'
     | 'claudeSessionId'
     | 'bypassPermissions'
+    | 'themeId'
   >
 > & { title?: string };
 
@@ -610,6 +611,7 @@ function buildTab(tabId: string, groupId: string, opts?: CreateTabOptions): Tab 
     launchClaude: o.launchClaude,
     claudeSessionId: o.claudeSessionId,
     bypassPermissions: o.bypassPermissions,
+    themeId: o.themeId,
     status: 'spawning',
   };
 }
@@ -708,6 +710,7 @@ interface AppActions {
   /**
    * お気に入りの設定で新しいタブを spawn する。
    * - shell / cwd / env を Favorite から引き継ぐ
+   * - ターミナル配色の上書き (themeId) も引き継ぐ。後からお気に入りを編集しても開いたタブは変わらない
    * - title は Favorite.defaultTabTitle ?? Favorite.title
    * - 存在しない favId は null を返す
    */
@@ -748,9 +751,7 @@ interface AppActions {
    */
   createTab: (
     groupId?: string,
-    opts?: Partial<
-      Pick<Tab, 'userTitle' | 'shell' | 'cwd' | 'env' | 'args' | 'launchClaude' | 'claudeSessionId' | 'bypassPermissions'>
-    > & { title?: string },
+    opts?: CreateTabOptions,
   ) => string;
 
   /**
@@ -1055,6 +1056,7 @@ export const useAppStore = create<Store>()(
       env: fav.env ? { ...fav.env } : undefined,
       launchClaude: fav.launchClaude,
       bypassPermissions: fav.bypassPermissions,
+      themeId: fav.themeId,
     });
   },
 
@@ -1073,6 +1075,7 @@ export const useAppStore = create<Store>()(
           env: fav.env ? { ...fav.env } : undefined,
           launchClaude: fav.launchClaude,
           bypassPermissions: fav.bypassPermissions,
+          themeId: fav.themeId,
         });
       }
     }
@@ -1280,6 +1283,7 @@ export const useAppStore = create<Store>()(
         claudeSessionLive: removedTab.claudeSessionLive,
         claudeSeenAt: removedTab.claudeSeenAt,
         bypassPermissions: removedTab.bypassPermissions,
+        themeId: removedTab.themeId,
       };
       const newClosedTabs = [closed, ...state.closedTabs].slice(0, CLOSED_TABS_MAX);
 
@@ -1394,6 +1398,7 @@ export const useAppStore = create<Store>()(
         // 記録を写すと 2 枚のタブが同じ会話を resume してしまう
         launchClaude: src.launchClaude,
         bypassPermissions: src.bypassPermissions,
+        themeId: src.themeId,
         status: 'spawning',
       };
 
@@ -1625,6 +1630,7 @@ export const useAppStore = create<Store>()(
       launchClaude: closed.launchClaude,
       claudeSessionId: closed.claudeSessionId,
       bypassPermissions: closed.bypassPermissions,
+      themeId: closed.themeId,
     });
     // 成功後にスタックから pop。
     // 復帰情報は「作成時の入力」ではなく「racker が観測した事実」なので
@@ -1640,7 +1646,7 @@ export const useAppStore = create<Store>()(
     }),
     {
       name: 'racker-terminal',
-      version: 7,
+      version: 8,
       // F-M7: localStorage quota 超過時のエラーを握り潰してアプリをクラッシュさせない
       storage: createJSONStorage(() => ({
         getItem: (key) => {
@@ -1689,6 +1695,10 @@ export const useAppStore = create<Store>()(
         // 分岐ごと関数に押し込んでいるのは migrate の complexity 上限 (8) を守るため。
         dropManualClaudeSessionIds(state, version);
 
+        // v7 → v8: Tab.themeId / Favorite.themeId の追加と、settings.theme の型を
+        // 'tokyo-night' 固定から string へ広げただけ。既存の 'tokyo-night' はそのまま有効な ID で、
+        // themeId が無いタブ・お気に入りはアプリの設定に従うので、データ変換は不要。
+
         return state;
       },
       partialize: (state) => ({
@@ -1713,6 +1723,7 @@ export const useAppStore = create<Store>()(
               claudeSessionLive: tab.claudeSessionLive,     // 終了時に claude が動いていたか
               claudeSeenAt: tab.claudeSeenAt,               // 記録そのものの鮮度
               bypassPermissions: tab.bypassPermissions, // 権限バイパス設定 (復元対象)
+              themeId: tab.themeId, // ターミナル配色の上書き (復元対象)
               // status / ptyId / oscTitle / agentState は OFF (ランタイム状態)
             },
           ]),

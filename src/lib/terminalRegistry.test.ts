@@ -100,6 +100,7 @@ function makeRuntime(): TerminalRuntime & { disposeCallCount: number; dispose: R
     tabStatusSub,
     webLinksHandle,
     applySettings: vi.fn(),
+    applyTerminalTheme: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(),
     resetForRecycle: vi.fn(),
@@ -274,6 +275,7 @@ function makeRuntimeWithOrder(): TerminalRuntime & { callOrder: string[] } {
     tabStatusSub,
     webLinksHandle,
     applySettings: vi.fn(),
+    applyTerminalTheme: vi.fn(),
     setOnEvent: vi.fn(),
     startSpawn: vi.fn(() => { callOrder.push('startSpawn'); }),
     resetForRecycle: vi.fn(() => { callOrder.push('resetForRecycle'); }),
@@ -351,6 +353,7 @@ describe('applySettings', () => {
         options.fontFamily = settings.fontFamily;
         options.scrollback = settings.scrollback;
       },
+      applyTerminalTheme: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
@@ -434,6 +437,7 @@ describe('titleSub dispose', () => {
       tabStatusSub,
       webLinksHandle,
       applySettings: vi.fn(),
+      applyTerminalTheme: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
@@ -582,6 +586,7 @@ describe('memory leak', () => {
         tabStatusSub,
         webLinksHandle,
         applySettings: vi.fn(),
+        applyTerminalTheme: vi.fn(),
         setOnEvent: vi.fn(),
         startSpawn: vi.fn(),
         resetForRecycle: vi.fn(),
@@ -707,6 +712,7 @@ describe('IME compositionAbort (2.13)', () => {
       tabStatusSub,
       webLinksHandle,
       applySettings: vi.fn(),
+      applyTerminalTheme: vi.fn(),
       setOnEvent: vi.fn(),
       startSpawn: vi.fn(),
       resetForRecycle: vi.fn(),
@@ -1194,13 +1200,99 @@ describe('computeBackground', () => {
 
     // alpha = 1.0 に戻ると baseHex が返る
     const bgOpaque = computeBackground(1.0, '#1a1b26');
-    expect(bgOpaque).toBe('#1a1b26');  // DEFAULT_BG に戻る
+    expect(bgOpaque).toBe('#1a1b26');  // baseHex に戻る
   });
 
-  it('baseHex 省略時は DEFAULT_BG (#1a1b26) を使用する', () => {
-    // alpha < 1.0 は alpha=0（RGB は DEFAULT_BG を保つ）
-    expect(computeBackground(0.9)).toBe('rgba(26, 27, 38, 0)');
-    expect(computeBackground(1.0)).toBe('#1a1b26');
+  it('テーマの背景色 (baseHex) の RGB を保つ', () => {
+    // Racker Ember など Tokyo Night 以外のテーマでも、RGB はそのテーマの背景色になる
+    expect(computeBackground(0.9, '#282a36')).toBe('rgba(40, 42, 54, 0)');
+    expect(computeBackground(1.0, '#282a36')).toBe('#282a36');
+  });
+});
+
+// --- テーマの差し替え (applyTerminalTheme の判断部分) ---
+
+import {
+  buildTerminalThemePaint,
+  planTerminalTheme,
+  getAllRuntimeEntries,
+} from './terminalRegistry';
+import { BUILTIN_THEMES, TOKYO_NIGHT } from './theme/builtinThemes';
+import { buildCssVars } from './theme/cssVars';
+import type { ThemeDefinition } from './theme/types';
+
+/** Tokyo Night 以外の組み込みテーマ (どれでもよい) */
+const OTHER_THEME = BUILTIN_THEMES.find((t) => t.id !== TOKYO_NIGHT.id)!;
+
+describe('buildTerminalThemePaint', () => {
+  it('不透明: xterm の背景はテーマの背景色そのまま、ホストも alpha 1 の rgba', () => {
+    const paint = buildTerminalThemePaint(TOKYO_NIGHT, 1);
+    expect(paint.theme.background).toBe('#1a1b26');
+    expect(paint.theme.foreground).toBe('#c0caf5');
+    expect(paint.theme.brightWhite).toBe('#c0caf5');
+    expect(paint.hostBackground).toBe('rgba(26, 27, 38, 1)');
+  });
+
+  it('半透明: xterm の背景は alpha 0 (二重描画回避)、ホストが alpha を持つ', () => {
+    const paint = buildTerminalThemePaint(TOKYO_NIGHT, 0.8);
+    expect(paint.theme.background).toBe('rgba(26, 27, 38, 0)');
+    expect(paint.hostBackground).toBe('rgba(26, 27, 38, 0.8)');
+  });
+
+  it('ホストの値は buildCssVars の --terminal-bg と同じ形式', () => {
+    expect(buildTerminalThemePaint(OTHER_THEME, 0.85).hostBackground).toBe(
+      buildCssVars(OTHER_THEME, 0.85)['--terminal-bg'],
+    );
+  });
+});
+
+describe('planTerminalTheme', () => {
+  it('同じテーマ (同一参照) なら何もしない', () => {
+    expect(planTerminalTheme(TOKYO_NIGHT, TOKYO_NIGHT, 1)).toBeNull();
+  });
+
+  it('id と中身が同じ別オブジェクトでも何もしない (再読み込みで作り直されただけ)', () => {
+    const copy: ThemeDefinition = { ...TOKYO_NIGHT, terminal: { ...TOKYO_NIGHT.terminal } };
+    expect(planTerminalTheme(TOKYO_NIGHT, copy, 1)).toBeNull();
+  });
+
+  it('別のテーマなら、そのテーマの配色と背景に差し替える', () => {
+    const paint = planTerminalTheme(TOKYO_NIGHT, OTHER_THEME, 1);
+    expect(paint).not.toBeNull();
+    expect(paint!.theme.foreground).toBe(OTHER_THEME.terminal.foreground);
+    expect(paint!.theme.red).toBe(OTHER_THEME.terminal.red);
+    expect(paint!.theme.background).toBe(OTHER_THEME.terminal.background);
+  });
+
+  it('同じ id でも中身が変われば差し替える (自作テーマを直して再読み込み)', () => {
+    const edited: ThemeDefinition = {
+      ...TOKYO_NIGHT,
+      terminal: { ...TOKYO_NIGHT.terminal, red: '#ff0000' },
+    };
+    const paint = planTerminalTheme(TOKYO_NIGHT, edited, 1);
+    expect(paint!.theme.red).toBe('#ff0000');
+  });
+
+  it('差し替えの背景はいまの透明度で作る', () => {
+    const paint = planTerminalTheme(TOKYO_NIGHT, OTHER_THEME, 0.8);
+    expect(paint!.theme.background).toMatch(/^rgba\(.*, 0\)$/);
+    expect(paint!.hostBackground).toMatch(/, 0\.8\)$/);
+  });
+});
+
+describe('getAllRuntimeEntries', () => {
+  it('tabId と runtime の組を返す', () => {
+    const runtime1 = makeRuntime();
+    const runtime2 = makeRuntime();
+    acquireRuntime('test-entries-1', () => runtime1);
+    acquireRuntime('test-entries-2', () => runtime2);
+
+    const entries = getAllRuntimeEntries();
+    expect(entries).toContainEqual(['test-entries-1', runtime1]);
+    expect(entries).toContainEqual(['test-entries-2', runtime2]);
+
+    forceDisposeRuntime('test-entries-1');
+    forceDisposeRuntime('test-entries-2');
   });
 });
 

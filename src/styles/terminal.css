@@ -68,7 +68,7 @@
 
 .terminal-crashed-overlay__restart-btn:hover {
   opacity: 1;
-  background: rgba(247, 118, 142, 0.12);
+  background: color-mix(in srgb, var(--rk-danger) 12%, transparent);
 }
 
 .terminal-empty-placeholder {

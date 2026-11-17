@@ -1,0 +1,186 @@
+import { describe, it, expect } from 'vitest';
+import { parseThemeFile, type ParseThemeResult } from './parseTheme';
+import { RACKER_PAPER, TOKYO_NIGHT } from './builtinThemes';
+import type { ThemeDefinition } from './types';
+
+/** 成功を前提にテーマを取り出す。失敗ならエラー文ごと落とす。 */
+function okTheme(result: ParseThemeResult): ThemeDefinition {
+  if (!result.ok) throw new Error(`parse failed: ${result.error}`);
+  return result.theme;
+}
+
+/** 失敗を前提にエラー文を取り出す。 */
+function errorOf(result: ParseThemeResult): string {
+  if (result.ok) throw new Error('parse unexpectedly succeeded');
+  return result.error;
+}
+
+function parse(json: unknown, fileName = 'my.json'): ParseThemeResult {
+  return parseThemeFile(fileName, JSON.stringify(json));
+}
+
+describe('parseThemeFile: 成功', () => {
+  it('最小の JSON（name と ui.accent だけ）は Tokyo Night とマージされる', () => {
+    const theme = okTheme(parse({ name: 'Sunset', ui: { accent: '#ff8800' } }, 'sunset.json'));
+    expect(theme).toEqual({
+      id: 'user:sunset',
+      name: 'Sunset',
+      appearance: 'dark',
+      source: 'user',
+      ui: { ...TOKYO_NIGHT.ui, accent: '#ff8800' },
+      terminal: TOKYO_NIGHT.terminal,
+    });
+  });
+
+  it('appearance: light ならベースは Racker Paper', () => {
+    const theme = okTheme(parse({ name: 'Light', appearance: 'light', ui: { accent: '#123456' } }));
+    expect(theme.appearance).toBe('light');
+    expect(theme.ui).toEqual({ ...RACKER_PAPER.ui, accent: '#123456' });
+    expect(theme.terminal).toEqual(RACKER_PAPER.terminal);
+  });
+
+  it('appearance: dark を明示しても Tokyo Night がベース', () => {
+    const theme = okTheme(parse({ name: 'Dark', appearance: 'dark' }));
+    expect(theme.ui).toEqual(TOKYO_NIGHT.ui);
+  });
+
+  it('#abc は #aabbcc に、大文字は小文字に揃える', () => {
+    const theme = okTheme(
+      parse({ name: 'x', ui: { accent: '#abc', fg: '#ABCDEF' }, terminal: { red: '#F0a' } }),
+    );
+    expect(theme.ui.accent).toBe('#aabbcc');
+    expect(theme.ui.fg).toBe('#abcdef');
+    expect(theme.terminal.red).toBe('#ff00aa');
+  });
+
+  it('未知のキー（effect や ui の未知キー）は無視して成功する', () => {
+    const theme = okTheme(
+      parse({
+        name: 'x',
+        effect: { kind: 'snow', density: 3 },
+        ui: { accent: '#111111', glow: 'not a color' },
+        terminal: { sparkle: 1 },
+      }),
+    );
+    expect(theme).not.toHaveProperty('effect');
+    expect(theme.ui).not.toHaveProperty('glow');
+    expect(theme.terminal).not.toHaveProperty('sparkle');
+    expect(theme.ui.accent).toBe('#111111');
+  });
+
+  it('terminal.background を省略すると ui.bg になる', () => {
+    const theme = okTheme(parse({ name: 'x', ui: { bg: '#102030' } }));
+    expect(theme.ui.bg).toBe('#102030');
+    expect(theme.terminal.background).toBe('#102030');
+  });
+
+  it('terminal.background を書けばそちらが優先される', () => {
+    const theme = okTheme(
+      parse({ name: 'x', ui: { bg: '#102030' }, terminal: { background: '#000000' } }),
+    );
+    expect(theme.terminal.background).toBe('#000000');
+  });
+
+  it('ui.bg も terminal.background も無ければベースの背景', () => {
+    const theme = okTheme(parse({ name: 'x', appearance: 'light' }));
+    expect(theme.terminal.background).toBe(RACKER_PAPER.terminal.background);
+  });
+
+  it('ID は user:<拡張子を除いたファイル名>、name は前後の空白を落とす', () => {
+    const theme = okTheme(parse({ name: '  夕焼け  ' }, 'Sunset.Neon.JSON'));
+    expect(theme.id).toBe('user:Sunset.Neon');
+    expect(theme.name).toBe('夕焼け');
+  });
+
+  it('name はちょうど 40 文字まで受け付ける（絵文字は 1 文字と数える）', () => {
+    expect(okTheme(parse({ name: 'a'.repeat(40) })).name).toHaveLength(40);
+    expect(parseThemeFile('x.json', JSON.stringify({ name: '🔥'.repeat(40) })).ok).toBe(true);
+  });
+
+  it('ベースのテーマを書き換えない', () => {
+    const before = structuredClone(TOKYO_NIGHT);
+    okTheme(parse({ name: 'x', ui: { accent: '#000000' }, terminal: { red: '#000000' } }));
+    expect(TOKYO_NIGHT).toEqual(before);
+  });
+});
+
+describe('parseThemeFile: 失敗', () => {
+  it('JSON として読めない', () => {
+    const result = parseThemeFile('broken.json', '{ "name": ');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.fileName).toBe('broken.json');
+    expect(result.error).toMatch(/^JSON として読めません: /);
+  });
+
+  it('ルートがオブジェクトでない', () => {
+    expect(errorOf(parseThemeFile('x.json', '[]'))).toContain('JSON のオブジェクト');
+    expect(errorOf(parseThemeFile('x.json', '"name"'))).toContain('JSON のオブジェクト');
+    expect(errorOf(parseThemeFile('x.json', 'null'))).toContain('JSON のオブジェクト');
+  });
+
+  it('name が無い', () => {
+    expect(errorOf(parse({ ui: { accent: '#fff' } }))).toBe(
+      'name がありません。テーマの表示名を書いてください',
+    );
+  });
+
+  it('name が文字列でない', () => {
+    expect(errorOf(parse({ name: 42 }))).toBe('name: 42 は文字列で書いてください');
+  });
+
+  it('name が空（空白だけを含む）', () => {
+    expect(errorOf(parse({ name: '' }))).toBe('name が空です。テーマの表示名を書いてください');
+    expect(errorOf(parse({ name: '   ' }))).toBe('name が空です。テーマの表示名を書いてください');
+  });
+
+  it('name が 40 文字を超える', () => {
+    expect(errorOf(parse({ name: 'a'.repeat(41) }))).toBe(
+      'name は 40 文字以内にしてください（いまは 41 文字）',
+    );
+  });
+
+  it('appearance が dark / light 以外', () => {
+    expect(errorOf(parse({ name: 'x', appearance: 'dim' }))).toBe(
+      'appearance: "dim" は "dark" か "light" のどちらかにしてください',
+    );
+  });
+
+  it('ui / terminal がオブジェクトでない', () => {
+    expect(errorOf(parse({ name: 'x', ui: '#fff' }))).toBe(
+      'ui はオブジェクト（{ ... }）で書いてください',
+    );
+    expect(errorOf(parse({ name: 'x', terminal: ['#fff'] }))).toBe(
+      'terminal はオブジェクト（{ ... }）で書いてください',
+    );
+  });
+
+  it('色が読めないときは、キーの場所と値を示す', () => {
+    expect(errorOf(parse({ name: 'x', ui: { accent: '#zz0' } }))).toBe(
+      'ui.accent: "#zz0" は色として読めません（#rgb か #rrggbb で書いてください）',
+    );
+    expect(errorOf(parse({ name: 'x', terminal: { brightRed: 'red' } }))).toMatch(
+      /^terminal\.brightRed: "red" は色として読めません/,
+    );
+  });
+
+  it.each([
+    ['#abcd'],
+    ['#abcdef0'],
+    ['abcdef'],
+    ['#ffffff80'],
+    ['rgb(1, 2, 3)'],
+    [' #ffffff'],
+  ])('%s は色として受け付けない', (value) => {
+    expect(errorOf(parse({ name: 'x', ui: { bg: value } }))).toContain('は色として読めません');
+  });
+
+  it('文字列でない色（数値・null）も受け付けない', () => {
+    expect(errorOf(parse({ name: 'x', ui: { bg: 123 } }))).toBe(
+      'ui.bg: 123 は色として読めません（#rgb か #rrggbb で書いてください）',
+    );
+    expect(errorOf(parse({ name: 'x', ui: { bg: null } }))).toBe(
+      'ui.bg: null は色として読めません（#rgb か #rrggbb で書いてください）',
+    );
+  });
+});

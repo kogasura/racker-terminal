@@ -9,8 +9,8 @@
   flex-shrink: 0;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--panel-divider);
-  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
-  backdrop-filter: blur(var(--rk-glass-blur, 0px));
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-filter) */
+  backdrop-filter: var(--rk-glass-filter, none);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -770,8 +770,8 @@
   transform: translate(-50%, -50%);
   background: var(--group-header-bg);
   border: 1px solid var(--sidebar-border);
-  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
-  backdrop-filter: blur(var(--rk-glass-blur, 0px));
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-filter) */
+  backdrop-filter: var(--rk-glass-filter, none);
   border-radius: 8px;
   padding: 20px;
   width: 480px;
@@ -956,8 +956,8 @@ select.dialog-input {
 .context-menu__content {
   background: var(--group-header-bg);
   border: 1px solid var(--sidebar-border);
-  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
-  backdrop-filter: blur(var(--rk-glass-blur, 0px));
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-filter) */
+  backdrop-filter: var(--rk-glass-filter, none);
   border-radius: 6px;
   padding: 4px;
   min-width: 160px;

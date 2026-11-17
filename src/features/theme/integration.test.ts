@@ -108,7 +108,67 @@ describe('partitionThemeFiles', () => {
 
       expect(themes).toEqual([]);
       expect(errors.map((e) => e.fileName)).toEqual(['neon.json', 'neon.svg']);
+      expect(errors[0].error).toBe('backdrop.svg: "neon.svg" を読めませんでした（neon.svg のエラーを参照）');
       expect(errors[1].error).toBe('256 KiB を超えています');
+    });
+
+    it('SVG として読めない SVG はファイル名付きでエラーにし、参照した JSON は「読めませんでした」になる', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        { fileName: 'neon.svg', content: `${SVG}<link rel="preconnect" href="https://example.com"/>`, error: null },
+        { fileName: 'page.svg', content: '<html xmlns="http://www.w3.org/1999/xhtml"/>', error: null },
+      ]);
+
+      expect(themes).toEqual([]);
+      expect(errors.map((e) => e.fileName)).toEqual(['neon.json', 'neon.svg', 'page.svg']);
+      expect(errors[0].error).toBe('backdrop.svg: "neon.svg" を読めませんでした（neon.svg のエラーを参照）');
+      expect(errors[1].error).toMatch(/^SVG として読めません（.+）$/);
+      expect(errors[2].error).toMatch(/^SVG として読めません（ルートの要素が <html> です。/);
+    });
+
+    it('テーマには SVG のルートの svg 要素だけを入れる (外側の処理命令やコメントは持ち込まない)', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        {
+          fileName: 'neon.svg',
+          content: `<?xml-stylesheet href="https://example.com/x.css"?><!-- note -->${SVG}`,
+          error: null,
+        },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes[0].backdrop).toEqual({ kind: 'user', fileName: 'neon.svg', svg: SVG });
+    });
+
+    it('backdrop.svg の大文字小文字が違っても、フォルダのファイル名で引く', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('NEON.svg'), error: null },
+        { fileName: 'Neon.svg', content: SVG, error: null },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes[0].backdrop).toEqual({ kind: 'user', fileName: 'Neon.svg', svg: SVG });
+    });
+
+    it('ファイルが上限の 100 個に達していて SVG が見つからなければ、上限のことも書く', () => {
+      const files = Array.from({ length: 99 }, (_, i) => ({
+        fileName: `t${String(i).padStart(2, '0')}.json`,
+        content: VALID,
+        error: null,
+      }));
+      const { errors } = partitionThemeFiles([
+        { fileName: 'a-neon.json', content: withBackdrop('z-neon.svg'), error: null },
+        ...files,
+      ]);
+
+      expect(errors).toEqual([
+        {
+          fileName: 'a-neon.json',
+          error:
+            'backdrop.svg: "z-neon.svg" が themes フォルダにありません' +
+            '（ファイルが 100 個を超えると、名前順で後ろのファイルは読みません）',
+        },
+      ]);
     });
 
     it('背景の無い JSON は SVG があっても従来どおり読める', () => {

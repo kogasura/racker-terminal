@@ -659,6 +659,41 @@ describe('コンポーネントの操作', () => {
     }
   });
 
+  it('ThemeRoot: 起動時のキャッシュには、使っている自作テーマの背景の SVG だけを入れる', async () => {
+    localStorage.clear();
+    const svg = (mark: string) =>
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect id="${mark}" width="1" height="1"/></svg>`;
+    const json = (name: string) =>
+      JSON.stringify({ name, backdrop: { svg: `${name}.svg` } });
+    const spy = vi.spyOn(themeDeps, 'listUserThemes').mockResolvedValue([
+      { fileName: 'used.json', content: json('used'), error: null },
+      { fileName: 'used.svg', content: svg('mark-used'), error: null },
+      { fileName: 'tab.json', content: json('tab'), error: null },
+      { fileName: 'tab.svg', content: svg('mark-tab'), error: null },
+    ]);
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, theme: 'user:used' },
+    });
+    try {
+      renderSettings();
+      await act(async () => {});
+      const cached = () => localStorage.getItem(USER_THEMES_CACHE_KEY) ?? '';
+      // アプリの設定のテーマの SVG は入り、どこでも使っていないテーマは配色だけ
+      expect(cached()).toContain('mark-used');
+      expect(cached()).not.toContain('mark-tab');
+      expect(cached()).toContain('user:tab');
+
+      // タブの上書きで使い始めたら、そのテーマの SVG も入れ直す
+      await act(async () => {
+        const s = useAppStore.getState();
+        useAppStore.setState({ tabs: { ...s.tabs, t1: { ...s.tabs.t1, themeId: 'user:tab' } } });
+      });
+      expect(cached()).toContain('mark-tab');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('SettingsDialog: 試しに表示して Esc で閉じると、窓が元のテーマに戻る', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
@@ -703,22 +738,25 @@ describe('コンポーネントの操作', () => {
     expect(windowAccent()).toBe(TOKYO_NIGHT_ACCENT);
   });
 
-  it('SettingsDialog: 背景付きのテーマを選んでいる間は、透明度のスライダーを無効にしてその旨を出す', async () => {
+  it('SettingsDialog: 背景付きのテーマを選んでいる間は、透明度のスライダーは使えるまま注記だけを出す', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },
     });
     renderSettings();
     await act(async () => {});
     const range = document.body.querySelector<HTMLInputElement>('input[aria-label="背景透明度"]');
+    const note = '背景付きのテーマでは使いません（配色だけのテーマのタブでは効きます）';
     expect(range!.disabled).toBe(false);
-    expect(document.body.textContent).not.toContain('背景付きのテーマでは使いません');
+    expect(document.body.textContent).not.toContain(note);
 
     await act(async () => themeCard('Honu Lagoon')!.click());
-    expect(range!.disabled).toBe(true);
-    expect(document.body.textContent).toContain('背景付きのテーマでは使いません');
+    // お気に入りで配色だけのテーマを付けたタブでは効くので、無効にはしない
+    expect(range!.disabled).toBe(false);
+    expect(document.body.textContent).toContain(note);
 
     await act(async () => themeCard('Dracula')!.click());
     expect(range!.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain(note);
   });
 
   it('SettingsDialog: 「背景を動かす」は未設定ならオンで、切って保存すると設定に入る', async () => {

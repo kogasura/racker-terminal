@@ -10,8 +10,8 @@
   height: 34px;
   background: var(--group-header-bg);
   border-bottom: 1px solid var(--sidebar-border);
-  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-blur) */
-  backdrop-filter: blur(var(--rk-glass-blur, 0px));
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-filter) */
+  backdrop-filter: var(--rk-glass-filter, none);
   /* タブが増えてもバー自体は伸ばさない（内側の __tabs が横スクロールする） */
   overflow: hidden;
 }

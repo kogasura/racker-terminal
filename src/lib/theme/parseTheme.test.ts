@@ -302,6 +302,39 @@ describe('parseThemeFile: 背景 (backdrop)', () => {
     );
   });
 
+  it('完全に一致する名前が無ければ、大文字小文字を区別せずに探す', () => {
+    const theme = okTheme(parseWith({ name: 'x', backdrop: { svg: 'Neon-Sunset.SVG' } }));
+    expect(theme.backdrop).toEqual({ kind: 'user', fileName: 'neon-sunset.svg', svg: SVG });
+  });
+
+  it('完全に一致する名前があれば、そちらを使う', () => {
+    const other = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>';
+    const files = { 'neon-sunset.svg': SVG, 'Neon-Sunset.svg': other };
+    const theme = okTheme(parseWith({ name: 'x', backdrop: { svg: 'Neon-Sunset.svg' } }, files));
+    expect(theme.backdrop).toEqual({ kind: 'user', fileName: 'Neon-Sunset.svg', svg: other });
+  });
+
+  it('フォルダにあるが読めなかった SVG は「読めませんでした」と、その SVG のエラーを指す', () => {
+    const json = JSON.stringify({ name: 'x', backdrop: { svg: 'broken.SVG' } });
+    expect(
+      errorOf(parseThemeFile('neon.json', json, {}, { unreadable: new Set(['Broken.svg']) })),
+    ).toBe('backdrop.svg: "broken.SVG" を読めませんでした（Broken.svg のエラーを参照）');
+  });
+
+  it('ファイル数の上限に達していれば、見つからない理由に上限のことも書く', () => {
+    const json = JSON.stringify({ name: 'x', backdrop: { svg: 'x.svg' } });
+    expect(errorOf(parseThemeFile('neon.json', json, {}, { truncated: true }))).toBe(
+      'backdrop.svg: "x.svg" が themes フォルダにありません' +
+        '（ファイルが 100 個を超えると、名前順で後ろのファイルは読みません）',
+    );
+    // 読めなかった SVG なら、そちらの文を優先する
+    expect(
+      errorOf(
+        parseThemeFile('neon.json', json, {}, { truncated: true, unreadable: new Set(['x.svg']) }),
+      ),
+    ).toBe('backdrop.svg: "x.svg" を読めませんでした（x.svg のエラーを参照）');
+  });
+
   it('継承したキー（__proto__ など）を SVG として拾わない', () => {
     for (const name of ['__proto__', 'constructor', 'toString']) {
       expect(errorOf(parseWith({ name: 'x', backdrop: { svg: name } }))).toBe(

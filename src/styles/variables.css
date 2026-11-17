@@ -73,7 +73,9 @@
   /* コンテキストメニュー・ドロップダウンの背景。
      旧来は未定義で、dropdown-menu.css のフォールバック #1e2030 が効いていた。
      bg-elevated (#232333) だと Tokyo Night で明るくなりすぎるため、hover と sidebar の
-     混色で旧値に寄せている。Tokyo Night では #1d2030 (赤が 1/255 違うだけ) になる。 */
+     混色で旧値に寄せている。Tokyo Night では #1d2030 (赤が 1/255 違うだけ) になる。
+     テーマ適用時は buildCssVars が上書きする (配色だけのテーマでは同じ式、
+     背景付きのテーマではすりガラスの面の色)。 */
   --context-menu-bg: color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar));
 
   /* フォーカスアウトライン */
@@ -92,11 +94,12 @@
   --title-bar-bg: rgba(26, 27, 38, var(--bg-alpha));
   --terminal-bg: rgba(26, 27, 38, var(--bg-alpha));
 
-  /* すりガラスのぼかし。背景付きのテーマでは buildCssVars がシーンの値 (例: 14px) で上書きし、
-     各パネル (タイトルバー・サイドバー・タブバー・ステータスバー・ダイアログ・メニュー) が
-     backdrop-filter で使う。配色だけのテーマでは 0px のまま (見た目を変えない)。
+  /* すりガラスの backdrop-filter。背景付きのテーマでは buildCssVars がシーンの値
+     (例: blur(14px)) で上書きし、各パネル (タイトルバー・サイドバー・タブバー・ステータスバー・
+     ダイアログ・メニュー) が backdrop-filter に使う。配色だけのテーマでは none のまま
+     (backdrop-filter を付けない。見た目も負荷も第 1 段と変えない)。
      ターミナルの面は負荷と読みやすさのため、ぼかさない。 */
-  --rk-glass-blur: 0px;
+  --rk-glass-filter: none;
 
   /* crashed 状態の薄赤背景（MainPane 用）。テーマ適用時は buildCssVars が上書きする */
   --crashed-overlay-bg: rgba(247, 118, 142, 0.08);

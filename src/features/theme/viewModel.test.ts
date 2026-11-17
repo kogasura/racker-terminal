@@ -13,6 +13,7 @@ import {
   selectBackdropSvg,
   selectBackdropView,
   selectThemeView,
+  selectUsedThemeIds,
   selectWindowTheme,
   toBackdropAgent,
 } from './viewModel';
@@ -248,6 +249,24 @@ describe('resolveRuntimeThemes', () => {
         previewThemeId: 'user:deleted',
       }),
     ).toEqual([['rt', sunset]]);
+  });
+});
+
+describe('selectUsedThemeIds', () => {
+  it('アプリの設定のテーマが先、各タブの上書きが後で、重複は除く', () => {
+    const tabs = {
+      a: { themeId: 'user:neon' },
+      b: {},
+      c: { themeId: 'user:sunset' },
+      d: { themeId: 'user:neon' },
+      e: { themeId: 'user:sunset' },
+    };
+    expect(selectUsedThemeIds('user:sunset', tabs)).toEqual(['user:sunset', 'user:neon']);
+  });
+
+  it('タブが無ければアプリの設定のテーマだけ', () => {
+    expect(selectUsedThemeIds('tokyo-night', {})).toEqual(['tokyo-night']);
+    expect(selectUsedThemeIds('tokyo-night', { gone: undefined })).toEqual(['tokyo-night']);
   });
 });
 

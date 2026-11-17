@@ -9,7 +9,8 @@
  */
 
 import { buildQuickAccessLaunch } from '../../lib/quickAccess';
-import { parseThemeFile } from '../../lib/theme/parseTheme';
+import { extractSvgRoot } from '../../lib/theme/backdropDocument';
+import { MAX_THEME_FILES, parseThemeFile } from '../../lib/theme/parseTheme';
 import type { ThemeDefinition } from '../../lib/theme/types';
 import {
   ensureThemesDir,
@@ -41,23 +42,50 @@ function isSvgFile(fileName: string): boolean {
   return fileName.toLowerCase().endsWith('.svg');
 }
 
-/** 読めた *.svg を「ファイル名 → 中身」の対応表にする。 */
-function collectSvgFiles(files: readonly UserThemeFile[]): Record<string, string> {
-  const svgFiles: Record<string, string> = {};
+/** *.svg を読み分けた結果。 */
+interface SvgFiles {
+  /** SVG として読めたもの。ファイル名 → ルートの `<svg>` 要素だけの文字列 */
+  readonly readable: Record<string, string>;
+  /** フォルダにあるが読めなかったもののファイル名 */
+  readonly unreadable: Set<string>;
+  /** 読めなかった理由。ファイル名 → 理由（Rust 側で読めなかったものは入れない） */
+  readonly invalid: Map<string, string>;
+}
+
+/**
+ * *.svg を、SVG として読めたものと読めなかったものに分ける。
+ * 読めたものは extractSvgRoot でルートの `<svg>` 要素だけにしておく（外側に書かれたものを
+ * テーマに持ち込まない）。
+ */
+function collectSvgFiles(files: readonly UserThemeFile[]): SvgFiles {
+  const readable: Record<string, string> = {};
+  const unreadable = new Set<string>();
+  const invalid = new Map<string, string>();
   for (const file of files) {
-    if (isSvgFile(file.fileName) && file.content !== null && file.error === null) {
-      svgFiles[file.fileName] = file.content;
+    if (!isSvgFile(file.fileName)) continue;
+    if (file.content === null || file.error !== null) {
+      unreadable.add(file.fileName);
+      continue;
+    }
+    const root = extractSvgRoot(file.content);
+    if (root.ok) {
+      readable[file.fileName] = root.svg;
+    } else {
+      unreadable.add(file.fileName);
+      invalid.set(file.fileName, root.error);
     }
   }
-  return svgFiles;
+  return { readable, unreadable, invalid };
 }
 
 /**
  * 読み込んだファイルを検証し、使えるテーマとエラーに分ける純関数。
  *
  * - Rust 側で読めなかったもの（大きすぎる・読み取りエラー）はそのまま errors へ。
- * - *.svg はテーマではなく背景の中身。ファイル名 → 中身の対応表にして parseThemeFile に渡し、
+ * - *.svg はテーマではなく背景の中身。SVG として読めないもの（整形式でない・ルートが svg で
+ *   ない）は errors へ。読めたものはファイル名 → 中身の対応表にして parseThemeFile に渡し、
  *   JSON の `backdrop.svg` から引けるようにする（どの JSON からも参照されない SVG は使わない）。
+ *   読めなかった SVG の名前も渡し、参照した JSON のエラー文を出し分ける。
  * - エラーはファイルの並び順のまま返す。
  */
 export function partitionThemeFiles(files: readonly UserThemeFile[]): {
@@ -65,6 +93,7 @@ export function partitionThemeFiles(files: readonly UserThemeFile[]): {
   errors: ThemeFileError[];
 } {
   const svgFiles = collectSvgFiles(files);
+  const hints = { unreadable: svgFiles.unreadable, truncated: files.length >= MAX_THEME_FILES };
   const themes: ThemeDefinition[] = [];
   const errors: ThemeFileError[] = [];
   for (const file of files) {
@@ -72,8 +101,12 @@ export function partitionThemeFiles(files: readonly UserThemeFile[]): {
       errors.push({ fileName: file.fileName, error: file.error ?? 'ファイルを読めませんでした' });
       continue;
     }
-    if (isSvgFile(file.fileName)) continue;
-    const result = parseThemeFile(file.fileName, file.content, svgFiles);
+    if (isSvgFile(file.fileName)) {
+      const error = svgFiles.invalid.get(file.fileName);
+      if (error !== undefined) errors.push({ fileName: file.fileName, error });
+      continue;
+    }
+    const result = parseThemeFile(file.fileName, file.content, svgFiles.readable, hints);
     if (result.ok) themes.push(result.theme);
     else errors.push({ fileName: result.fileName, error: result.error });
   }

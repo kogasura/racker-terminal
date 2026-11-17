@@ -4,7 +4,9 @@
  * - `--rk-*`: 色トークン 22 個（ui の 19 個 + appearance から決める hoverTint / scrim / shadow）
  * - 透明度を掛けた背景: `--sidebar-bg` など。variables.css の既定値と同じ `rgba(r, g, b, a)` 形式
  * - `--bg-alpha`: 透明度そのもの（glass のあるテーマでは 1）
- * - `--rk-glass-blur`: すりガラスのぼかし（glass の無いテーマでは 0px）
+ * - `--rk-glass-filter`: パネルの backdrop-filter（glass の無いテーマでは none、有りは blur(Npx)）
+ * - `--context-menu-bg`: ドロップダウンメニューの背景（glass の無いテーマでは variables.css と
+ *   同じ式、有りはすりガラスの面の色）
  *
  * @module theme/cssVars
  */
@@ -67,11 +69,26 @@ function rgba(hex: string, alpha: number): string {
 export const TERMINAL_VEIL_MIN = 0.72;
 
 /**
+ * 背景付きのテーマで、ドロップダウンメニューの面に使う最低の濃さ。
+ * メニューは背景の絵の上に浮くので、glass.opacity が薄いシーンでも項目の文字が読めるよう
+ * この濃さまでは重ねる。
+ */
+export const MENU_GLASS_MIN_OPACITY = 0.6;
+
+/**
+ * glass の無いテーマのドロップダウンメニューの背景。variables.css の既定値と同じ式。
+ * 背景付きのテーマから切り替えたときに、すりガラスの色が残らないよう毎回当て直す。
+ */
+const PALETTE_CONTEXT_MENU_BG = 'color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar))';
+
+/**
  * テーマと透明度から CSS 変数一式を作る。
  *
  * glass のあるテーマ（背景付き）では、背景の絵が下地になるため透明度 (alpha) は使わない。
  * パネルは glass.tint から作った面の色を glass.opacity で重ね（すりガラス）、
  * ターミナルの面は max(glass.opacity, TERMINAL_VEIL_MIN) の濃さにする。
+ * ドロップダウンメニューの面は max(glass.opacity, MENU_GLASS_MIN_OPACITY) の濃さにする。
+ * backdrop-filter（--rk-glass-filter）を付けるのは glass のあるテーマだけ。
  *
  * @param theme - 適用するテーマ（色は `#rrggbb`）
  * @param alpha - 背景の透明度（設定の transparency。1 で不透明）。glass のあるテーマでは使わない
@@ -92,7 +109,8 @@ export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<stri
     vars['--group-header-bg'] = rgba(theme.ui.bg, alpha);
     vars['--title-bar-bg'] = rgba(theme.ui.bg, alpha);
     vars['--terminal-bg'] = rgba(theme.terminal.background, alpha);
-    vars['--rk-glass-blur'] = '0px';
+    vars['--context-menu-bg'] = PALETTE_CONTEXT_MENU_BG;
+    vars['--rk-glass-filter'] = 'none';
     return vars;
   }
 
@@ -106,6 +124,10 @@ export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<stri
     theme.terminal.background,
     Math.max(glass.opacity, TERMINAL_VEIL_MIN),
   );
-  vars['--rk-glass-blur'] = `${glass.blur}px`;
+  vars['--context-menu-bg'] = rgba(
+    surfaces.bgElevated,
+    Math.max(glass.opacity, MENU_GLASS_MIN_OPACITY),
+  );
+  vars['--rk-glass-filter'] = `blur(${glass.blur}px)`;
   return vars;
 }

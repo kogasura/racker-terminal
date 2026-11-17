@@ -15,7 +15,8 @@
  *      （BackdropLayer が使う）。起動直後は、設定の復元や themes フォルダの読み込みを待たずに
  *      前回の窓のテーマの背景を出す
  *   4. 読み込んだ自作テーマを localStorage に覚えておき、次回の起動直後のカタログに
- *      入れる（ターミナルの配色が一瞬 Tokyo Night になるのを防ぐ）
+ *      入れる（ターミナルの配色が一瞬 Tokyo Night になるのを防ぐ）。背景の SVG は
+ *      使っているテーマのものだけを覚える
  *   5. 購読せずに最新のカタログを読む口 `useThemeCatalogRef()` を配る（ターミナルの
  *      生成時に使う。読み込みのたびに全タブを描き直さないため）
  *
@@ -35,6 +36,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { createMachine, type Machine } from '../../architecture/machine';
 import { buildCssVars } from '../../lib/theme/cssVars';
@@ -54,6 +56,7 @@ import {
 import {
   selectBackdropView,
   selectThemeView,
+  selectUsedThemeIds,
   selectWindowTheme,
   type BackdropViewModel,
   type ThemeViewModel,
@@ -159,12 +162,17 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
     machine.send({ type: 'theme/reload-requested' });
   }, [machine]);
 
-  // 読み込みが終わったら、次回の起動のために自作テーマを覚えておく。
-  // 試しに表示では state の参照だけが変わるので、読み込み状況とテーマで見る
+  // 読み込みが終わったら、次回の起動のために自作テーマを覚えておく。背景の SVG は、
+  // 使っているテーマ (アプリの設定・各タブの上書き) のものだけを入れる。
+  // 試しに表示では state の参照だけが変わるので、読み込み状況・テーマ・使っている ID で見る
   // (背景の SVG ごと書き出すので重い。カードを押すたびに走らせない)。
+  // 設定の復元前は使っている ID がまだ分からないので保存しない。
+  const usedThemeIds = useAppStore(
+    useShallow((s) => selectUsedThemeIds(settings.theme, s.tabs)),
+  );
   useEffect(() => {
-    if (state.status === 'loaded') saveUserThemesCache(state.themes);
-  }, [state.status, state.themes]);
+    if (ready && state.status === 'loaded') saveUserThemesCache(state.themes, usedThemeIds);
+  }, [ready, state.status, state.themes, usedThemeIds]);
 
   // アクティブなタブの上書きとエージェントの状態。窓のテーマと背景の連動に使う。
   const activeTabThemeId = useAppStore((s) =>

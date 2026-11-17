@@ -7,7 +7,8 @@
  *
  * 枠の色だけでなく、ターミナルの配色も自作テーマを引けないと Tokyo Night で描かれる。
  * そのため、読み込んだ自作テーマの定義も覚えておき、起動直後のカタログに入れる
- * （saveUserThemesCache / loadCachedUserThemes）。自作の背景は SVG の中身も覚えておく。
+ * （saveUserThemesCache / loadCachedUserThemes）。自作の背景は、使っているテーマのものだけ
+ * SVG の中身も覚えておく（合計 1 MiB まで）。
  *
  * 窓に当てたテーマの ID も覚えておく（loadCachedWindowThemeId）。設定の復元を待たずに、
  * 初回の描画から背景を出すため。組み込みのシーンは ID からすぐ描ける。
@@ -32,6 +33,12 @@ const MAX_CACHED_THEMES = 100;
 
 /** キャッシュに入れる背景の SVG の上限（バイト）。themes フォルダで読む SVG の上限と同じ。 */
 export const MAX_CACHED_SVG_BYTES = 256 * 1024;
+
+/**
+ * キャッシュに入れる背景の SVG の合計の上限（バイト）。localStorage は 1 オリジンで数 MiB
+ * しか無く、ほかの保存（設定・タブ）と分け合うので、SVG はこの合計までにする。
+ */
+export const MAX_CACHED_SVG_TOTAL_BYTES = 1024 * 1024;
 
 /** テーマ ID の上限（文字数）。壊れた値で長い文字列を抱えない。 */
 const MAX_THEME_ID_LENGTH = 256;
@@ -119,18 +126,13 @@ interface CachedUserTheme {
 
 /**
  * テーマをキャッシュの 1 件にする。
- * 背景の SVG は上限 (MAX_CACHED_SVG_BYTES) までで、超えるもの・withSvg が false のときは
- * 背景を外して配色だけを覚える（読み込みが終われば背景付きに戻る）。
+ * withSvg が true のときだけ背景の SVG も入れる。false のときは背景を外して配色だけを
+ * 覚える（読み込みが終われば背景付きに戻る）。
  */
 function toCacheEntry(theme: ThemeDefinition, withSvg: boolean): CachedUserTheme {
   const { id, name, appearance, ui, terminal, backdrop, glass } = theme;
   const entry: CachedUserTheme = { id, name, appearance, ui, terminal };
-  if (
-    withSvg &&
-    backdrop?.kind === 'user' &&
-    glass !== undefined &&
-    svgBytes(backdrop.svg) <= MAX_CACHED_SVG_BYTES
-  ) {
+  if (withSvg && backdrop?.kind === 'user' && glass !== undefined) {
     entry.backdrop = { svg: backdrop.fileName, glass };
     entry.backdropSvg = backdrop.svg;
   }
@@ -138,17 +140,51 @@ function toCacheEntry(theme: ThemeDefinition, withSvg: boolean): CachedUserTheme
 }
 
 /**
+ * 背景の SVG もキャッシュに入れるテーマの ID。
+ *
+ * 使っているテーマ (usedThemeIds) の自作の背景だけを、usedThemeIds の順に入れていく。
+ * 1 つの SVG が MAX_CACHED_SVG_BYTES を超えるもの、合計が MAX_CACHED_SVG_TOTAL_BYTES を
+ * 超えてしまうものは入れない（配色だけを覚える）。
+ */
+function themesWithCachedSvg(
+  themes: readonly ThemeDefinition[],
+  usedThemeIds: readonly string[],
+): Set<string> {
+  const withSvg = new Set<string>();
+  let total = 0;
+  for (const id of usedThemeIds) {
+    if (withSvg.has(id)) continue;
+    const backdrop = themes.find((theme) => theme.id === id)?.backdrop;
+    if (backdrop?.kind !== 'user') continue;
+    const bytes = svgBytes(backdrop.svg);
+    if (bytes > MAX_CACHED_SVG_BYTES || total + bytes > MAX_CACHED_SVG_TOTAL_BYTES) continue;
+    total += bytes;
+    withSvg.add(id);
+  }
+  return withSvg;
+}
+
+/**
  * 読み込んだ自作テーマの定義を保存する。失敗しても無視する（次回の起動でちらつくだけ）。
  *
  * テーマファイルと同じ形 (name / appearance / ui / terminal / backdrop) で保存し、取り出すときに
  * parseThemeFile で検証し直す。壊れた値をそのままカタログに入れないため。
- * 背景の SVG を入れると容量を超える場合は、SVG を外して配色だけを保存し直す。
+ * 背景の SVG は使っているテーマのものだけを、合計の上限まで入れる（themesWithCachedSvg）。
+ * 使っていないテーマの背景は、次の起動直後は配色だけになり、themes フォルダを読み終えると
+ * 背景付きに戻る。それでも容量を超える場合は、SVG を外して配色だけを保存し直す。
+ * @param themes - 読み込んだ自作テーマ
+ * @param usedThemeIds - 使っているテーマの ID（アプリの設定のテーマ・各タブの上書き）。
+ *   先に並べたものから SVG を入れる
  */
-export function saveUserThemesCache(themes: readonly ThemeDefinition[]): void {
-  const save = (withSvg: boolean) =>
+export function saveUserThemesCache(
+  themes: readonly ThemeDefinition[],
+  usedThemeIds: readonly string[],
+): void {
+  const withSvg = themesWithCachedSvg(themes, usedThemeIds);
+  const save = (includeSvg: boolean) =>
     localStorage.setItem(
       USER_THEMES_CACHE_KEY,
-      JSON.stringify(themes.map((theme) => toCacheEntry(theme, withSvg))),
+      JSON.stringify(themes.map((theme) => toCacheEntry(theme, includeSvg && withSvg.has(theme.id)))),
     );
   try {
     save(true);

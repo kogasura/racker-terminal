@@ -233,16 +233,17 @@ function ThemeSettingsSection({
 
 /**
  * 背景透明度の欄。背景付きのテーマでは背景の絵が下地になるため使わない。
- * そのときはスライダーを無効にし、その旨を出す（値は保持する）。
+ * そのときはその旨を注記する。スライダーは無効にしない（お気に入りで配色だけのテーマを
+ * 付けたタブでは効くため）。
  */
 function TransparencyField({
   value,
   onChange,
-  disabledByBackdrop,
+  backdropSelected,
 }: {
   value: number;
   onChange: (transparency: number) => void;
-  disabledByBackdrop: boolean;
+  backdropSelected: boolean;
 }) {
   return (
     <div className="dialog-field">
@@ -254,13 +255,12 @@ function TransparencyField({
         max="1"
         step="0.05"
         value={value}
-        disabled={disabledByBackdrop}
         aria-label="背景透明度"
         onChange={(e) => onChange(parseFloat(e.target.value))}
       />
       <small className="dialog-hint">
-        {disabledByBackdrop
-          ? '背景付きのテーマでは使いません。'
+        {backdropSelected
+          ? '背景付きのテーマでは使いません（配色だけのテーマのタブでは効きます）。'
           : '透明度は frameless window モードでのみ有効です。'}
       </small>
     </div>
@@ -420,7 +420,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <TransparencyField
               value={draft.transparency ?? 1.0}
               onChange={(transparency) => setDraft({ ...draft, transparency })}
-              disabledByBackdrop={backdropSelected}
+              backdropSelected={backdropSelected}
             />
 
             <label className="dialog-field dialog-field--checkbox">

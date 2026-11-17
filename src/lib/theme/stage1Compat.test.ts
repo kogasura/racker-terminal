@@ -2,7 +2,10 @@
  * 第 1 段（v1.9.16）との互換を確かめる。
  *
  * 背景付きのテーマを足しても、配色だけの 6 種の値と、glass の無いテーマの CSS 変数は
- * 第 1 段から変わらない（--rk-glass-blur: 0px が増えるだけ）。
+ * 第 1 段から変わらない。増えるのは次の 2 つだけで、どちらも見た目を変えない。
+ * - --rk-glass-filter: none（backdrop-filter を付けない）
+ * - --context-menu-bg: variables.css の既定値と同じ式（背景付きのテーマから切り替えたときに
+ *   すりガラスの色を残さないため、毎回当て直す）
  * 期待値は v1.9.16 の builtinThemes.ts / cssVars.ts から写したもの。
  */
 import { describe, it, expect } from 'vitest';
@@ -188,6 +191,12 @@ function stage1CssVars(theme: ThemeDefinition, alpha: number): Record<string, st
   };
 }
 
+/** 第 1 段から増えた変数。glass の無いテーマでは見た目を変えない値になる。 */
+const STAGE2_PALETTE_VARS = {
+  '--rk-glass-filter': 'none',
+  '--context-menu-bg': 'color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar))',
+};
+
 describe('第 1 段との互換', () => {
   it.each(STAGE1_PALETTE_THEMES.map((t, i) => [t.id, t, i] as const))(
     '%s: 配色だけの組み込みテーマの値が第 1 段から変わらない',
@@ -198,13 +207,13 @@ describe('第 1 段との互換', () => {
 
   it.each(
     STAGE1_PALETTE_THEMES.flatMap((t) => [1, 0.85, 0.7].map((alpha) => [t.id, alpha, t] as const)),
-  )('%s (透明度 %s): glass の無いテーマの CSS 変数は第 1 段と同じで、--rk-glass-blur: 0px だけが増える', (id, alpha, stage1) => {
+  )('%s (透明度 %s): glass の無いテーマの CSS 変数は第 1 段と同じで、増えるのは none の filter と既定のメニューの面だけ', (id, alpha, stage1) => {
     const current = BUILTIN_THEMES.find((t) => t.id === id);
     expect(current).toBeDefined();
     if (!current) return;
     expect(buildCssVars(current, alpha)).toEqual({
       ...stage1CssVars(stage1, alpha),
-      '--rk-glass-blur': '0px',
+      ...STAGE2_PALETTE_VARS,
     });
   });
 
@@ -218,7 +227,7 @@ describe('第 1 段との互換', () => {
     };
     expect(buildCssVars(user, 0.9)).toEqual({
       ...stage1CssVars(user, 0.9),
-      '--rk-glass-blur': '0px',
+      ...STAGE2_PALETTE_VARS,
     });
   });
 });

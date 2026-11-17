@@ -137,6 +137,22 @@ export function resolveTabTheme(
   return override ?? resolveTheme(catalog, appThemeId);
 }
 
+/**
+ * 使っているテーマの ID。アプリの設定のテーマが先、各タブの上書き (themeId) が後で、重複は除く。
+ * 起動時のキャッシュに背景の SVG を入れるテーマを選ぶのに使う（試しに表示は含めない）。
+ * 窓のテーマ（アクティブなタブの上書き → アプリの設定）はこの中に入っている。
+ */
+export function selectUsedThemeIds(
+  appThemeId: string,
+  tabs: Readonly<Record<string, { readonly themeId?: string } | undefined>>,
+): string[] {
+  const ids = new Set<string>([appThemeId]);
+  for (const tab of Object.values(tabs)) {
+    if (tab?.themeId !== undefined) ids.add(tab.themeId);
+  }
+  return [...ids];
+}
+
 /** 試しに表示しているテーマを、どのタブのターミナルに当てるか。 */
 export interface RuntimePreview {
   /** アクティブなタブ。試しに表示のテーマはこのタブのターミナルにだけ当てる */

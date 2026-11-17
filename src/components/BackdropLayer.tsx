@@ -10,6 +10,8 @@
  * - テーマが変わったら、新しい iframe を上に重ね、読み込めたら 300ms でフェードインする。
  *   下の 1 枚はフェードが終わるまで不透明のまま残す（窓は透明なので、両方を薄めると
  *   下地が透けるため）。フェードの途中で切り替えても、フェードを終えた 1 枚を下地に残す。
+ * - 下に表示済みの iframe が無いとき（起動直後・配色だけのテーマからの切り替え）は、
+ *   フェードせずに読み込めた時点でそのまま出す（窓の下地から絵が浮き出てくるのを見せない）。
  * - 見えている背景に戻すときは iframe を作り直さない（アニメーションが最初からやり直しに
  *   ならないように）。
  * - 背景の無いテーマ（配色だけ）では何も描かない。
@@ -62,10 +64,15 @@ interface Frame {
   readonly loaded: boolean;
   /** フェードインが終わったか（不透明になったか）。下地に残すのはこれが立った 1 枚 */
   readonly settled: boolean;
+  /**
+   * フェードせずに出すか。作ったときに下に表示済みの iframe が無かった 1 枚
+   * （起動直後・配色だけのテーマからの切り替え）。読み込めたらすぐ不透明にする
+   */
+  readonly instant: boolean;
 }
 
-function newFrame(id: number, svg: string): Frame {
-  return { id, svg, doc: buildBackdropDocument(svg), loaded: false, settled: false };
+function newFrame(id: number, svg: string, instant: boolean): Frame {
+  return { id, svg, doc: buildBackdropDocument(svg), loaded: false, settled: false, instant };
 }
 
 /** 並んでいる iframe と、最後に振った id。 */
@@ -79,7 +86,9 @@ interface FrameStack {
 }
 
 function initialStack(svg: string | null): FrameStack {
-  return svg === null ? { frames: [], lastId: 0 } : { frames: [newFrame(1, svg)], lastId: 1 };
+  return svg === null
+    ? { frames: [], lastId: 0 }
+    : { frames: [newFrame(1, svg, true)], lastId: 1 };
 }
 
 /** 条件に合う最後の 1 枚の位置。無ければ -1。 */
@@ -98,6 +107,7 @@ function lastIndexOf(frames: readonly Frame[], match: (frame: Frame) => boolean)
  * - そうでなければ、新しい 1 枚を下地の上に重ねる。下地はフェードを終えた最後の 1 枚。
  *   まだ 1 枚もフェードを終えていなければ、フェード中のもの（読み込み済み）を残す。
  *   読み込み中だった 1 枚は捨てる（切り替えを続けて押しても、重なりすぎないように）。
+ *   下地が 1 枚も無ければ、新しい 1 枚はフェードせずに出す。
  */
 function nextFrames(stack: FrameStack, svg: string | null): FrameStack | null {
   const { frames, lastId } = stack;
@@ -108,7 +118,7 @@ function nextFrames(stack: FrameStack, svg: string | null): FrameStack | null {
   if (reuse >= 0) return { frames: frames.slice(0, reuse + 1), lastId };
   const settled = lastIndexOf(frames, (frame) => frame.settled);
   const base = settled >= 0 ? [frames[settled]] : frames.filter((frame) => frame.loaded);
-  return { frames: [...base, newFrame(lastId + 1, svg)], lastId: lastId + 1 };
+  return { frames: [...base, newFrame(lastId + 1, svg, base.length === 0)], lastId: lastId + 1 };
 }
 
 /**
@@ -124,10 +134,19 @@ function settleFrame(stack: FrameStack, id: number): FrameStack {
   return { ...stack, frames };
 }
 
-/** 読み込めた 1 枚に印を付ける。 */
+/** 読み込めた 1 枚に印を付ける。フェードせずに出す 1 枚は、そのままフェードも終えた扱いにする。 */
 function loadFrame(stack: FrameStack, id: number): FrameStack {
-  const frames = stack.frames.map((frame) => (frame.id === id ? { ...frame, loaded: true } : frame));
+  const frames = stack.frames.map((frame) =>
+    frame.id === id ? { ...frame, loaded: true, settled: frame.settled || frame.instant } : frame,
+  );
   return { ...stack, frames };
+}
+
+function frameClassName(frame: Frame): string {
+  let name = 'backdrop-layer__frame';
+  if (frame.instant) name += ' backdrop-layer__frame--instant';
+  if (frame.loaded) name += ' backdrop-layer__frame--shown';
+  return name;
 }
 
 /** 描く SVG と連動の値から iframe を並べる。テスト用に export する。 */
@@ -160,10 +179,12 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
     };
   }, []);
 
-  const handleLoad = useCallback((id: number) => {
+  const handleLoad = useCallback((id: number, instant: boolean) => {
     const doc = iframes.current.get(id)?.contentDocument;
     if (doc) applyBackdropSignals(doc, signals.current);
     setStack((current) => loadFrame(current, id));
+    // フェードしない 1 枚は、下に外す iframe も無いので待たない
+    if (instant) return;
     // フェードインが終わったら不透明になったと印を付け、下の古い iframe を外す
     if (fadeTimers.current.has(id)) return;
     fadeTimers.current.set(
@@ -200,12 +221,12 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
         <iframe
           key={frame.id}
           ref={iframeRef(frame.id)}
-          className={`backdrop-layer__frame${frame.loaded ? ' backdrop-layer__frame--shown' : ''}`}
+          className={frameClassName(frame)}
           title="背景"
           sandbox="allow-same-origin"
           srcDoc={frame.doc}
           tabIndex={-1}
-          onLoad={() => handleLoad(frame.id)}
+          onLoad={() => handleLoad(frame.id, frame.instant)}
         />
       ))}
     </div>

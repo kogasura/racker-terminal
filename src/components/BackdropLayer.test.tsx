@@ -191,6 +191,60 @@ describe('BackdropFrames', () => {
     expect(frames(container)).toEqual([first]);
   });
 
+  it('起動直後の 1 枚はフェードせず、読み込めた時点で不透明の下地になる', () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+    const [first] = frames(container);
+    expect(first.classList.contains('backdrop-layer__frame--instant')).toBe(true);
+    expect(first.classList.contains('backdrop-layer__frame--shown')).toBe(false);
+
+    load(first);
+    expect(first.classList.contains('backdrop-layer__frame--shown')).toBe(true);
+
+    // フェードの時間を待たずに切り替えても、最初の 1 枚が下地に残り、新しい 1 枚はフェードする
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+    const [base, next] = frames(container);
+    expect(base).toBe(first);
+    expect(next.classList.contains('backdrop-layer__frame--instant')).toBe(false);
+    load(next);
+    act(() => {
+      vi.advanceTimersByTime(BACKDROP_FADE_MS);
+    });
+    expect(frames(container)).toEqual([next]);
+  });
+
+  it('配色だけのテーマから背景付きに切り替えたときはフェードしない', () => {
+    const { container, rerender } = render(<BackdropFrames {...BASE} svg={null} />);
+
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+
+    const [iframe] = frames(container);
+    expect(iframe.classList.contains('backdrop-layer__frame--instant')).toBe(true);
+    load(iframe);
+    expect(iframe.classList.contains('backdrop-layer__frame--shown')).toBe(true);
+  });
+
+  it('読み込み中の 1 枚しか無いうちに切り替えても、新しい 1 枚はフェードしない', () => {
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+
+    const [iframe] = frames(container);
+    expect(frames(container)).toHaveLength(1);
+    expect(iframe.getAttribute('srcdoc')).toBe(buildBackdropDocument(SVG_B));
+    expect(iframe.classList.contains('backdrop-layer__frame--instant')).toBe(true);
+  });
+
+  it('背景どうしの切り替えはフェードする', () => {
+    const { container, rerender } = render(<BackdropFrames {...BASE} />);
+    load(frames(container)[0]);
+
+    rerender(<BackdropFrames {...BASE} svg={SVG_B} />);
+
+    const next = frames(container)[1];
+    expect(next.classList.contains('backdrop-layer__frame--instant')).toBe(false);
+  });
+
   it('背景の無いテーマに切り替えたら何も描かない', () => {
     const { container, rerender } = render(<BackdropFrames {...BASE} />);
     load(frames(container)[0]);

@@ -58,14 +58,32 @@ export function partitionThemeFiles(files: readonly UserThemeFile[]): {
   return { themes, errors };
 }
 
+/**
+ * themes フォルダを読んで検証する。失敗しても投げずに、理由を errors に入れて返す。
+ * 投げると `theme/loaded` が届かず、Mediator が loading のまま止まってしまうため。
+ */
+async function loadThemes(deps: EffectDeps): Promise<{
+  themes: ThemeDefinition[];
+  errors: ThemeFileError[];
+}> {
+  try {
+    return partitionThemeFiles(await deps.listUserThemes());
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    return {
+      themes: [],
+      errors: [{ fileName: 'themes', error: `テーマを読み込めませんでした: ${detail}` }],
+    };
+  }
+}
+
 /** 副作用の実行係を作る。テストでは `deps` を差し替える。 */
 export function createEffectRunner(deps: EffectDeps = defaultDeps) {
   return function run(effect: ThemeEffect, send: (event: ThemeEvent) => void): void {
     switch (effect.kind) {
       case 'load':
         void (async () => {
-          const files = await deps.listUserThemes();
-          send({ type: 'theme/loaded', ...partitionThemeFiles(files) });
+          send({ type: 'theme/loaded', ...(await loadThemes(deps)) });
         })();
         return;
 

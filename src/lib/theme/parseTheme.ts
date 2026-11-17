@@ -38,7 +38,9 @@ export function parseThemeFile(fileName: string, content: string): ParseThemeRes
     return { ok: true, theme: buildTheme(fileName, content) };
   } catch (e) {
     if (e instanceof ThemeFileError) return { ok: false, fileName, error: e.message };
-    throw e;
+    // 想定外の失敗でも 1 ファイルの問題に留める。投げると読み込み全体が止まる。
+    const detail = e instanceof Error ? e.message : String(e);
+    return { ok: false, fileName, error: `テーマを読み込めませんでした: ${detail}` };
   }
 }
 
@@ -59,6 +61,17 @@ function buildTheme(fileName: string, content: string): ThemeDefinition {
   const terminal = mergePalette<TerminalPalette>('terminal', terminalBase, terminalInput);
 
   return { id: `user:${stemOf(fileName)}`, name, appearance, source: 'user', ui, terminal };
+}
+
+/**
+ * エラー文に載せる値の表記。
+ * オブジェクトと配列は型名だけにする。深くネストした値を JSON.stringify すると
+ * スタックを使い切って RangeError になるため。
+ */
+function describeValue(value: unknown): string {
+  if (Array.isArray(value)) return '配列';
+  if (typeof value === 'object' && value !== null) return 'オブジェクト';
+  return JSON.stringify(value);
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -84,7 +97,7 @@ function readName(value: unknown): string {
     throw new ThemeFileError('name がありません。テーマの表示名を書いてください');
   }
   if (typeof value !== 'string') {
-    throw new ThemeFileError(`name: ${JSON.stringify(value)} は文字列で書いてください`);
+    throw new ThemeFileError(`name: ${describeValue(value)} は文字列で書いてください`);
   }
   const name = value.trim();
   if (name === '') throw new ThemeFileError('name が空です。テーマの表示名を書いてください');
@@ -103,7 +116,7 @@ function readAppearance(value: unknown): ThemeAppearance {
   if (value === undefined) return 'dark';
   if (value === 'dark' || value === 'light') return value;
   throw new ThemeFileError(
-    `appearance: ${JSON.stringify(value)} は "dark" か "light" のどちらかにしてください`,
+    `appearance: ${describeValue(value)} は "dark" か "light" のどちらかにしてください`,
   );
 }
 
@@ -135,7 +148,7 @@ function mergePalette<T extends object>(section: string, base: T, input: JsonObj
 function normalizeColor(path: string, value: unknown): string {
   if (typeof value !== 'string' || !HEX_COLOR.test(value)) {
     throw new ThemeFileError(
-      `${path}: ${JSON.stringify(value)} は色として読めません（#rgb か #rrggbb で書いてください）`,
+      `${path}: ${describeValue(value)} は色として読めません（#rgb か #rrggbb で書いてください）`,
     );
   }
   const hex = value.slice(1).toLowerCase();

@@ -11,7 +11,7 @@ import {
 } from '../lib/profileTemplates';
 import { useWslDistrosView } from '../features/tabs/TabsRoot';
 import { useThemeView } from '../features/theme/ThemeRoot';
-import { ThemeOptionGroups } from './SettingsDialog';
+import { ThemeOptionGroups } from './ThemeOptionGroups';
 
 interface FavoriteDialogProps {
   mode: 'add' | 'edit';

@@ -2,9 +2,19 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUILTIN_THEMES, TOKYO_NIGHT } from '../../lib/theme/builtinThemes';
+import { BUILTIN_THEMES, RACKER_PAPER, TOKYO_NIGHT } from '../../lib/theme/builtinThemes';
 import { buildCssVars } from '../../lib/theme/cssVars';
-import { applyCachedThemeVars, applyThemeVars, saveThemeCache, THEME_CACHE_KEY } from './themeCache';
+import { parseThemeFile } from '../../lib/theme/parseTheme';
+import type { ThemeDefinition } from '../../lib/theme/types';
+import {
+  applyCachedThemeVars,
+  applyThemeVars,
+  loadCachedUserThemes,
+  saveThemeCache,
+  saveUserThemesCache,
+  THEME_CACHE_KEY,
+  USER_THEMES_CACHE_KEY,
+} from './themeCache';
 
 // vitest は CSS を処理しない設定なので `?raw` でも中身が空になる。ファイルとして直接読む。
 // (URL は happy-dom の実装に差し替わっていて file: を解決できないので、パスで組み立てる)
@@ -113,5 +123,85 @@ describe('themeCache', () => {
 
     expect(() => applyCachedThemeVars()).not.toThrow();
     expect(() => saveThemeCache({ '--rk-accent': '#000000' })).not.toThrow();
+  });
+});
+
+describe('自作テーマのキャッシュ', () => {
+  /** themes フォルダから読んだのと同じ手順でテーマを作る。 */
+  function userTheme(fileName: string, json: unknown): ThemeDefinition {
+    const result = parseThemeFile(fileName, JSON.stringify(json));
+    if (!result.ok) throw new Error(result.error);
+    return result.theme;
+  }
+
+  const sunset = userTheme('sunset.json', { name: 'Sunset', ui: { accent: '#f80', bg: '#201010' } });
+  const paper = userTheme('my-paper.json', { name: 'My Paper', appearance: 'light' });
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('保存したテーマを、次の起動で同じ定義として取り出せる', () => {
+    saveUserThemesCache([sunset, paper]);
+
+    expect(loadCachedUserThemes()).toEqual([sunset, paper]);
+    expect(loadCachedUserThemes()[1].terminal).toEqual(RACKER_PAPER.terminal);
+  });
+
+  it('保存が無ければ空', () => {
+    expect(loadCachedUserThemes()).toEqual([]);
+  });
+
+  it('空の一覧を保存すると、前回のキャッシュを消す (ファイルを消したテーマを引かない)', () => {
+    saveUserThemesCache([sunset]);
+    saveUserThemesCache([]);
+
+    expect(loadCachedUserThemes()).toEqual([]);
+  });
+
+  it('壊れた中身では例外にせず空', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(USER_THEMES_CACHE_KEY, '{not json');
+    expect(loadCachedUserThemes()).toEqual([]);
+
+    localStorage.setItem(USER_THEMES_CACHE_KEY, JSON.stringify({ id: 'user:x' }));
+    expect(loadCachedUserThemes()).toEqual([]);
+  });
+
+  it('検証を通らない項目だけを捨てる', () => {
+    const good = { id: sunset.id, name: sunset.name, appearance: 'dark', ui: sunset.ui, terminal: sunset.terminal };
+    localStorage.setItem(
+      USER_THEMES_CACHE_KEY,
+      JSON.stringify([
+        good,
+        // 色が読めない
+        { ...good, id: 'user:bad-color', ui: { ...sunset.ui, accent: 'red' } },
+        // 組み込みの ID を名乗る
+        { ...good, id: 'tokyo-night' },
+        // ID が無い
+        { name: 'No id' },
+        null,
+        'user:sunset',
+      ]),
+    );
+
+    expect(loadCachedUserThemes()).toEqual([sunset]);
+  });
+
+  it('localStorage が使えなくても例外にしない', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+
+    expect(loadCachedUserThemes()).toEqual([]);
+    expect(() => saveUserThemesCache([sunset])).not.toThrow();
   });
 });

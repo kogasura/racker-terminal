@@ -100,6 +100,43 @@ describe('theme: Mediator と副作用の結合', () => {
     expect(state.themes.map((t) => t.id)).toEqual(['user:sunset']);
   });
 
+  it('読み込みが投げても loaded に進み、理由をエラーに入れる (loading で止まらない)', async () => {
+    listUserThemes.mockRejectedValueOnce(new Error('boom'));
+    const m = boot();
+
+    m.send({ type: 'theme/reload-requested' });
+
+    await vi.waitFor(() => expect(m.getState().status).toBe('loaded'));
+    expect(m.getState()).toEqual({
+      status: 'loaded',
+      themes: [],
+      errors: [{ fileName: 'themes', error: 'テーマを読み込めませんでした: boom' }],
+    });
+
+    // 止まっていないので、次の再読み込みでまた読みに行ける
+    listUserThemes.mockResolvedValueOnce([{ fileName: 'sunset.json', content: VALID, error: null }]);
+    m.send({ type: 'theme/reload-requested' });
+    await vi.waitFor(() => expect(listUserThemes).toHaveBeenCalledTimes(2));
+  });
+
+  it('深くネストした値のファイルがあっても loaded に進む', async () => {
+    const depth = 30_000;
+    const deep = `{"name":"x","ui":{"accent":${'['.repeat(depth)}${']'.repeat(depth)}}}`;
+    listUserThemes.mockResolvedValueOnce([
+      { fileName: 'deep.json', content: deep, error: null },
+      { fileName: 'sunset.json', content: VALID, error: null },
+    ]);
+    const m = boot();
+
+    m.send({ type: 'theme/reload-requested' });
+
+    await vi.waitFor(() => expect(m.getState().status).toBe('loaded'));
+    const state = m.getState();
+    if (state.status !== 'loaded') throw new Error('unreachable');
+    expect(state.themes.map((t) => t.id)).toEqual(['user:sunset']);
+    expect(state.errors.map((e) => e.fileName)).toEqual(['deep.json']);
+  });
+
   it('フォルダを開く', () => {
     boot().send({ type: 'theme/open-folder-requested' });
     expect(openThemesDir).toHaveBeenCalledTimes(1);

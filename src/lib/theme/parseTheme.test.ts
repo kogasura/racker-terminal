@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseThemeFile, type ParseThemeResult } from './parseTheme';
 import { RACKER_PAPER, TOKYO_NIGHT } from './builtinThemes';
 import type { ThemeDefinition } from './types';
@@ -182,5 +182,42 @@ describe('parseThemeFile: 失敗', () => {
     expect(errorOf(parse({ name: 'x', ui: { bg: null } }))).toBe(
       'ui.bg: null は色として読めません（#rgb か #rrggbb で書いてください）',
     );
+  });
+
+  it('配列・オブジェクトの値は型名で示す', () => {
+    expect(errorOf(parse({ name: 'x', ui: { accent: ['#fff'] } }))).toBe(
+      'ui.accent: 配列 は色として読めません（#rgb か #rrggbb で書いてください）',
+    );
+    expect(errorOf(parse({ name: { ja: 'x' } }))).toBe('name: オブジェクト は文字列で書いてください');
+    expect(errorOf(parse({ name: 'x', appearance: ['dark'] }))).toBe(
+      'appearance: 配列 は "dark" か "light" のどちらかにしてください',
+    );
+  });
+
+  it('深くネストした値（64 KiB 以内）でも投げずにエラーを返す', () => {
+    const depth = 30_000;
+    const content = `{"name":"x","ui":{"accent":${'['.repeat(depth)}${']'.repeat(depth)}}}`;
+    expect(content.length).toBeLessThan(64 * 1024);
+    const result = parseThemeFile('deep.json', content);
+    expect(result).toEqual({
+      ok: false,
+      fileName: 'deep.json',
+      error: 'ui.accent: 配列 は色として読めません（#rgb か #rrggbb で書いてください）',
+    });
+  });
+
+  it('想定外の例外も投げずに、ファイル単位のエラーにする', () => {
+    const spy = vi.spyOn(Array, 'from').mockImplementation(() => {
+      throw new RangeError('boom');
+    });
+    try {
+      expect(parseThemeFile('odd.json', JSON.stringify({ name: 'x' }))).toEqual({
+        ok: false,
+        fileName: 'odd.json',
+        error: 'テーマを読み込めませんでした: boom',
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

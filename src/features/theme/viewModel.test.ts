@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { BUILTIN_THEMES, TOKYO_NIGHT } from '../../lib/theme/builtinThemes';
 import type { ThemeDefinition } from '../../lib/theme/types';
 import type { ThemeState } from './machine';
-import { resolveTabTheme, selectAppTheme, selectThemeView } from './viewModel';
+import { resolveRuntimeThemes, resolveTabTheme, selectAppTheme, selectThemeView } from './viewModel';
 
 const sunset: ThemeDefinition = { ...TOKYO_NIGHT, id: 'user:sunset', name: 'Sunset', source: 'user' };
 const aurora: ThemeDefinition = { ...TOKYO_NIGHT, id: 'user:aurora', name: 'Aurora', source: 'user' };
@@ -37,7 +37,7 @@ describe('selectThemeView', () => {
   });
 
   it('idle は組み込みだけ・エラーなし・読み込み中扱い', () => {
-    const vm = selectThemeView({ status: 'idle' });
+    const vm = selectThemeView({ status: 'idle', themes: [] });
     expect(vm.options.map((o) => o.id)).toEqual(BUILTIN_THEMES.map((t) => t.id));
     expect(vm.errors).toEqual([]);
     expect(vm.loading).toBe(true);
@@ -72,12 +72,17 @@ describe('selectAppTheme', () => {
   });
 
   it('読み込み前に見つからない ID はまだ当てない (起動時のキャッシュの色を潰さない)', () => {
-    expect(selectAppTheme(selectThemeView({ status: 'idle' }), 'user:sunset')).toBeNull();
+    expect(selectAppTheme(selectThemeView({ status: 'idle', themes: [] }), 'user:sunset')).toBeNull();
+  });
+
+  it('読み込み前でも、キャッシュ済みの自作テーマはすぐ当てる', () => {
+    const idle: ThemeState = { status: 'idle', themes: [sunset] };
+    expect(selectAppTheme(selectThemeView(idle), 'user:sunset')).toBe(sunset);
   });
 
   it('読み込み前でも組み込みテーマはすぐ当てる', () => {
     const nord = BUILTIN_THEMES.find((t) => t.id === 'nord')!;
-    expect(selectAppTheme(selectThemeView({ status: 'idle' }), 'nord')).toBe(nord);
+    expect(selectAppTheme(selectThemeView({ status: 'idle', themes: [] }), 'nord')).toBe(nord);
   });
 });
 
@@ -93,8 +98,41 @@ describe('resolveTabTheme', () => {
     expect(resolveTabTheme(catalog, undefined, 'nord')).toBe(nord);
   });
 
+  it('idle でもキャッシュ済みの自作テーマを解決できる (起動直後に Tokyo Night で描かない)', () => {
+    const idleCatalog = selectThemeView({ status: 'idle', themes: [sunset] }).catalog;
+    expect(resolveTabTheme(idleCatalog, undefined, 'user:sunset')).toBe(sunset);
+    expect(resolveTabTheme(idleCatalog, 'user:sunset', 'nord')).toBe(sunset);
+  });
+
   it('見つからない ID は Tokyo Night にフォールバックする', () => {
     expect(resolveTabTheme(catalog, 'user:deleted', 'nord')).toBe(TOKYO_NIGHT);
     expect(resolveTabTheme(catalog, undefined, 'no-such-theme')).toBe(TOKYO_NIGHT);
+  });
+});
+
+describe('resolveRuntimeThemes', () => {
+  const catalog = selectThemeView(loaded).catalog;
+  const nord = BUILTIN_THEMES.find((t) => t.id === 'nord')!;
+
+  it('タブの上書きがあればそれ、無ければアプリの設定のテーマを runtime ごとに返す', () => {
+    const tabs = { a: { themeId: 'user:sunset' }, b: {} };
+
+    expect(resolveRuntimeThemes([['a', 'rt-a'], ['b', 'rt-b']], tabs, catalog, 'nord')).toEqual([
+      ['rt-a', sunset],
+      ['rt-b', nord],
+    ]);
+  });
+
+  it('runtime はあるのにタブが無ければ、アプリの設定のテーマにする', () => {
+    expect(resolveRuntimeThemes([['gone', 'rt']], {}, catalog, 'nord')).toEqual([['rt', nord]]);
+  });
+
+  it('見つからない ID は Tokyo Night にフォールバックする', () => {
+    const tabs = { a: { themeId: 'user:deleted' } };
+    expect(resolveRuntimeThemes([['a', 'rt']], tabs, catalog, 'nord')).toEqual([['rt', TOKYO_NIGHT]]);
+  });
+
+  it('runtime が無ければ空', () => {
+    expect(resolveRuntimeThemes([], { a: {} }, catalog, 'nord')).toEqual([]);
   });
 });

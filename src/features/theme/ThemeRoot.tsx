@@ -8,6 +8,8 @@
  *      次回起動のちらつき対策に localStorage へ保存する
  *   3. 選択肢とエラーの一覧を `useThemeView()` で配る（設定ダイアログ・お気に入り
  *      ダイアログ・ターミナルの手入れが使う）
+ *   4. 読み込んだ自作テーマを localStorage に覚えておき、次回の起動直後のカタログに
+ *      入れる（ターミナルの配色が一瞬 Tokyo Night になるのを防ぐ）
  *
  * 選んだテーマの ID は設定の一部なので SettingsRoot から受け取る。この Root は
  * SettingsRoot の内側に置く。透明度の反映もここが持つ（`--bg-alpha` に依存する背景の
@@ -30,8 +32,13 @@ import { buildCssVars } from '../../lib/theme/cssVars';
 import { useSettingsView } from '../settings/SettingsRoot';
 import { createEffectRunner, type EffectDeps } from './effects';
 import type { ThemeEvent } from './events';
-import { initialState, transition, type ThemeEffect, type ThemeState } from './machine';
-import { applyThemeVars, saveThemeCache } from './themeCache';
+import { createInitialState, transition, type ThemeEffect, type ThemeState } from './machine';
+import {
+  applyThemeVars,
+  loadCachedUserThemes,
+  saveThemeCache,
+  saveUserThemesCache,
+} from './themeCache';
 import { selectAppTheme, selectThemeView, type ThemeViewModel } from './viewModel';
 
 const ThemeViewContext = createContext<ThemeViewModel | null>(null);
@@ -63,7 +70,7 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   const machineRef = useRef<Machine<ThemeState, ThemeEvent> | null>(null);
   if (!machineRef.current) {
     machineRef.current = createMachine<ThemeState, ThemeEvent, ThemeEffect>({
-      initial: initialState,
+      initial: createInitialState(loadCachedUserThemes()),
       transition,
       run: createEffectRunner(deps),
     });
@@ -83,6 +90,11 @@ export function ThemeRoot({ children, ready, deps }: ThemeRootProps) {
   useEffect(() => {
     machine.send({ type: 'theme/reload-requested' });
   }, [machine]);
+
+  // 読み込みが終わったら、次回の起動のために自作テーマを覚えておく。
+  useEffect(() => {
+    if (state.status === 'loaded') saveUserThemesCache(state.themes);
+  }, [state]);
 
   const view = useMemo(() => selectThemeView(state), [state]);
   const appTheme = ready ? selectAppTheme(view, settings.theme) : null;

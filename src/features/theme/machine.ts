@@ -10,7 +10,9 @@
  * ```
  *
  * - `idle` は起動直後の「まだ一度も読みに行っていない」状態。Root が起動時に
- *   `reload-requested` を流して `loading` へ進める。
+ *   `reload-requested` を流して `loading` へ進める。`idle` と初回の `loading` は、
+ *   前回の起動で読み込んだテーマ（localStorage のキャッシュ）を持つ。起動直後から
+ *   自作テーマを引けるようにして、ターミナルが一瞬 Tokyo Night で描かれるのを防ぐ。
  * - 読み込み中に `reload-requested` が来たら、いま走っている読み込みが始まった後に
  *   ファイルが書き換えられた可能性がある。捨てずに覚えておき、結果が返ったらもう一度読む。
  * - 再読み込みの間も前回の結果は持ち続ける。選択中の自作テーマが一瞬消えて
@@ -25,10 +27,14 @@ import type { ThemeDefinition } from '../../lib/theme/types';
 import type { ThemeEvent, ThemeFileError } from './events';
 
 export type ThemeState =
-  | { readonly status: 'idle' }
+  | {
+      readonly status: 'idle';
+      /** 前回の起動で読み込んだテーマ（キャッシュ。無ければ空） */
+      readonly themes: readonly ThemeDefinition[];
+    }
   | {
       readonly status: 'loading';
-      /** 前回読み込んだ結果（初回は空）。読み込みが終わるまではこれを使う */
+      /** 前回読み込んだ結果（初回はキャッシュ）。読み込みが終わるまではこれを使う */
       readonly themes: readonly ThemeDefinition[];
       readonly errors: readonly ThemeFileError[];
       /** 読み込み中に再読み込みを頼まれたか。true なら結果が返ったあともう一度読む */
@@ -46,7 +52,12 @@ export type ThemeEffect =
   | { readonly kind: 'open-folder' }
   | { readonly kind: 'create-with-claude' };
 
-export const initialState: ThemeState = { status: 'idle' };
+/** 前回の起動で読み込んだテーマ（キャッシュ）を持たせた初期状態を作る。 */
+export function createInitialState(cachedThemes: readonly ThemeDefinition[]): ThemeState {
+  return { status: 'idle', themes: cachedThemes };
+}
+
+export const initialState: ThemeState = createInitialState([]);
 
 const LOAD: ThemeEffect = { kind: 'load' };
 
@@ -61,7 +72,7 @@ const handlers: HandlerMap = {
   'theme/reload-requested': (state) => {
     if (state.status === 'idle') {
       return {
-        state: { status: 'loading', themes: [], errors: [], reloadQueued: false },
+        state: { status: 'loading', themes: state.themes, errors: [], reloadQueued: false },
         effects: [LOAD],
       };
     }

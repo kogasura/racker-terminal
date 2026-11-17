@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TOKYO_NIGHT } from '../../lib/theme/builtinThemes';
 import type { ThemeDefinition } from '../../lib/theme/types';
-import { initialState, transition, type ThemeState } from './machine';
+import { createInitialState, initialState, transition, type ThemeState } from './machine';
 import type { ThemeEvent, ThemeFileError } from './events';
 
 // 遷移関数は純粋なので、非同期も I/O も無しで全パターンを踏める。
@@ -34,7 +34,14 @@ const loadedState: ThemeState = { status: 'loaded', themes: [sunset], errors: [b
 describe('theme machine', () => {
   describe('起動時', () => {
     it('初期状態は idle (まだ読みに行っていない)', () => {
-      expect(initialState).toEqual({ status: 'idle' });
+      expect(initialState).toEqual({ status: 'idle', themes: [] });
+    });
+
+    it('前回のキャッシュを持たせた idle → loading でも、キャッシュのテーマを持ち続ける', () => {
+      const cached = createInitialState([sunset]);
+      expect(cached).toEqual({ status: 'idle', themes: [sunset] });
+      expect(next(cached, RELOAD)).toEqual({ ...loading, themes: [sunset] });
+      expect(effects(cached, RELOAD)).toEqual(['load']);
     });
 
     it('idle → loading し、load 副作用を出す', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   acquireRuntime,
   releaseRuntime,
@@ -1277,6 +1277,109 @@ describe('planTerminalTheme', () => {
     const paint = planTerminalTheme(TOKYO_NIGHT, OTHER_THEME, 0.8);
     expect(paint!.theme.background).toMatch(/^rgba\(.*, 0\)$/);
     expect(paint!.hostBackground).toMatch(/, 0\.8\)$/);
+  });
+});
+
+// --- runtime の applyTerminalTheme と applySettings の組み合わせ ---
+// xterm は happy-dom でも open できるので、本物の createRuntime で確かめる。
+
+import { createRuntime } from './terminalRegistry';
+import type { Settings } from '../types';
+
+describe('createRuntime: テーマの差し替え', () => {
+  const EMBER = BUILTIN_THEMES.find((t) => t.id === 'racker-ember')!;
+  const SETTINGS: Settings = {
+    theme: TOKYO_NIGHT.id,
+    fontFamily: 'monospace',
+    fontSize: 14,
+    scrollback: 1000,
+    transparency: 1,
+  };
+  const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+  const runtimes: TerminalRuntime[] = [];
+
+  beforeEach(() => {
+    // happy-dom には document.fonts が無い (createRuntime がフォントの読み込みを待つ)
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { load: () => Promise.resolve([]) },
+    });
+  });
+
+  afterEach(() => {
+    for (const runtime of runtimes.splice(0)) runtime.dispose();
+    if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts);
+    else Reflect.deleteProperty(document, 'fonts');
+  });
+
+  function create(theme: ThemeDefinition = TOKYO_NIGHT): { runtime: TerminalRuntime; div: HTMLDivElement } {
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    const runtime = createRuntime(div, SETTINGS, 'theme-runtime', theme, {
+      onLive: () => {},
+      isEditing: () => false,
+      onOscTitle: () => {},
+      onCwdChange: () => {},
+    });
+    runtimes.push(runtime);
+    return { runtime, div };
+  }
+
+  const hostBg = (div: HTMLDivElement) => div.style.getPropertyValue('--terminal-bg');
+
+  it('生成時の配色で xterm とホスト要素の --terminal-bg を塗る', () => {
+    const { runtime, div } = create(EMBER);
+
+    expect(runtime.term.options.theme?.foreground).toBe(EMBER.terminal.foreground);
+    expect(hostBg(div)).toBe(buildTerminalThemePaint(EMBER, 1).hostBackground);
+  });
+
+  it('変化があれば theme と --terminal-bg を差し替える', () => {
+    const { runtime, div } = create();
+
+    runtime.applyTerminalTheme(EMBER);
+
+    expect(runtime.term.options.theme).toEqual(buildTerminalThemePaint(EMBER, 1).theme);
+    expect(hostBg(div)).toBe(buildTerminalThemePaint(EMBER, 1).hostBackground);
+  });
+
+  it('変化が無ければ theme を差し替えない', () => {
+    const { runtime } = create();
+    const before = runtime.term.options.theme;
+
+    runtime.applyTerminalTheme({ ...TOKYO_NIGHT, terminal: { ...TOKYO_NIGHT.terminal } });
+
+    expect(runtime.term.options.theme).toBe(before);
+  });
+
+  it('テーマを切り替えたあと透明度を変えると、新しいテーマの背景色で塗り直す', () => {
+    const { runtime, div } = create();
+
+    runtime.applyTerminalTheme(EMBER);
+    runtime.applySettings({ ...SETTINGS, transparency: 0.8 });
+
+    const paint = buildTerminalThemePaint(EMBER, 0.8);
+    expect(hostBg(div)).toBe(paint.hostBackground);
+    expect(runtime.term.options.theme?.background).toBe(paint.theme.background);
+  });
+
+  it('透明度を変えたあとに切り替えると、いまの透明度で新しいテーマを塗る', () => {
+    const { runtime, div } = create();
+
+    runtime.applySettings({ ...SETTINGS, transparency: 0.8 });
+    runtime.applyTerminalTheme(EMBER);
+
+    expect(hostBg(div)).toBe(buildTerminalThemePaint(EMBER, 0.8).hostBackground);
+  });
+
+  it('dispose 後は何もしない', () => {
+    const { runtime, div } = create();
+    const before = hostBg(div);
+    runtimes.splice(runtimes.indexOf(runtime), 1);
+    runtime.dispose();
+
+    expect(() => runtime.applyTerminalTheme(EMBER)).not.toThrow();
+    expect(hostBg(div)).toBe(before);
   });
 });
 

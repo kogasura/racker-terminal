@@ -25,7 +25,7 @@ import type { ThemeDefinition } from '../../lib/theme/types';
 import { useAppStore } from '../../store/appStore';
 import type { AppState } from '../../types';
 import { useThemeView } from '../theme/ThemeRoot';
-import { resolveTabTheme } from '../theme/viewModel';
+import { resolveRuntimeThemes } from '../theme/viewModel';
 
 /** スクロールバックの保存間隔。「直前の作業が見える」ことが目的なので粗くてよい。 */
 const SAVE_INTERVAL_MS = 30_000;
@@ -62,10 +62,13 @@ function useApplySettingsToRuntimes(): void {
 function useApplyThemeToRuntimes(catalog: readonly ThemeDefinition[]): void {
   useEffect(() => {
     const apply = (state: AppState) => {
-      for (const [tabId, runtime] of getAllRuntimeEntries()) {
-        const tab = state.tabs[tabId];
-        runtime.applyTerminalTheme(resolveTabTheme(catalog, tab?.themeId, state.settings.theme));
-      }
+      const plan = resolveRuntimeThemes(
+        getAllRuntimeEntries(),
+        state.tabs,
+        catalog,
+        state.settings.theme,
+      );
+      for (const [runtime, theme] of plan) runtime.applyTerminalTheme(theme);
     };
 
     // カタログが変わった (自作テーマを読み込んだ) ときはここで配り直す

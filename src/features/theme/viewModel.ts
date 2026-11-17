@@ -29,8 +29,8 @@ export interface ThemeViewModel {
 }
 
 export function selectThemeView(state: ThemeState): ThemeViewModel {
-  const userThemes = state.status === 'idle' ? [] : [...state.themes];
-  const catalog = buildCatalog(userThemes);
+  // idle でもキャッシュ済みのテーマはカタログに入れる (起動直後のちらつき対策)
+  const catalog = buildCatalog([...state.themes]);
   return {
     options: catalog.map(({ id, name, source }) => ({ id, name, source })),
     errors: state.status === 'idle' ? [] : [...state.errors],
@@ -62,4 +62,22 @@ export function resolveTabTheme(
   appThemeId: string,
 ): ThemeDefinition {
   return resolveTheme(catalog, tabThemeId ?? appThemeId);
+}
+
+/**
+ * 開いている各ターミナルに当てるテーマを決める。
+ * runtime はあるのにタブが無い (閉じている途中など) ときは、アプリの設定のテーマにする。
+ * @param entries - tabId と runtime の組 (terminalRegistry の getAllRuntimeEntries)
+ * @param tabs - いまのタブ。tabId で引き、上書き (themeId) を見る
+ */
+export function resolveRuntimeThemes<R>(
+  entries: readonly (readonly [string, R])[],
+  tabs: Readonly<Record<string, { readonly themeId?: string } | undefined>>,
+  catalog: readonly ThemeDefinition[],
+  appThemeId: string,
+): [R, ThemeDefinition][] {
+  return entries.map(([tabId, runtime]) => [
+    runtime,
+    resolveTabTheme(catalog, tabs[tabId]?.themeId, appThemeId),
+  ]);
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildCssVars } from './cssVars';
-import { BUILTIN_THEMES, RACKER_PAPER, TOKYO_NIGHT } from './builtinThemes';
+import { MENU_GLASS_MIN_OPACITY, TERMINAL_VEIL_MIN, buildCssVars } from './cssVars';
+import { BUILTIN_THEMES, RACKER_PAPER, TOKYO_NIGHT, glassSurfaces } from './builtinThemes';
+import type { ThemeDefinition } from './types';
 
 const RK_NAMES = [
   '--rk-bg',
@@ -35,11 +36,16 @@ const ALPHA_NAMES = [
   '--terminal-bg',
   '--crashed-overlay-bg',
   '--bg-alpha',
+  '--context-menu-bg',
+  '--rk-glass-filter',
 ];
+
+/** 配色だけのテーマ（第 1 段の 6 種）。 */
+const PALETTE_THEMES = BUILTIN_THEMES.filter((t) => t.glass === undefined);
 
 describe('buildCssVars', () => {
   it.each(BUILTIN_THEMES.map((t) => [t.id, t] as const))(
-    '%s: --rk-* 22 個と透明度つきの背景 7 個をちょうど返す',
+    '%s: --rk-* 22 個と透明度つきの背景 7 個と --context-menu-bg・--rk-glass-filter をちょうど返す',
     (_id, theme) => {
       const vars = buildCssVars(theme, 1);
       expect(Object.keys(vars).sort()).toEqual([...RK_NAMES, ...ALPHA_NAMES].sort());
@@ -101,4 +107,95 @@ describe('buildCssVars', () => {
     expect(vars['--rk-agent-blocked']).toBe(RACKER_PAPER.ui.agentBlocked);
     expect(vars['--rk-border-strong']).toBe(RACKER_PAPER.ui.borderStrong);
   });
+});
+
+describe('buildCssVars: glass の無いテーマ', () => {
+  it.each(PALETTE_THEMES.map((t) => [t.id, t] as const))(
+    '%s: --rk-glass-filter は none (backdrop-filter を付けない) で、透明度は第 1 段と同じく効く',
+    (_id, theme) => {
+      const vars = buildCssVars(theme, 0.6);
+      expect(vars['--rk-glass-filter']).toBe('none');
+      expect(vars['--bg-alpha']).toBe('0.6');
+      expect(vars['--sidebar-bg']).toMatch(/, 0\.6\)$/);
+      expect(vars['--terminal-bg']).toMatch(/, 0\.6\)$/);
+    },
+  );
+});
+
+describe('buildCssVars: glass のあるテーマ（背景付き）', () => {
+  const GLASS_THEME: ThemeDefinition = {
+    ...TOKYO_NIGHT,
+    id: 'scene:test',
+    ui: { ...TOKYO_NIGHT.ui, bg: '#14143a' },
+    terminal: { ...TOKYO_NIGHT.terminal, background: '#14143a' },
+    backdrop: { kind: 'builtin', sceneId: 'test' },
+    glass: { blur: 16, tint: '#14143a', opacity: 0.5 },
+  };
+
+  it('パネルは tint から作った面の色を opacity で重ね、ぼかしを blur(Npx) で出す', () => {
+    const vars = buildCssVars(GLASS_THEME, 1);
+    const s = glassSurfaces('#14143a', 'dark');
+    const rgb = (hex: string) =>
+      [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ');
+    expect(vars['--sidebar-bg']).toBe(`rgba(${rgb(s.bgSidebar)}, 0.5)`);
+    expect(vars['--sidebar-bg-elevated']).toBe(`rgba(${rgb(s.bgElevated)}, 0.5)`);
+    expect(vars['--group-header-bg']).toBe('rgba(20, 20, 58, 0.5)');
+    expect(vars['--title-bar-bg']).toBe('rgba(20, 20, 58, 0.5)');
+    expect(vars['--rk-glass-filter']).toBe('blur(16px)');
+    expect(vars['--bg-alpha']).toBe('1');
+  });
+
+  it('ターミナルの面は max(opacity, TERMINAL_VEIL_MIN) の濃さ', () => {
+    expect(TERMINAL_VEIL_MIN).toBe(0.72);
+    expect(buildCssVars(GLASS_THEME, 1)['--terminal-bg']).toBe('rgba(20, 20, 58, 0.72)');
+    const thick = { ...GLASS_THEME, glass: { blur: 0, tint: '#14143a', opacity: 0.9 } };
+    expect(buildCssVars(thick, 1)['--terminal-bg']).toBe('rgba(20, 20, 58, 0.9)');
+    expect(buildCssVars(thick, 1)['--rk-glass-filter']).toBe('blur(0px)');
+  });
+
+  it('ドロップダウンメニューの面は bgElevated の面の色を max(opacity, MENU_GLASS_MIN_OPACITY) で重ねる', () => {
+    expect(MENU_GLASS_MIN_OPACITY).toBe(0.6);
+    const s = glassSurfaces('#14143a', 'dark');
+    const rgb = [1, 3, 5].map((at) => parseInt(s.bgElevated.slice(at, at + 2), 16)).join(', ');
+    // opacity 0.5 は下限の 0.6 まで濃くする
+    expect(buildCssVars(GLASS_THEME, 1)['--context-menu-bg']).toBe(`rgba(${rgb}, 0.6)`);
+    const thick = { ...GLASS_THEME, glass: { blur: 16, tint: '#14143a', opacity: 0.85 } };
+    expect(buildCssVars(thick, 1)['--context-menu-bg']).toBe(`rgba(${rgb}, 0.85)`);
+  });
+
+  it('背景付きから配色だけのテーマに替えると、メニューの面と filter を配色だけの値で当て直す', () => {
+    const palette = buildCssVars(TOKYO_NIGHT, 1);
+    const glass = buildCssVars(GLASS_THEME, 1);
+    // applyThemeVars は上書きだけなので、両方のテーマが同じキーを出していること
+    expect(Object.keys(glass).sort()).toEqual(Object.keys(palette).sort());
+    expect(palette['--context-menu-bg']).toBe(
+      'color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar))',
+    );
+    expect(palette['--rk-glass-filter']).toBe('none');
+  });
+
+  it('透明度 (alpha) を変えても出力が変わらない', () => {
+    expect(buildCssVars(GLASS_THEME, 0.3)).toEqual(buildCssVars(GLASS_THEME, 1));
+  });
+
+  it('crashed の薄赤と --rk-* の色トークンは glass の無いテーマと同じ作り方', () => {
+    const vars = buildCssVars(GLASS_THEME, 1);
+    expect(vars['--crashed-overlay-bg']).toBe('rgba(247, 118, 142, 0.08)');
+    expect(vars['--rk-bg']).toBe('#14143a');
+    expect(vars['--rk-hover-tint']).toBe('rgba(255, 255, 255, 0.1)');
+  });
+
+  it.each(BUILTIN_THEMES.filter((t) => t.glass).map((t) => [t.id, t] as const))(
+    '%s: パネルの面は ui の面の色（tint から作ったもの）と一致する',
+    (_id, theme) => {
+      const vars = buildCssVars(theme, 0.5);
+      const opacity = theme.glass?.opacity ?? Number.NaN;
+      const rgb = (hex: string) =>
+        [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ');
+      expect(vars['--sidebar-bg']).toBe(`rgba(${rgb(theme.ui.bgSidebar)}, ${opacity})`);
+      expect(vars['--sidebar-bg-elevated']).toBe(`rgba(${rgb(theme.ui.bgElevated)}, ${opacity})`);
+      expect(vars['--title-bar-bg']).toBe(`rgba(${rgb(theme.ui.bg)}, ${opacity})`);
+      expect(vars['--bg-alpha']).toBe('1');
+    },
+  );
 });

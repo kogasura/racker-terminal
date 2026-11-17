@@ -36,4 +36,31 @@ describe('buildSettingsPatch', () => {
       fontSize: 16,
     });
   });
+
+  describe('背景を動かす (backdropMotion)', () => {
+    it('オフにしたら patch に false を入れる', () => {
+      expect(buildSettingsPatch({ ...base, backdropMotion: false }, base)).toEqual({
+        backdropMotion: false,
+      });
+    });
+
+    it('オフからオンに戻したら patch に true を入れる', () => {
+      const settings = { ...base, backdropMotion: false };
+      expect(buildSettingsPatch({ ...settings, backdropMotion: true }, settings)).toEqual({
+        backdropMotion: true,
+      });
+    });
+
+    it('変えていなければ入れない', () => {
+      const off = { ...base, backdropMotion: false };
+      expect(buildSettingsPatch({ ...off }, off)).toEqual({});
+      const on = { ...base, backdropMotion: true };
+      expect(buildSettingsPatch({ ...on }, on)).toEqual({});
+    });
+
+    it('未設定 (undefined) はオンとして比べる (true にしても変化なし)', () => {
+      expect(buildSettingsPatch({ ...base, backdropMotion: true }, base)).toEqual({});
+      expect(buildSettingsPatch({ ...base }, { ...base, backdropMotion: true })).toEqual({});
+    });
+  });
 });

@@ -24,7 +24,7 @@ import { pruneScrollback, saveScrollback } from '../../lib/scrollback';
 import type { ThemeDefinition } from '../../lib/theme/types';
 import { useAppStore } from '../../store/appStore';
 import type { AppState } from '../../types';
-import { useThemeView } from '../theme/ThemeRoot';
+import { useThemePreviewId, useThemeView } from '../theme/ThemeRoot';
 import { resolveRuntimeThemes } from '../theme/viewModel';
 
 /** スクロールバックの保存間隔。「直前の作業が見える」ことが目的なので粗くてよい。 */
@@ -54,12 +54,17 @@ function useApplySettingsToRuntimes(): void {
  * テーマを全タブのターミナルに配る。
  *
  * アプリのテーマ (settings.theme)・カタログ (自作テーマの読み込み)・タブごとの
- * 上書き (tab.themeId) のどれかが変わったら、各タブのテーマを解決し直して渡す。
+ * 上書き (tab.themeId)・試しに表示・アクティブなタブのどれかが変わったら、
+ * 各タブのテーマを解決し直して渡す。試しに表示の間は、アクティブなタブのターミナルに
+ * 窓と同じ試しのテーマを当て、試しに表示を終えたら元のテーマに戻す。
  * 変わっていないタブは runtime 側の applyTerminalTheme が何もしないので、
  * タブの状態が変わるたびに回しても描画のコストはかからない。
  * 透明度の変化は applySettings 側が、いま当てているテーマの背景色で反映する。
  */
-function useApplyThemeToRuntimes(catalog: readonly ThemeDefinition[]): void {
+function useApplyThemeToRuntimes(
+  catalog: readonly ThemeDefinition[],
+  previewThemeId: string | null,
+): void {
   useEffect(() => {
     const apply = (state: AppState) => {
       const plan = resolveRuntimeThemes(
@@ -67,22 +72,31 @@ function useApplyThemeToRuntimes(catalog: readonly ThemeDefinition[]): void {
         state.tabs,
         catalog,
         state.settings.theme,
+        { activeTabId: state.activeTabId, previewThemeId },
       );
       for (const [runtime, theme] of plan) runtime.applyTerminalTheme(theme);
     };
 
-    // カタログが変わった (自作テーマを読み込んだ) ときはここで配り直す
+    // カタログ (自作テーマを読み込んだ) か試しに表示が変わったときはここで配り直す
     apply(useAppStore.getState());
 
     let prevSettings = useAppStore.getState().settings;
     let prevTabs = useAppStore.getState().tabs;
+    let prevActiveTabId = useAppStore.getState().activeTabId;
     return useAppStore.subscribe((state) => {
-      if (state.settings === prevSettings && state.tabs === prevTabs) return;
+      if (
+        state.settings === prevSettings &&
+        state.tabs === prevTabs &&
+        state.activeTabId === prevActiveTabId
+      ) {
+        return;
+      }
       prevSettings = state.settings;
       prevTabs = state.tabs;
+      prevActiveTabId = state.activeTabId;
       apply(state);
     });
-  }, [catalog]);
+  }, [catalog, previewThemeId]);
 }
 
 /**
@@ -170,8 +184,9 @@ function useSaveScrollback(): void {
 
 export function TerminalUpkeepRoot({ children }: { children: ReactNode }) {
   const { catalog } = useThemeView();
+  const previewThemeId = useThemePreviewId();
   useApplySettingsToRuntimes();
-  useApplyThemeToRuntimes(catalog);
+  useApplyThemeToRuntimes(catalog, previewThemeId);
   useRecycleTextureAtlas();
   useSaveScrollback();
   return <>{children}</>;

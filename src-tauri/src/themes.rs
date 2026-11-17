@@ -1,9 +1,10 @@
-//! ユーザーのテーマファイル（`<app_data>/themes/*.json`）を読む Tauri command。
+//! ユーザーのテーマファイル（`<app_data>/themes/*.json` と `*.svg`）を読む Tauri command。
 //!
-//! テーマは宣言的な JSON だけで、任意のコードは実行しない。ここでは
+//! テーマは宣言的な JSON と、背景の SVG だけで、任意のコードは実行しない。ここでは
 //! **ファイルを文字列として渡すだけ**で、JSON の中身の検証とベースのテーマとの
-//! マージはフロント（`src/lib/theme/parseTheme.ts`）が行う。検証を 1 か所に
-//! 寄せておくと、エラー文を設定画面にそのまま出せる。
+//! マージ、JSON から参照された SVG の解決はフロント（`src/lib/theme/parseTheme.ts`）が
+//! 行う。検証を 1 か所に寄せておくと、エラー文を設定画面にそのまま出せる。
+//! SVG は sandbox した iframe に CSP 付きで描くので、ここでは中身を見ない。
 //!
 //! テーマフォルダには、形式の説明（`docs/themes.md`）を `CLAUDE.md` として
 //! 書き出しておく。設定画面の「Claude でテーマを作る」はこのフォルダを cwd に
@@ -16,13 +17,19 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
-/// 1 ファイルの上限 (バイト)。
+/// テーマの JSON 1 ファイルの上限 (バイト)。
 ///
 /// テーマは数十個の色を並べるだけなので数 KiB で収まる。誤って巨大な
 /// ファイルを置かれても、まるごとフロントへ送らないための上限。
-const MAX_FILE_BYTES: u64 = 64 * 1024;
+const MAX_JSON_BYTES: u64 = 64 * 1024;
 
-/// 読むファイル数の上限。超えたぶんはファイル名順で後ろから捨てる。
+/// 背景の SVG 1 ファイルの上限 (バイト)。
+///
+/// 動く背景は図形と CSS アニメーションを並べるので JSON より大きくなる
+/// （組み込みのシーンは本家の上限 131,072 字に収まる）。余裕を見てその倍にする。
+const MAX_SVG_BYTES: u64 = 256 * 1024;
+
+/// 読むファイル数の上限（JSON と SVG を合わせた数）。超えたぶんはファイル名順で後ろから捨てる。
 const MAX_FILES: usize = 100;
 
 /// テーマフォルダに書き出す説明書のファイル名。
@@ -43,35 +50,46 @@ const GUIDE_HEADER: &str = "<!-- このファイルは racker が内容を更新
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserThemeFile {
-    /// 拡張子込みのファイル名（例: `sunset-neon.json`）。ID はフロントが stem から作る。
+    /// 拡張子込みのファイル名（例: `sunset-neon.json`、`sunset-neon.svg`）。
+    /// フロントは拡張子で JSON と SVG を見分け、JSON の ID は stem から作る。
     pub file_name: String,
     pub content: Option<String>,
     pub error: Option<String>,
 }
 
-/// テーマとして読む対象か（`.json` の通常ファイルか）。
+/// 拡張子から、読む対象かどうかと 1 ファイルの上限を決める。
+///
+/// `.json`（テーマ）と `.svg`（背景）だけを読む。大文字小文字は区別しない。
+fn size_limit_for(path: &Path) -> Option<u64> {
+    let ext = path.extension().and_then(|s| s.to_str())?;
+    if ext.eq_ignore_ascii_case("json") {
+        Some(MAX_JSON_BYTES)
+    } else if ext.eq_ignore_ascii_case("svg") {
+        Some(MAX_SVG_BYTES)
+    } else {
+        None
+    }
+}
+
+/// テーマとして読む対象か（`.json` か `.svg` の通常ファイルか）。
 fn is_theme_file(path: &Path) -> bool {
-    let is_json = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
-    is_json && path.is_file()
+    size_limit_for(path).is_some() && path.is_file()
 }
 
 /// 1 ファイルを上限付きで読む。失敗したら日本語の理由を返す。
 ///
 /// 大きさは `metadata` ではなく実際に読んだ量で判定する。調べてから読むまでの
 /// 間にファイルが伸びても、上限を超えて読み込まないため。
-fn read_limited(path: &Path) -> Result<String, String> {
+fn read_limited(path: &Path, max_bytes: u64) -> Result<String, String> {
     let file = fs::File::open(path).map_err(|e| format!("ファイルを開けません: {e}"))?;
     let mut buf = Vec::new();
-    file.take(MAX_FILE_BYTES + 1)
+    file.take(max_bytes + 1)
         .read_to_end(&mut buf)
         .map_err(|e| format!("ファイルを読めません: {e}"))?;
-    if buf.len() as u64 > MAX_FILE_BYTES {
+    if buf.len() as u64 > max_bytes {
         return Err(format!(
             "ファイルが大きすぎます（上限は {} KiB）",
-            MAX_FILE_BYTES / 1024
+            max_bytes / 1024
         ));
     }
     let text = String::from_utf8(buf)
@@ -85,7 +103,9 @@ fn read_theme_file(path: &Path) -> UserThemeFile {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    match read_limited(path) {
+    // is_theme_file を通ったパスだけが来るので None にはならないが、念のため JSON の上限に寄せる
+    let max_bytes = size_limit_for(path).unwrap_or(MAX_JSON_BYTES);
+    match read_limited(path, max_bytes) {
         Ok(content) => UserThemeFile {
             file_name,
             content: Some(content),
@@ -99,9 +119,9 @@ fn read_theme_file(path: &Path) -> UserThemeFile {
     }
 }
 
-/// テーマフォルダ直下の `*.json` を読む純関数。再帰はしない。
+/// テーマフォルダ直下の `*.json` と `*.svg` を読む純関数。再帰はしない。
 ///
-/// ファイル名順に並べ、先頭から `MAX_FILES` 件までを返す。
+/// 2 種類を混ぜてファイル名順に並べ、先頭から `MAX_FILES` 件までを返す。
 /// フォルダが無い・読めないときは空 vec（テーマを作っていない環境は普通にある）。
 pub fn read_theme_files(dir: &Path) -> Vec<UserThemeFile> {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -234,24 +254,100 @@ mod tests {
     }
 
     #[test]
-    fn ignores_non_json_files_and_subdirectories() {
+    fn ignores_other_files_and_subdirectories() {
         let dir = temp_dir("nonjson");
         fs::write(dir.join("a.json"), "{}").unwrap();
         fs::write(dir.join("CLAUDE.md"), "guide").unwrap();
         fs::write(dir.join("notes.txt"), "memo").unwrap();
         fs::write(dir.join("json"), "{}").unwrap();
-        // 拡張子が .json のフォルダと、その中のファイルも読まない（再帰しない）
+        fs::write(dir.join("svg"), "<svg/>").unwrap();
+        fs::write(dir.join("picture.png"), "png").unwrap();
+        // 拡張子が .json / .svg のフォルダと、その中のファイルも読まない（再帰しない）
         fs::create_dir_all(dir.join("dir.json")).unwrap();
+        fs::create_dir_all(dir.join("dir.svg")).unwrap();
         fs::create_dir_all(dir.join("sub")).unwrap();
         fs::write(dir.join("sub").join("nested.json"), "{}").unwrap();
+        fs::write(dir.join("sub").join("nested.svg"), "<svg/>").unwrap();
 
         assert_eq!(file_names(&read_theme_files(&dir)), vec!["a.json"]);
     }
 
     #[test]
+    fn reads_svg_files_as_text_alongside_json() {
+        let dir = temp_dir("svg");
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 10"></svg>"#;
+        fs::write(dir.join("neon-sunset.svg"), svg).unwrap();
+        fs::write(dir.join("neon-sunset.json"), r#"{"name":"N"}"#).unwrap();
+        // 拡張子の大文字小文字は区別しない
+        fs::write(dir.join("UPPER.SVG"), "<svg/>").unwrap();
+
+        let files = read_theme_files(&dir);
+
+        assert_eq!(
+            file_names(&files),
+            vec!["UPPER.SVG", "neon-sunset.json", "neon-sunset.svg"]
+        );
+        assert_eq!(files[2].content.as_deref(), Some(svg));
+        assert_eq!(files[2].error, None);
+    }
+
+    #[test]
+    fn oversized_svg_has_error_and_no_content() {
+        let dir = temp_dir("oversized-svg");
+        let limit = usize::try_from(MAX_SVG_BYTES).unwrap();
+        fs::write(dir.join("big.svg"), "a".repeat(limit + 1)).unwrap();
+        // ちょうど上限は読める
+        fs::write(dir.join("edge.svg"), "a".repeat(limit)).unwrap();
+
+        let files = read_theme_files(&dir);
+
+        assert_eq!(file_names(&files), vec!["big.svg", "edge.svg"]);
+        assert_eq!(files[0].content, None);
+        let error = files[0].error.as_deref().unwrap();
+        assert!(error.contains("大きすぎます"));
+        assert!(error.contains("256 KiB"));
+        assert_eq!(files[1].content.as_deref().map(str::len), Some(limit));
+        assert_eq!(files[1].error, None);
+    }
+
+    #[test]
+    fn json_over_64kib_has_error_even_within_svg_limit() {
+        let dir = temp_dir("json-mid");
+        // SVG の上限（256 KiB）以下でも、JSON は 64 KiB を超えたら読まない
+        let size = usize::try_from(MAX_JSON_BYTES * 2).unwrap();
+        fs::write(dir.join("mid.json"), "a".repeat(size)).unwrap();
+        fs::write(dir.join("mid.svg"), "a".repeat(size)).unwrap();
+
+        let files = read_theme_files(&dir);
+
+        assert_eq!(file_names(&files), vec!["mid.json", "mid.svg"]);
+        assert_eq!(files[0].content, None);
+        assert!(files[0].error.as_deref().unwrap().contains("64 KiB"));
+        assert_eq!(files[1].content.as_deref().map(str::len), Some(size));
+        assert_eq!(files[1].error, None);
+    }
+
+    #[test]
+    fn json_and_svg_share_the_100_file_limit() {
+        let dir = temp_dir("limit-mixed");
+        // t000.json, t000.svg, t001.json, ... と交互に並ぶ。合わせて 102 件
+        for i in 0..=(MAX_FILES / 2) {
+            fs::write(dir.join(format!("t{i:03}.json")), "{}").unwrap();
+            fs::write(dir.join(format!("t{i:03}.svg")), "<svg/>").unwrap();
+        }
+
+        let files = read_theme_files(&dir);
+
+        assert_eq!(files.len(), MAX_FILES);
+        assert_eq!(files.first().unwrap().file_name, "t000.json");
+        // 101 件目以降（t050.json, t050.svg）は返さない
+        assert_eq!(files.last().unwrap().file_name, "t049.svg");
+    }
+
+    #[test]
     fn oversized_file_has_error_and_no_content() {
         let dir = temp_dir("oversized");
-        let limit = usize::try_from(MAX_FILE_BYTES).unwrap();
+        let limit = usize::try_from(MAX_JSON_BYTES).unwrap();
         fs::write(dir.join("big.json"), "a".repeat(limit + 1)).unwrap();
         // ちょうど上限は読める
         fs::write(dir.join("edge.json"), "a".repeat(limit)).unwrap();

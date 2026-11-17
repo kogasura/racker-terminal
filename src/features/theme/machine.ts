@@ -20,13 +20,21 @@
  *
  * フォルダを開く / Claude で作るは状態を持たない副作用なので、状態は動かさず
  * 副作用だけを出す。
+ *
+ * 試しに表示（設定ダイアログでカードを押したテーマ）は、読み込み状況とは別の軸なので
+ * どの状態にも `previewThemeId` として載せる。読み込みの遷移では持ち越す。
+ *
+ * ```
+ *   (試していない) ──preview-requested──> (previewThemeId あり) ──preview-ended──> (試していない)
+ * ```
  */
 
 import type { Step, TransitionFn } from '../../architecture/machine';
 import type { ThemeDefinition } from '../../lib/theme/types';
 import type { ThemeEvent, ThemeFileError } from './events';
 
-export type ThemeState =
+/** 読み込み状況。 */
+type ThemeLoadState =
   | {
       readonly status: 'idle';
       /** 前回の起動で読み込んだテーマ（キャッシュ。無ければ空） */
@@ -45,6 +53,17 @@ export type ThemeState =
       readonly themes: readonly ThemeDefinition[];
       readonly errors: readonly ThemeFileError[];
     };
+
+/** 試しに表示。読み込み状況とは別の軸。 */
+interface ThemePreview {
+  /**
+   * 設定ダイアログで試しに表示しているテーマの ID。試していなければ無し。
+   * 窓にはアプリの設定やタブの上書きより優先して当てる（設定そのものは変えない）。
+   */
+  readonly previewThemeId?: string;
+}
+
+export type ThemeState = ThemeLoadState & ThemePreview;
 
 /** Mediator が「やってほしい」と言う副作用。実行は effects.ts の担当。 */
 export type ThemeEffect =
@@ -68,11 +87,21 @@ type Handler<K extends ThemeEvent['type']> = (
 
 type HandlerMap = { [K in ThemeEvent['type']]: Handler<K> };
 
+/** 読み込みの遷移で作り直した状態に、元の状態の試しに表示を持ち越す。 */
+function keepPreview(from: ThemeState, to: ThemeLoadState): ThemeState {
+  return from.previewThemeId === undefined ? to : { ...to, previewThemeId: from.previewThemeId };
+}
+
 const handlers: HandlerMap = {
   'theme/reload-requested': (state) => {
     if (state.status === 'idle') {
       return {
-        state: { status: 'loading', themes: state.themes, errors: [], reloadQueued: false },
+        state: keepPreview(state, {
+          status: 'loading',
+          themes: state.themes,
+          errors: [],
+          reloadQueued: false,
+        }),
         effects: [LOAD],
       };
     }
@@ -81,7 +110,12 @@ const handlers: HandlerMap = {
       return state.reloadQueued ? null : { state: { ...state, reloadQueued: true } };
     }
     return {
-      state: { status: 'loading', themes: state.themes, errors: state.errors, reloadQueued: false },
+      state: keepPreview(state, {
+        status: 'loading',
+        themes: state.themes,
+        errors: state.errors,
+        reloadQueued: false,
+      }),
       effects: [LOAD],
     };
   },
@@ -91,11 +125,18 @@ const handlers: HandlerMap = {
     if (state.status !== 'loading') return null;
     if (state.reloadQueued) {
       return {
-        state: { status: 'loading', themes: event.themes, errors: event.errors, reloadQueued: false },
+        state: keepPreview(state, {
+          status: 'loading',
+          themes: event.themes,
+          errors: event.errors,
+          reloadQueued: false,
+        }),
         effects: [LOAD],
       };
     }
-    return { state: { status: 'loaded', themes: event.themes, errors: event.errors } };
+    return {
+      state: keepPreview(state, { status: 'loaded', themes: event.themes, errors: event.errors }),
+    };
   },
 
   'theme/open-folder-requested': (state) => ({ state, effects: [{ kind: 'open-folder' }] }),
@@ -104,6 +145,18 @@ const handlers: HandlerMap = {
     state,
     effects: [{ kind: 'create-with-claude' }],
   }),
+
+  'theme/preview-requested': (state, event) =>
+    state.previewThemeId === event.themeId
+      ? null
+      : { state: { ...state, previewThemeId: event.themeId } },
+
+  'theme/preview-ended': (state) => {
+    if (state.previewThemeId === undefined) return null;
+    // 試しに表示の印を外す。読み込み状況はそのまま
+    const { previewThemeId: _ended, ...rest } = state;
+    return { state: rest };
+  },
 };
 
 /**

@@ -119,4 +119,54 @@ describe('theme machine', () => {
       expect(effects(s, e)).toEqual(['create-with-claude']);
     });
   });
+
+  describe('試しに表示', () => {
+    const PREVIEW_DRACULA: ThemeEvent = { type: 'theme/preview-requested', themeId: 'dracula' };
+    const PREVIEW_END: ThemeEvent = { type: 'theme/preview-ended' };
+    const states: ThemeState[] = [initialState, loading, loadedState];
+
+    it.each(states)('preview-requested で試すテーマを覚え、読み込み状況は変えない (%o)', (s) => {
+      expect(next(s, PREVIEW_DRACULA)).toEqual({ ...s, previewThemeId: 'dracula' });
+      expect(effects(s, PREVIEW_DRACULA)).toEqual([]);
+    });
+
+    it('別のカードを押したら、試すテーマを差し替える', () => {
+      const s = next(loadedState, PREVIEW_DRACULA);
+      expect(next(s, { type: 'theme/preview-requested', themeId: 'scene:honu-lagoon' })).toEqual({
+        ...loadedState,
+        previewThemeId: 'scene:honu-lagoon',
+      });
+    });
+
+    it('同じテーマをもう一度押しても何も変わらない', () => {
+      const s = next(loadedState, PREVIEW_DRACULA);
+      expect(transition(s, PREVIEW_DRACULA)).toBeNull();
+    });
+
+    it('preview-ended で試しに表示をやめ、元の状態に戻る (キャンセル・保存のどちらでも)', () => {
+      const s = next(loadedState, PREVIEW_DRACULA);
+      const ended = next(s, PREVIEW_END);
+      expect(ended).toEqual(loadedState);
+      expect(ended).not.toHaveProperty('previewThemeId');
+      expect(effects(s, PREVIEW_END)).toEqual([]);
+    });
+
+    it('試していないときの preview-ended は捨てる', () => {
+      expect(transition(loadedState, PREVIEW_END)).toBeNull();
+    });
+
+    it('試している間に再読み込みしても、試しに表示は続く (ダイアログを開いた直後の読み込み)', () => {
+      const previewing = next(loadedState, PREVIEW_DRACULA);
+      const reloading = next(previewing, RELOAD);
+      expect(reloading).toMatchObject({ status: 'loading', previewThemeId: 'dracula' });
+      const queued = next(reloading, RELOAD);
+      expect(next(queued, loaded())).toMatchObject({ status: 'loading', previewThemeId: 'dracula' });
+      expect(next(reloading, loaded())).toEqual({ ...loadedState, previewThemeId: 'dracula' });
+    });
+
+    it('起動直後 (idle) に試していても、読み込みへ持ち越す', () => {
+      const previewing = next(initialState, PREVIEW_DRACULA);
+      expect(next(previewing, RELOAD)).toEqual({ ...loading, previewThemeId: 'dracula' });
+    });
+  });
 });

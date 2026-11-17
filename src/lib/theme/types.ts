@@ -83,8 +83,32 @@ export type ThemeAppearance = 'dark' | 'light';
 /** 組み込みか、ユーザーが themes フォルダに置いたものか。 */
 export type ThemeSource = 'builtin' | 'user';
 
+/**
+ * 動く背景。組み込みのシーン（src/lib/backdrop/catalog.ts）か、themes フォルダに置いた SVG。
+ * SVG は sandbox した iframe に入れて描く（backdropDocument.ts）。
+ */
+export type ThemeBackdrop =
+  | { kind: 'builtin'; sceneId: string }
+  | {
+      kind: 'user';
+      /** themes フォルダ内の SVG のファイル名（例: `neon-sunset.svg`） */
+      fileName: string;
+      /** SVG の中身。改変せずに iframe へ入れる */
+      svg: string;
+    };
+
+/** 背景の上に重ねるすりガラスのパネル。 */
+export interface ThemeGlass {
+  /** ぼかしの強さ（px）。0〜40 */
+  blur: number;
+  /** パネルの色（`#rrggbb`） */
+  tint: string;
+  /** パネルの濃さ。0〜1 */
+  opacity: number;
+}
+
 export interface ThemeDefinition {
-  /** 組み込みは `tokyo-night` などの固定値、ユーザーのテーマは `user:<ファイル名の stem>` */
+  /** 組み込みは `tokyo-night` / `scene:<シーンの id>` などの固定値、ユーザーのテーマは `user:<ファイル名の stem>` */
   id: string;
   /** 表示名 */
   name: string;
@@ -92,4 +116,8 @@ export interface ThemeDefinition {
   source: ThemeSource;
   ui: UiPalette;
   terminal: TerminalPalette;
+  /** 動く背景。無ければ配色だけのテーマ */
+  backdrop?: ThemeBackdrop;
+  /** すりガラスの値。背景付きのテーマにだけある。あるときは窓の透明度の設定を使わない */
+  glass?: ThemeGlass;
 }

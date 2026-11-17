@@ -3,11 +3,15 @@
  *
  * - `--rk-*`: 色トークン 22 個（ui の 19 個 + appearance から決める hoverTint / scrim / shadow）
  * - 透明度を掛けた背景: `--sidebar-bg` など。variables.css の既定値と同じ `rgba(r, g, b, a)` 形式
- * - `--bg-alpha`: 透明度そのもの
+ * - `--bg-alpha`: 透明度そのもの（glass のあるテーマでは 1）
+ * - `--rk-glass-filter`: パネルの backdrop-filter（glass の無いテーマでは none、有りは blur(Npx)）
+ * - `--context-menu-bg`: ドロップダウンメニューの背景（glass の無いテーマでは variables.css と
+ *   同じ式、有りはすりガラスの面の色）
  *
  * @module theme/cssVars
  */
 
+import { glassSurfaces } from './builtinThemes';
 import type { ThemeAppearance, ThemeDefinition, UiPalette } from './types';
 
 /** ui のキーと CSS 変数名の対応。変数名は variables.css と一致させる。 */
@@ -59,9 +63,35 @@ function rgba(hex: string, alpha: number): string {
 }
 
 /**
+ * 背景付きのテーマで、ターミナルの面に使う最低の濃さ。
+ * ターミナルは文字が読めることを優先し、glass.opacity がこれより薄くてもこの濃さにする。
+ */
+export const TERMINAL_VEIL_MIN = 0.72;
+
+/**
+ * 背景付きのテーマで、ドロップダウンメニューの面に使う最低の濃さ。
+ * メニューは背景の絵の上に浮くので、glass.opacity が薄いシーンでも項目の文字が読めるよう
+ * この濃さまでは重ねる。
+ */
+export const MENU_GLASS_MIN_OPACITY = 0.6;
+
+/**
+ * glass の無いテーマのドロップダウンメニューの背景。variables.css の既定値と同じ式。
+ * 背景付きのテーマから切り替えたときに、すりガラスの色が残らないよう毎回当て直す。
+ */
+const PALETTE_CONTEXT_MENU_BG = 'color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar))';
+
+/**
  * テーマと透明度から CSS 変数一式を作る。
+ *
+ * glass のあるテーマ（背景付き）では、背景の絵が下地になるため透明度 (alpha) は使わない。
+ * パネルは glass.tint から作った面の色を glass.opacity で重ね（すりガラス）、
+ * ターミナルの面は max(glass.opacity, TERMINAL_VEIL_MIN) の濃さにする。
+ * ドロップダウンメニューの面は max(glass.opacity, MENU_GLASS_MIN_OPACITY) の濃さにする。
+ * backdrop-filter（--rk-glass-filter）を付けるのは glass のあるテーマだけ。
+ *
  * @param theme - 適用するテーマ（色は `#rrggbb`）
- * @param alpha - 背景の透明度（設定の transparency。1 で不透明）
+ * @param alpha - 背景の透明度（設定の transparency。1 で不透明）。glass のあるテーマでは使わない
  */
 export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -69,13 +99,35 @@ export function buildCssVars(theme: ThemeDefinition, alpha: number): Record<stri
     vars[UI_VAR_NAMES[key]] = theme.ui[key];
   }
   Object.assign(vars, APPEARANCE_VARS[theme.appearance]);
-
-  vars['--bg-alpha'] = String(alpha);
-  vars['--sidebar-bg'] = rgba(theme.ui.bgSidebar, alpha);
-  vars['--sidebar-bg-elevated'] = rgba(theme.ui.bgElevated, alpha);
-  vars['--group-header-bg'] = rgba(theme.ui.bg, alpha);
-  vars['--title-bar-bg'] = rgba(theme.ui.bg, alpha);
-  vars['--terminal-bg'] = rgba(theme.terminal.background, alpha);
   vars['--crashed-overlay-bg'] = rgba(theme.ui.danger, CRASHED_OVERLAY_ALPHA);
+
+  const glass = theme.glass;
+  if (glass === undefined) {
+    vars['--bg-alpha'] = String(alpha);
+    vars['--sidebar-bg'] = rgba(theme.ui.bgSidebar, alpha);
+    vars['--sidebar-bg-elevated'] = rgba(theme.ui.bgElevated, alpha);
+    vars['--group-header-bg'] = rgba(theme.ui.bg, alpha);
+    vars['--title-bar-bg'] = rgba(theme.ui.bg, alpha);
+    vars['--terminal-bg'] = rgba(theme.terminal.background, alpha);
+    vars['--context-menu-bg'] = PALETTE_CONTEXT_MENU_BG;
+    vars['--rk-glass-filter'] = 'none';
+    return vars;
+  }
+
+  const surfaces = glassSurfaces(glass.tint, theme.appearance);
+  vars['--bg-alpha'] = '1';
+  vars['--sidebar-bg'] = rgba(surfaces.bgSidebar, glass.opacity);
+  vars['--sidebar-bg-elevated'] = rgba(surfaces.bgElevated, glass.opacity);
+  vars['--group-header-bg'] = rgba(surfaces.bg, glass.opacity);
+  vars['--title-bar-bg'] = rgba(surfaces.bg, glass.opacity);
+  vars['--terminal-bg'] = rgba(
+    theme.terminal.background,
+    Math.max(glass.opacity, TERMINAL_VEIL_MIN),
+  );
+  vars['--context-menu-bg'] = rgba(
+    surfaces.bgElevated,
+    Math.max(glass.opacity, MENU_GLASS_MIN_OPACITY),
+  );
+  vars['--rk-glass-filter'] = `blur(${glass.blur}px)`;
   return vars;
 }

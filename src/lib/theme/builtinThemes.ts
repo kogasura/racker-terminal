@@ -1,6 +1,7 @@
 /**
- * 組み込みテーマ（6 種）。
+ * 組み込みテーマ（26 種）。配色だけの 6 種と、動く背景の付いた 20 種。
  *
+ * 配色だけの 6 種:
  * - Tokyo Night: 従来の配色そのまま（variables.css と terminalRegistry.ts にあった値を移したもの）
  * - Dracula / Nord / Catppuccin Mocha: 各テーマの公式パレットから取る（MIT。LICENSES/themes-MIT.txt）
  * - Racker Ember: racker オリジナルの赤みのある暗色
@@ -11,10 +12,14 @@
  * 選択範囲 (selectionBackground) について: xterm は不透明な選択色を 30% の濃さで
  * 重ねるため、各テーマとも「30% で重ねて見える」明るさの色を置いている。
  *
+ * 背景付きの 20 種: 本家 Claude Code の公式プラグイン theme-examples（Apache-2.0）のシーンから作る
+ * （src/lib/backdrop/catalog.ts）。ID は `scene:<シーンの id>`。
+ *
  * @module theme/builtinThemes
  */
 
-import type { ThemeDefinition } from './types';
+import { BUILTIN_SCENES, type BuiltinScene } from '../backdrop/catalog';
+import type { ThemeAppearance, ThemeDefinition } from './types';
 
 /** 設定で選んだ ID が見つからないときに使うテーマ。 */
 export const DEFAULT_THEME_ID = 'tokyo-night';
@@ -339,8 +344,8 @@ export const RACKER_PAPER: ThemeDefinition = {
   },
 };
 
-/** 組み込みテーマの一覧。設定画面にはこの順で並ぶ。 */
-export const BUILTIN_THEMES: readonly ThemeDefinition[] = [
+/** 配色だけの組み込みテーマ（第 1 段の 6 種）。 */
+const PALETTE_THEMES: readonly ThemeDefinition[] = [
   TOKYO_NIGHT,
   DRACULA,
   NORD,
@@ -348,3 +353,69 @@ export const BUILTIN_THEMES: readonly ThemeDefinition[] = [
   RACKER_EMBER,
   RACKER_PAPER,
 ];
+
+/** `#rrggbb` を、`toward` の色へ `ratio`（0〜1）だけ寄せる。 */
+function mixHex(hex: string, toward: string, ratio: number): string {
+  const channel = (color: string, at: number) => parseInt(color.slice(at, at + 2), 16);
+  let out = '#';
+  for (const at of [1, 3, 5]) {
+    const value = Math.round(channel(hex, at) * (1 - ratio) + channel(toward, at) * ratio);
+    out += value.toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
+/**
+ * すりガラスの色 (glass.tint) から、パネルの面の色を作る。
+ * - bg: tint そのもの（タイトルバー・グループ見出し・ターミナル）
+ * - bgSidebar: 少し沈める（Tokyo Night / Racker Paper の bg とサイドバーの段差に合わせる）
+ * - bgElevated: 少し浮かせる（ダイアログ・メニュー）
+ *
+ * 背景付きのテーマの面の色（builtin）と、すりガラスのパネルの色（cssVars.ts）で共有する。
+ */
+export function glassSurfaces(
+  tint: string,
+  appearance: ThemeAppearance,
+): { bg: string; bgSidebar: string; bgElevated: string } {
+  if (appearance === 'dark') {
+    return {
+      bg: tint,
+      bgSidebar: mixHex(tint, '#000000', 0.2),
+      bgElevated: mixHex(tint, '#ffffff', 0.06),
+    };
+  }
+  return {
+    bg: tint,
+    bgSidebar: mixHex(tint, '#000000', 0.03),
+    bgElevated: mixHex(tint, '#ffffff', 0.6),
+  };
+}
+
+/** ID の接頭辞。背景付きの組み込みテーマは `scene:<シーンの id>`。 */
+export const SCENE_THEME_ID_PREFIX = 'scene:';
+
+/**
+ * 本家のシーン 1 つから、背景付きのテーマを作る。
+ * 土台はダークなら Tokyo Night、ライトなら Racker Paper。面の色は glass.tint から、
+ * accent / accent2 はシーンごとに選んだ色にする。glass はシーンの値そのまま。
+ */
+function sceneTheme(scene: BuiltinScene): ThemeDefinition {
+  const base = scene.window === 'light' ? RACKER_PAPER : TOKYO_NIGHT;
+  const surfaces = glassSurfaces(scene.glass.tint, scene.window);
+  return {
+    id: `${SCENE_THEME_ID_PREFIX}${scene.id}`,
+    name: scene.title,
+    appearance: scene.window,
+    source: 'builtin',
+    ui: { ...base.ui, ...surfaces, accent: scene.accent, accent2: scene.accent2 },
+    terminal: { ...base.terminal, background: surfaces.bg },
+    backdrop: { kind: 'builtin', sceneId: scene.id },
+    glass: { ...scene.glass },
+  };
+}
+
+/** 背景付きの組み込みテーマ（本家の 20 シーン）。 */
+const SCENE_THEMES: readonly ThemeDefinition[] = BUILTIN_SCENES.map(sceneTheme);
+
+/** 組み込みテーマの一覧。設定画面にはこの順で並ぶ（配色だけの 6 種 → 背景付きの 20 種）。 */
+export const BUILTIN_THEMES: readonly ThemeDefinition[] = [...PALETTE_THEMES, ...SCENE_THEMES];

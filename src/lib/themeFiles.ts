@@ -10,9 +10,12 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-/** themes フォルダ直下の *.json 1 件。Rust 側の `UserThemeFile` に対応する。 */
+/**
+ * themes フォルダ直下の *.json か *.svg 1 件。Rust 側の `UserThemeFile` に対応する。
+ * 種類のフィールドは無いので、拡張子（大文字小文字を問わない）で見分ける。
+ */
 export interface UserThemeFile {
-  /** 拡張子込みのファイル名（例: `sunset-neon.json`） */
+  /** 拡張子込みのファイル名（例: `sunset-neon.json`、`sunset-neon.svg`） */
   fileName: string;
   /** ファイルの中身。読めなかったときは null */
   content: string | null;

@@ -17,6 +17,7 @@ import {
   isTabStatusCleared,
 } from './tabStatusOsc';
 import { SAVE_SCROLLBACK_LINES } from './scrollback';
+import { TERMINAL_VEIL_MIN } from './theme/cssVars';
 import { toXtermTheme } from './theme/resolveTheme';
 import type { TerminalPalette, ThemeDefinition } from './theme/types';
 
@@ -367,9 +368,22 @@ export interface TerminalThemePaint {
   hostBackground: string;
 }
 
-/** テーマと透明度から、ターミナルに書き込む配色を作る純関数。テスト用に export する。 */
+/**
+ * テーマと透明度から、ターミナルに書き込む配色を作る純関数。テスト用に export する。
+ *
+ * 背景付きのテーマ (glass がある) では、背景の絵の上にペインの面を重ねる。
+ * xterm 自身の背景は完全に透明 (alpha 0) にし、色はペインの面 (--terminal-bg) が持つ。
+ * 面の濃さは max(glass.opacity, TERMINAL_VEIL_MIN) で、窓の透明度 (alpha) は使わない
+ * (buildCssVars の --terminal-bg と同じ値)。
+ */
 export function buildTerminalThemePaint(theme: ThemeDefinition, alpha: number): TerminalThemePaint {
   const bg = theme.terminal.background;
+  if (theme.glass !== undefined) {
+    return {
+      theme: { ...toXtermTheme(theme), background: computeBackground(0, bg) },
+      hostBackground: hexToRgba(bg, Math.max(theme.glass.opacity, TERMINAL_VEIL_MIN)),
+    };
+  }
   return {
     theme: { ...toXtermTheme(theme), background: computeBackground(alpha, bg) },
     hostBackground: hexToRgba(bg, alpha),
@@ -380,6 +394,8 @@ export function buildTerminalThemePaint(theme: ThemeDefinition, alpha: number): 
 function sameTerminalTheme(a: ThemeDefinition, b: ThemeDefinition): boolean {
   if (a === b) return true;
   if (a.id !== b.id) return false;
+  // ペインの面の濃さは glass で決まる。自作テーマで glass だけを直したときも差し替える
+  if (a.glass?.opacity !== b.glass?.opacity) return false;
   // 同じ ID でも、自作テーマはファイルを直して再読み込みすると中身が変わる
   const keys = Object.keys(a.terminal) as (keyof TerminalPalette)[];
   return keys.every((key) => a.terminal[key] === b.terminal[key]);

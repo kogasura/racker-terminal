@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import { useEmit } from '../architecture/chain';
@@ -6,10 +6,11 @@ import { useSettingsView } from '../features/settings/SettingsRoot';
 import type { SettingsEvent } from '../features/settings/events';
 import { useThemeView } from '../features/theme/ThemeRoot';
 import type { ThemeEvent } from '../features/theme/events';
+import type { ThemeOption } from '../features/theme/viewModel';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateSettingsSectionView } from '../features/updater/views/UpdateSettingsSectionView';
 import type { Settings } from '../types';
-import { ThemeOptionGroups } from './ThemeOptionGroups';
+import { groupThemeOptions, isMissingTheme } from './ThemeOptionGroups';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -77,14 +78,82 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
     patch.gpuAcceleration = gpuAcceleration;
   }
 
+  const backdropMotion = draft.backdropMotion !== false;
+  if (backdropMotion !== (settings.backdropMotion !== false)) {
+    patch.backdropMotion = backdropMotion;
+  }
+
   return patch;
+}
+
+/** テーマのカード 1 枚。名前・ライト / ダーク・ひとこと説明を出す。 */
+function ThemeCard({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: ThemeOption;
+  selected: boolean;
+  onSelect: (themeId: string) => void;
+}) {
+  const appearance = option.appearance === 'light' ? 'ライト' : 'ダーク';
+  // 組み込みの背景付きはグループ名で分かるので、自分のテーマのときだけ背景の有無を添える
+  const backdrop = option.source === 'user' && option.hasBackdrop ? '・動く背景' : '';
+  return (
+    <button
+      type="button"
+      className={selected ? 'theme-card theme-card--selected' : 'theme-card'}
+      aria-pressed={selected}
+      onClick={() => onSelect(option.id)}
+    >
+      <span className="theme-card__head">
+        <span className="theme-card__name">{option.name}</span>
+        <span className="theme-card__meta">
+          {appearance}
+          {backdrop}
+        </span>
+      </span>
+      {option.blurb !== undefined && <span className="theme-card__blurb">{option.blurb}</span>}
+    </button>
+  );
+}
+
+/**
+ * テーマのカードの一覧。「配色だけ」「動く背景（ダーク）」「動く背景（ライト）」
+ * 「自分のテーマ」の 4 グループ（自分のテーマが無ければ 3 つ）。Passive View。
+ */
+function ThemeCardList({
+  options,
+  value,
+  onSelect,
+}: {
+  options: readonly ThemeOption[];
+  value: string;
+  onSelect: (themeId: string) => void;
+}) {
+  return (
+    <div className="theme-cards" role="group" aria-label="テーマ">
+      {groupThemeOptions(options).map((group) => (
+        <div key={group.key} className="theme-card-group" role="group" aria-label={group.label}>
+          <span className="theme-card-group__label" aria-hidden="true">
+            {group.label}
+          </span>
+          <div className="theme-card-grid">
+            {group.options.map((o) => (
+              <ThemeCard key={o.id} option={o} selected={o.id === value} onSelect={onSelect} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
  * 設定ダイアログのテーマの節。Passive View。
  *
- * 選んだテーマは draft に入れ、保存時に他の設定と一緒に適用する。
- * フォルダ操作と再読み込みは theme 機能へイベントとして流すだけ。
+ * カードを押したテーマは draft に入れ、親が窓に試しに表示する。確定は保存時に
+ * 他の設定と一緒に行う。フォルダ操作と再読み込みは theme 機能へイベントとして流すだけ。
  */
 function ThemeSettingsSection({
   value,
@@ -111,15 +180,14 @@ function ThemeSettingsSection({
 
   return (
     <div className="dialog-field">
-      <span className="dialog-label">テーマ（配色）</span>
-      <select
-        className="dialog-input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label="テーマ"
-      >
-        <ThemeOptionGroups options={options} value={value} />
-      </select>
+      <span className="dialog-label">テーマ</span>
+      {isMissingTheme(options, value) && (
+        <small className="dialog-hint">
+          選んでいるテーマ（見つかりません: {value}）を読み込めません。ファイルを消したか、
+          名前を変えた可能性があります。
+        </small>
+      )}
+      <ThemeCardList options={options} value={value} onSelect={onChange} />
       <div className="settings-theme-actions">
         <button
           type="button"
@@ -156,21 +224,74 @@ function ThemeSettingsSection({
         </div>
       )}
       <small className="dialog-hint">
-        themes フォルダに JSON を置くか、Claude に頼んで作れます。
+        カードを押すと窓に試しに表示し、「保存」で確定します（「キャンセル」で元に戻ります）。
+        themes フォルダに JSON（背景は SVG）を置くか、Claude に頼んで作れます。
       </small>
     </div>
   );
+}
+
+/**
+ * 背景透明度の欄。背景付きのテーマでは背景の絵が下地になるため使わない。
+ * そのときはその旨を注記する。スライダーは無効にしない（お気に入りで配色だけのテーマを
+ * 付けたタブでは効くため）。
+ */
+function TransparencyField({
+  value,
+  onChange,
+  backdropSelected,
+}: {
+  value: number;
+  onChange: (transparency: number) => void;
+  backdropSelected: boolean;
+}) {
+  return (
+    <div className="dialog-field">
+      <span className="dialog-label">背景透明度 (0.7〜1.0) — {value.toFixed(2)}</span>
+      <input
+        className="settings-range"
+        type="range"
+        min="0.7"
+        max="1"
+        step="0.05"
+        value={value}
+        aria-label="背景透明度"
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+      />
+      <small className="dialog-hint">
+        {backdropSelected
+          ? '背景付きのテーマでは使いません（配色だけのテーマのタブでは効きます）。'
+          : '透明度は frameless window モードでのみ有効です。'}
+      </small>
+    </div>
+  );
+}
+
+/**
+ * 開いたときのフォーカス先。選択中のテーマのカードがあればそこに当てる。
+ * Radix の既定（最初のカード）のままだと、フォーカスの枠が選択中の枠と同じに見え、
+ * 選択中が 2 つあるように見えるため。無ければ既定どおりにする。
+ */
+function focusSelectedThemeCard(event: Event, content: HTMLElement | null): void {
+  const selected = content?.querySelector<HTMLButtonElement>(
+    'button.theme-card[aria-pressed="true"]',
+  );
+  if (!selected) return;
+  event.preventDefault();
+  selected.focus();
 }
 
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useSettingsView();
   const emit = useEmit<SettingsEvent>();
   const emitTheme = useEmit<ThemeEvent>();
+  const { options: themeOptions } = useThemeView();
   // updater の表示は Root から View モデルとして降ってくる。
   const { settingsSection } = useUpdaterView();
 
   const [draft, setDraft] = useState<Settings>(settings);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Tauri アプリのバージョンを取得 (Cargo.toml の version)。
   // Tauri 環境外 (vite dev / テスト) では失敗するため、catch でフォールバックする。
@@ -196,6 +317,25 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     setDraft(settings);
   }, [settings]);
 
+  // ダイアログが閉じる操作を経ずに外された場合も、試しに表示を残さない。
+  useEffect(() => () => emitTheme({ type: 'theme/preview-ended' }), [emitTheme]);
+
+  /** カードを押したテーマを draft に入れ、保存前に窓へ試しに表示する。 */
+  function selectTheme(theme: string) {
+    setDraft({ ...draft, theme });
+    emitTheme({ type: 'theme/preview-requested', themeId: theme });
+  }
+
+  /**
+   * ダイアログを閉じる。保存・キャンセル・Esc のどれでも、試しに表示をやめる。
+   * 保存したときは設定のテーマが選んだものに変わっているので、窓はそのまま。
+   * 保存しなかったときは、窓が元のテーマに戻る。
+   */
+  function close() {
+    emitTheme({ type: 'theme/preview-ended' });
+    onClose();
+  }
+
   /** 入力中の内容のうち、変更のあったものだけを保存する。 */
   function saveDraft() {
     const patch = buildSettingsPatch(draft, settings);
@@ -208,31 +348,50 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     saveDraft();
-    onClose();
+    close();
   }
 
   // claude タブへ移るときも、入力中の内容は捨てずに保存してから閉じる。
   function handleCreateWithClaude() {
     saveDraft();
     emitTheme({ type: 'theme/create-with-claude-requested' });
-    onClose();
+    close();
   }
 
+  const backdropSelected = themeOptions.some((o) => o.id === draft.theme && o.hasBackdrop);
+
   return (
-    <Dialog.Root open={true} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root open={true} onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content">
+        <Dialog.Content
+          ref={contentRef}
+          className="dialog-content"
+          onOpenAutoFocus={(event) => focusSelectedThemeCard(event, contentRef.current)}
+        >
           <Dialog.Title className="dialog-title">Settings</Dialog.Title>
           <Dialog.Description className="dialog-description">
-            テーマ・フォント・スクロールバック・透明度を変更します。
+            テーマ・背景の動き・フォント・スクロールバック・透明度を変更します。
           </Dialog.Description>
           <form onSubmit={handleSubmit} className="dialog-form">
             <ThemeSettingsSection
               value={draft.theme}
-              onChange={(theme) => setDraft({ ...draft, theme })}
+              onChange={selectTheme}
               onCreateWithClaude={handleCreateWithClaude}
             />
+
+            <label className="dialog-field dialog-field--checkbox">
+              <input
+                type="checkbox"
+                checked={draft.backdropMotion !== false}
+                onChange={(e) => setDraft({ ...draft, backdropMotion: e.target.checked })}
+              />
+              <span className="dialog-label">背景を動かす</span>
+              <small className="dialog-hint">
+                背景付きのテーマで、背景のアニメーションを動かします。切ると、その場で止まります。
+                Windows の「アニメーション効果」をオフにしているときは、これに関わらず止まります。
+              </small>
+            </label>
 
             <label className="dialog-field">
               <span className="dialog-label">フォントサイズ (px)</span>
@@ -277,25 +436,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               />
             </label>
 
-            <div className="dialog-field">
-              <span className="dialog-label">
-                背景透明度 (0.7〜1.0) — {(draft.transparency ?? 1.0).toFixed(2)}
-              </span>
-              <input
-                className="settings-range"
-                type="range"
-                min="0.7"
-                max="1"
-                step="0.05"
-                value={draft.transparency ?? 1.0}
-                onChange={(e) =>
-                  setDraft({ ...draft, transparency: parseFloat(e.target.value) })
-                }
-              />
-              <small className="dialog-hint">
-                透明度は frameless window モードでのみ有効です。
-              </small>
-            </div>
+            <TransparencyField
+              value={draft.transparency ?? 1.0}
+              onChange={(transparency) => setDraft({ ...draft, transparency })}
+              backdropSelected={backdropSelected}
+            />
 
             <label className="dialog-field dialog-field--checkbox">
               <input
@@ -348,11 +493,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <UpdateSettingsSectionView
               vm={settingsSection}
               appVersion={appVersion}
-              onLeaveForDialog={onClose}
+              onLeaveForDialog={close}
             />
 
             <div className="dialog-actions">
-              <button type="button" className="dialog-btn dialog-btn--cancel" onClick={onClose}>
+              <button type="button" className="dialog-btn dialog-btn--cancel" onClick={close}>
                 キャンセル
               </button>
               <button type="submit" className="dialog-btn dialog-btn--submit">

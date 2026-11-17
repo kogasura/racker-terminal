@@ -395,6 +395,14 @@ export interface Settings {
    * GPU 描画は無効になる。
    */
   gpuAcceleration?: boolean;
+  /**
+   * 背景付きのテーマで、背景を動かすか。
+   *
+   * 未設定 (undefined) は **動かす**として扱う。false のときは背景のアニメーションを
+   * その場で止める（オンに戻すと止めた位置から続きを動かす）。
+   * OS の「アニメーションを減らす」設定がオンのときは、これに関わらず SVG 内の指定で止まる。
+   */
+  backdropMotion?: boolean;
 }
 
 /**

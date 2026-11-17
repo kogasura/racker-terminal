@@ -8,6 +8,8 @@
   min-width: 220px;
   background: var(--context-menu-bg, #1e2030);
   border: 1px solid var(--panel-divider, rgba(255, 255, 255, 0.1));
+  /* すりガラス: 背景付きのテーマのときだけ効く (variables.css の --rk-glass-filter) */
+  backdrop-filter: var(--rk-glass-filter, none);
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 8px 24px var(--rk-shadow);

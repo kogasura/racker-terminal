@@ -1218,7 +1218,7 @@ import {
   getAllRuntimeEntries,
 } from './terminalRegistry';
 import { BUILTIN_THEMES, TOKYO_NIGHT } from './theme/builtinThemes';
-import { buildCssVars } from './theme/cssVars';
+import { buildCssVars, TERMINAL_VEIL_MIN } from './theme/cssVars';
 import type { ThemeDefinition } from './theme/types';
 
 /** Tokyo Night 以外の組み込みテーマ (どれでもよい) */
@@ -1243,6 +1243,44 @@ describe('buildTerminalThemePaint', () => {
     expect(buildTerminalThemePaint(OTHER_THEME, 0.85).hostBackground).toBe(
       buildCssVars(OTHER_THEME, 0.85)['--terminal-bg'],
     );
+  });
+
+  describe('背景付きのテーマ (glass がある)', () => {
+    const SCENE = BUILTIN_THEMES.find((t) => t.glass !== undefined)!;
+    const bg = SCENE.terminal.background;
+
+    it('不透明の設定でも xterm の背景は完全に透明 (RGB は残し alpha 0)', () => {
+      const paint = buildTerminalThemePaint(SCENE, 1);
+      expect(paint.theme.background).toBe(hexToRgba(bg, 0));
+      expect(paint.theme.foreground).toBe(SCENE.terminal.foreground);
+    });
+
+    it('ペインの面は max(glass.opacity, TERMINAL_VEIL_MIN) の濃さで、窓の透明度は使わない', () => {
+      const thin: ThemeDefinition = { ...SCENE, glass: { ...SCENE.glass!, opacity: 0.3 } };
+      const thick: ThemeDefinition = { ...SCENE, glass: { ...SCENE.glass!, opacity: 0.9 } };
+
+      expect(buildTerminalThemePaint(thin, 1).hostBackground).toBe(hexToRgba(bg, TERMINAL_VEIL_MIN));
+      expect(buildTerminalThemePaint(thin, 0.7).hostBackground).toBe(hexToRgba(bg, TERMINAL_VEIL_MIN));
+      expect(buildTerminalThemePaint(thick, 0.7).hostBackground).toBe(hexToRgba(bg, 0.9));
+    });
+
+    it('ホストの値は buildCssVars の --terminal-bg と同じ', () => {
+      expect(buildTerminalThemePaint(SCENE, 0.8).hostBackground).toBe(
+        buildCssVars(SCENE, 0.8)['--terminal-bg'],
+      );
+    });
+
+    it('glass の無いテーマは不透明のとき xterm の背景が不透明のまま', () => {
+      expect(buildTerminalThemePaint(TOKYO_NIGHT, 1).theme.background).toBe(
+        TOKYO_NIGHT.terminal.background,
+      );
+    });
+
+    it('同じ ID でも glass の濃さが変われば差し替える (自作テーマを直して再読み込み)', () => {
+      const edited: ThemeDefinition = { ...SCENE, glass: { ...SCENE.glass!, opacity: 0.95 } };
+      expect(planTerminalTheme(SCENE, edited, 1)?.hostBackground).toBe(hexToRgba(bg, 0.95));
+      expect(planTerminalTheme(SCENE, { ...SCENE }, 1)).toBeNull();
+    });
   });
 });
 

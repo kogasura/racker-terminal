@@ -61,6 +61,127 @@ describe('partitionThemeFiles', () => {
   it('空なら両方空', () => {
     expect(partitionThemeFiles([])).toEqual({ themes: [], errors: [] });
   });
+
+  describe('背景の SVG', () => {
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
+    const withBackdrop = (svg: string) =>
+      JSON.stringify({ name: 'Neon', backdrop: { svg, glass: { blur: 10, opacity: 0.5 } } });
+
+    it('*.svg はテーマにせず、JSON の backdrop.svg から中身を引けるようにする', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        { fileName: 'neon.svg', content: SVG, error: null },
+        { fileName: 'unused.svg', content: SVG, error: null },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes.map((t) => t.id)).toEqual(['user:neon']);
+      expect(themes[0].backdrop).toEqual({ kind: 'user', fileName: 'neon.svg', svg: SVG });
+      expect(themes[0].glass).toMatchObject({ blur: 10, opacity: 0.5 });
+    });
+
+    it('SVG が JSON より後に並んでいても引ける (拡張子の大小は問わない)', () => {
+      const { themes } = partitionThemeFiles([
+        { fileName: 'a.json', content: withBackdrop('Neon.SVG'), error: null },
+        { fileName: 'Neon.SVG', content: SVG, error: null },
+      ]);
+
+      expect(themes[0].backdrop).toMatchObject({ kind: 'user', svg: SVG });
+    });
+
+    it('参照した SVG が無ければ、その JSON をエラーにする', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('missing.svg'), error: null },
+      ]);
+
+      expect(themes).toEqual([]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].fileName).toBe('neon.json');
+      expect(errors[0].error).toMatch(/missing\.svg/);
+    });
+
+    it('読めなかった SVG (大きすぎる) は理由をエラーに出し、参照した JSON もエラーになる', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        { fileName: 'neon.svg', content: null, error: '256 KiB を超えています' },
+      ]);
+
+      expect(themes).toEqual([]);
+      expect(errors.map((e) => e.fileName)).toEqual(['neon.json', 'neon.svg']);
+      expect(errors[0].error).toBe('backdrop.svg: "neon.svg" を読めませんでした（neon.svg のエラーを参照）');
+      expect(errors[1].error).toBe('256 KiB を超えています');
+    });
+
+    it('SVG として読めない SVG はファイル名付きでエラーにし、参照した JSON は「読めませんでした」になる', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        { fileName: 'neon.svg', content: `${SVG}<link rel="preconnect" href="https://example.com"/>`, error: null },
+        { fileName: 'page.svg', content: '<html xmlns="http://www.w3.org/1999/xhtml"/>', error: null },
+      ]);
+
+      expect(themes).toEqual([]);
+      expect(errors.map((e) => e.fileName)).toEqual(['neon.json', 'neon.svg', 'page.svg']);
+      expect(errors[0].error).toBe('backdrop.svg: "neon.svg" を読めませんでした（neon.svg のエラーを参照）');
+      expect(errors[1].error).toMatch(/^SVG として読めません（.+）$/);
+      expect(errors[2].error).toMatch(/^SVG として読めません（ルートの要素が <html> です。/);
+    });
+
+    it('テーマには SVG のルートの svg 要素だけを入れる (外側の処理命令やコメントは持ち込まない)', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('neon.svg'), error: null },
+        {
+          fileName: 'neon.svg',
+          content: `<?xml-stylesheet href="https://example.com/x.css"?><!-- note -->${SVG}`,
+          error: null,
+        },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes[0].backdrop).toEqual({ kind: 'user', fileName: 'neon.svg', svg: SVG });
+    });
+
+    it('backdrop.svg の大文字小文字が違っても、フォルダのファイル名で引く', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'neon.json', content: withBackdrop('NEON.svg'), error: null },
+        { fileName: 'Neon.svg', content: SVG, error: null },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes[0].backdrop).toEqual({ kind: 'user', fileName: 'Neon.svg', svg: SVG });
+    });
+
+    it('ファイルが上限の 100 個に達していて SVG が見つからなければ、上限のことも書く', () => {
+      const files = Array.from({ length: 99 }, (_, i) => ({
+        fileName: `t${String(i).padStart(2, '0')}.json`,
+        content: VALID,
+        error: null,
+      }));
+      const { errors } = partitionThemeFiles([
+        { fileName: 'a-neon.json', content: withBackdrop('z-neon.svg'), error: null },
+        ...files,
+      ]);
+
+      expect(errors).toEqual([
+        {
+          fileName: 'a-neon.json',
+          error:
+            'backdrop.svg: "z-neon.svg" が themes フォルダにありません' +
+            '（ファイルが 100 個を超えると、名前順で後ろのファイルは読みません）',
+        },
+      ]);
+    });
+
+    it('背景の無い JSON は SVG があっても従来どおり読める', () => {
+      const { themes, errors } = partitionThemeFiles([
+        { fileName: 'sunset.json', content: VALID, error: null },
+        { fileName: 'neon.svg', content: SVG, error: null },
+      ]);
+
+      expect(errors).toEqual([]);
+      expect(themes.map((t) => t.id)).toEqual(['user:sunset']);
+      expect(themes[0].backdrop).toBeUndefined();
+    });
+  });
 });
 
 describe('theme: Mediator と副作用の結合', () => {
@@ -117,6 +238,23 @@ describe('theme: Mediator と副作用の結合', () => {
     listUserThemes.mockResolvedValueOnce([{ fileName: 'sunset.json', content: VALID, error: null }]);
     m.send({ type: 'theme/reload-requested' });
     await vi.waitFor(() => expect(listUserThemes).toHaveBeenCalledTimes(2));
+  });
+
+  it('読み込みで SVG の対応表を parseThemeFile に渡し、背景付きの自作テーマが使える', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    listUserThemes.mockResolvedValueOnce([
+      { fileName: 'neon.json', content: JSON.stringify({ name: 'Neon', backdrop: { svg: 'neon.svg' } }), error: null },
+      { fileName: 'neon.svg', content: svg, error: null },
+    ]);
+    const m = boot();
+
+    m.send({ type: 'theme/reload-requested' });
+
+    await vi.waitFor(() => expect(m.getState().status).toBe('loaded'));
+    const state = m.getState();
+    if (state.status !== 'loaded') throw new Error('unreachable');
+    expect(state.errors).toEqual([]);
+    expect(state.themes[0].backdrop).toEqual({ kind: 'user', fileName: 'neon.svg', svg });
   });
 
   it('深くネストした値のファイルがあっても loaded に進む', async () => {

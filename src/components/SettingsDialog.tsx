@@ -241,6 +241,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 type="number"
                 min="8"
                 max="48"
+                // step を書かないと既定の 1 刻みになり、既定値 12.5 がフォームの検証で
+                // 不正扱いになって「保存」が効かない（テーマも保存できない）。範囲は clamp が守る。
+                step="any"
                 value={draft.fontSize}
                 onChange={(e) =>
                   setDraft({ ...draft, fontSize: parseFloat(e.target.value) || 14 })

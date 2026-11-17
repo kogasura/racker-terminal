@@ -521,6 +521,21 @@ describe('コンポーネントの操作', () => {
     expect(useAppStore.getState().settings.theme).toBe('dracula');
   });
 
+  it('SettingsDialog: 既定のフォントサイズ 12.5 でもフォントサイズ欄が検証を通る（保存ボタンが効く）', () => {
+    // submit イベントを直接投げるテストはブラウザの検証を通らないため、ここで検証そのものを見る。
+    // step を書き忘れると 1 刻みになり、12.5 が不正扱いで「保存」が黙って効かなくなる。
+    // (フォーム全体の checkValidity は使わない: jsdom は透明度の range (0.7〜1, step 0.05) の
+    //  値 1 を浮動小数の誤差で stepMismatch と誤判定する。WebView2 では正しく有効になる)
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, fontSize: 12.5 },
+    });
+    renderSettings();
+    const fontSize = document.body.querySelector<HTMLInputElement>('input[type="number"][min="8"]');
+    expect(fontSize!.value).toBe('12.5');
+    expect(fontSize!.validity.stepMismatch).toBe(false);
+    expect(fontSize!.checkValidity()).toBe(true);
+  });
+
   it('SettingsDialog: 「Claude でテーマを作る」は入力中の内容を保存してから claude タブを頼み、ダイアログを閉じる', async () => {
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, theme: 'tokyo-night' },

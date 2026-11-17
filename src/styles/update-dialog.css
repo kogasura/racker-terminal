@@ -10,7 +10,7 @@
   margin-bottom: 12px;
   border: 1px solid var(--sidebar-border, #24283b);
   border-radius: 4px;
-  background: rgba(13, 14, 20, 0.6);
+  background: color-mix(in srgb, var(--rk-bg-inset) 60%, transparent);
   padding: 8px 10px;
 }
 
@@ -28,7 +28,7 @@
 .update-dialog__progress {
   height: 14px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--rk-hover-tint) 80%, transparent);
   overflow: hidden;
   margin-bottom: 6px;
 }
@@ -37,7 +37,7 @@
 .update-dialog__progress-bar {
   height: 100%;
   border-radius: 7px;
-  background: linear-gradient(90deg, #7aa2f7, #bb9af7);
+  background: linear-gradient(90deg, var(--rk-accent), var(--rk-accent-2));
   transition: width 0.15s ease;
 }
 

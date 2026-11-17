@@ -166,6 +166,22 @@ describe('tabs effects', () => {
     });
   });
 
+  it('お気に入り登録: タブのターミナル配色 (themeId) を引き継ぐ', () => {
+    useAppStore.setState((s) => ({
+      tabs: { ...s.tabs, t1: { ...s.tabs.t1, themeId: 'racker-ember' } },
+    }));
+
+    boot().send({ type: 'tabs/tab-favorite-requested', tabId: 't1' });
+
+    expect(useAppStore.getState().favorites[0].themeId).toBe('racker-ember');
+  });
+
+  it('お気に入り登録: 上書きの無いタブは themeId 無し (アプリの設定に従う)', () => {
+    boot().send({ type: 'tabs/tab-favorite-requested', tabId: 't1' });
+
+    expect(useAppStore.getState().favorites[0].themeId).toBeUndefined();
+  });
+
   it('お気に入り登録: Claude 自動起動が無ければ権限バイパスも落とす', () => {
     useAppStore.setState((s) => ({
       tabs: { ...s.tabs, t1: { ...s.tabs.t1, launchClaude: false, bypassPermissions: true } },

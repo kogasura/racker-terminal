@@ -34,8 +34,8 @@
 }
 
 .drop-as-new-group--over {
-  background: rgba(122, 162, 247, 0.15);
-  border-color: rgba(122, 162, 247, 0.7);
+  background: color-mix(in srgb, var(--rk-accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--rk-accent) 70%, transparent);
   opacity: 1;
 }
 
@@ -129,6 +129,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Settings Dialog テーマの節: フォルダを開く / Claude で作る / 再読み込み のボタン列 */
+.settings-theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 読み込めなかったテーマファイルの一覧 (ファイル名と理由) */
+.settings-theme-errors {
+  margin: 4px 0 0;
+  padding-left: 1.25rem;
+}
+
 /* ----- FavoritesSection ----- */
 /* Tabs と視覚的に区別するため、Favorites はカード調にする。
    背景・枠線・角丸を持たせ、内部に list を抱える。 */
@@ -215,7 +228,7 @@
   background: var(--tab-item-bg-active);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--rk-shadow) 80%, transparent);
   z-index: 10000;
   cursor: grabbing;
   opacity: 0.95;
@@ -229,9 +242,9 @@
   line-height: 1;
 }
 
-/* Phase 4 P-H: 既定お気に入りのアイコン（Tokyo Night yellow） */
+/* Phase 4 P-H: 既定お気に入りのアイコン（警告色 = Tokyo Night では yellow） */
 .favorite-item__icon--default {
-  color: #e0af68;
+  color: var(--rk-warning);
   opacity: 1;
 }
 
@@ -339,7 +352,7 @@
   background: var(--group-header-bg);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--rk-shadow) 80%, transparent);
   z-index: 10000;
   cursor: grabbing;
   opacity: 0.95;
@@ -352,8 +365,8 @@
 
 /* B4a: 折りたたみグループへのホバーハイライト（auto-expand 前のフィードバック） */
 .group-header--drop-hover {
-  background: rgba(122, 162, 247, 0.15);
-  outline: 1px dashed rgba(122, 162, 247, 0.5);
+  background: color-mix(in srgb, var(--rk-accent) 15%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--rk-accent) 50%, transparent);
 }
 
 .group-header__chevron {
@@ -606,7 +619,7 @@
 
 /* ドラッグ中にグループ本体がターゲットになった時のハイライト */
 .group-body--drop-over {
-  background: rgba(122, 162, 247, 0.08);
+  background: color-mix(in srgb, var(--rk-accent) 8%, transparent);
 }
 
 /* DragOverlay: body に Portal 描画されるドラッグ中プレビュー */
@@ -616,7 +629,7 @@
   background: var(--tab-item-bg-active);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--rk-shadow) 80%, transparent);
   /* ContextMenu などの Portal より前面に出す */
   z-index: 10000;
   cursor: grabbing;
@@ -653,7 +666,7 @@
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--rk-scrim);
   z-index: 10000;
 }
 
@@ -670,7 +683,7 @@
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 80px);
   overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--rk-shadow) 80%, black);
   z-index: 10001;
   color: var(--sidebar-fg);
 }
@@ -693,7 +706,7 @@
 /* F-M1b: env 機密値注意喚起 */
 .dialog-hint {
   font-size: 10px;
-  color: #e0af68;
+  color: var(--rk-warning);
   opacity: 0.9;
   line-height: 1.4;
 }
@@ -702,8 +715,8 @@
 .dialog-error {
   font-size: 11px;
   color: var(--status-crashed);
-  background: rgba(247, 118, 142, 0.08);
-  border: 1px solid rgba(247, 118, 142, 0.3);
+  background: color-mix(in srgb, var(--rk-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rk-danger) 30%, transparent);
   border-radius: 4px;
   padding: 6px 8px;
   margin-top: 4px;
@@ -746,7 +759,7 @@
 }
 
 .dialog-label code {
-  background: rgba(122, 162, 247, 0.12);
+  background: color-mix(in srgb, var(--rk-accent) 12%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   font-size: 10px;
@@ -757,7 +770,7 @@
 }
 
 .dialog-input {
-  background: #0d0e14;
+  background: var(--rk-bg-inset);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
   color: var(--sidebar-fg);
@@ -778,7 +791,7 @@ select.dialog-input {
 }
 
 .dialog-textarea {
-  background: #0d0e14;
+  background: var(--rk-bg-inset);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
   color: var(--sidebar-fg);
@@ -820,7 +833,7 @@ select.dialog-input {
 
 .dialog-btn--submit {
   background: var(--focus-ring);
-  color: #1a1b26;
+  color: var(--rk-on-accent);
   border-color: var(--focus-ring);
   font-weight: 600;
 }
@@ -851,7 +864,7 @@ select.dialog-input {
   border-radius: 6px;
   padding: 4px;
   min-width: 160px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--rk-shadow) 80%, transparent);
   z-index: 9999;
   /* Radix は position: fixed で portal に描画するため z-index は最前面に設定 */
 }
@@ -884,7 +897,7 @@ select.dialog-input {
 
 .context-menu__item--danger:hover,
 .context-menu__item--danger[data-highlighted] {
-  background: rgba(247, 118, 142, 0.12);
+  background: color-mix(in srgb, var(--rk-danger) 12%, transparent);
 }
 
 .context-menu__separator {

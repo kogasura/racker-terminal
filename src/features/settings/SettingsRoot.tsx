@@ -5,13 +5,13 @@
  * 無い。Root の役目は 2 つ:
  *
  *   1. 設定ダイアログへ現在値を View モデルとして配る
- *   2. 変更を受け取って store に反映し、画面全体に効く設定 (背景の透過) を適用する
+ *   2. 変更を受け取って store に反映する
  *
- * 透過の反映は以前 App.tsx の useEffect だった。設定に属する副作用なので、
- * 設定の Root が持つほうが探しやすい。
+ * 背景の透過とテーマの色の反映は ThemeRoot が持つ（透過を掛けた背景の変数を
+ * テーマの色と一緒に計算するため）。
  */
 
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { EventScope, mediatorLink, type Link } from '../../architecture/chain';
 import { useAppStore } from '../../store/appStore';
 import type { Settings } from '../../types';
@@ -31,11 +31,6 @@ const traceLink: Link<SettingsEvent> = (event, next) => {
   next(event);
 };
 
-/** 背景の透過。CSS で rgba() を動的に制御するために CSS 変数へ流す。 */
-function applyTransparency(transparency: number | undefined): void {
-  document.documentElement.style.setProperty('--bg-alpha', (transparency ?? 1.0).toString());
-}
-
 export function SettingsRoot({ children }: { children: ReactNode }) {
   const settings = useAppStore((s) => s.settings);
 
@@ -50,10 +45,6 @@ export function SettingsRoot({ children }: { children: ReactNode }) {
     ],
     [],
   );
-
-  useEffect(() => {
-    applyTransparency(settings.transparency);
-  }, [settings.transparency]);
 
   return (
     <EventScope<SettingsEvent> links={links}>

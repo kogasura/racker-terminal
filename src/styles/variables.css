@@ -1,62 +1,100 @@
 :root {
+  /* テーマの色トークン (--rk-*)
+     初期値は Tokyo Night。テーマを選ぶと JS (src/lib/theme/cssVars.ts の buildCssVars) が
+     documentElement に上書きする。CSS 側は直書きの色を持たず、ここのトークンか
+     下の意味づけ変数を参照する。薄めた色は color-mix(in srgb, var(--rk-x) N%, transparent) で作る。 */
+  --rk-bg: #1a1b26;
+  --rk-bg-sidebar: #16161e;
+  --rk-bg-elevated: #232333;
+  --rk-bg-inset: #0d0e14;
+  --rk-bg-hover: #1f2335;
+  --rk-bg-active: #292e42;
+  --rk-fg: #c0caf5;
+  --rk-fg-muted: #9aa5ce;
+  --rk-fg-dim: #737aa2;
+  --rk-border: #24283b;
+  --rk-border-strong: #414868;
+  --rk-accent: #7aa2f7;
+  --rk-accent-2: #bb9af7;
+  /* アクセント色の上に載せる文字色 */
+  --rk-on-accent: #1a1b26;
+  --rk-danger: #f7768e;
+  --rk-warning: #e0af68;
+  --rk-success: #9ece6a;
+  /* エージェント状態 (Claude タブのステータスドットに外周リングとして重ねる)
+     Claude Code 本体がターミナルタブに出す配色に合わせている。 */
+  --rk-agent-blocked: #5f87ff; /* 本体 waiting rgb(95,135,255) — 応答待ち */
+  --rk-agent-working: #ff9500; /* 本体 busy    rgb(255,149,0)  — 実行中 (shell も含む) */
+  /* appearance (dark / light) から決まる色。テーマの JSON では指定しない。
+     濃さの違う影・オーバーレイはこれを基準に color-mix で作る
+     (例: 影 0.4 = shadow 80% + transparent、影 0.6 = shadow 80% + black)。 */
+  --rk-hover-tint: rgba(255, 255, 255, 0.1);
+  --rk-scrim: rgba(0, 0, 0, 0.5);
+  --rk-shadow: rgba(0, 0, 0, 0.5);
+
   /* サイドバー */
   --sidebar-width: 240px;
-  --sidebar-fg: #c0caf5;
-  --sidebar-border: #24283b;
+  --sidebar-fg: var(--rk-fg);
+  --sidebar-border: var(--rk-border);
   /* パネル間の主要な仕切り (titlebar↔body, sidebar↔terminal)。
      透明背景でも視認しやすいよう sidebar-border より明るい色にする。 */
-  --panel-divider: #414868;
+  --panel-divider: var(--rk-border-strong);
 
   /* グループ・タブ */
   --tab-item-bg: transparent;
-  --tab-item-bg-hover: #1f2335;
-  --tab-item-bg-active: #292e42;
+  --tab-item-bg-hover: var(--rk-bg-hover);
+  --tab-item-bg-active: var(--rk-bg-active);
 
   /* ステータスドット */
-  --status-spawning: #e0af68;
-  --status-live: #9ece6a;
-  --status-crashed: #f7768e;
-  /* エージェント状態 (Claude タブのステータスドットに外周リングとして重ねる)
-     Claude Code 本体がターミナルタブに出す配色に合わせている。
+  --status-spawning: var(--rk-warning);
+  --status-live: var(--rk-success);
+  --status-crashed: var(--rk-danger);
+  /* エージェント状態
      idle は「何も起きていない」ので装飾しない方針のため色を持たない
      (本体は idle に緑を使うが、racker ではその緑を done に回している)。 */
-  --agent-blocked: #5f87ff;  /* 本体 waiting rgb(95,135,255) — 応答待ち */
-  --agent-working: #ff9500;  /* 本体 busy    rgb(255,149,0)  — 実行中 (shell も含む) */
-  --agent-done:    #9ece6a;  /* racker 独自 — 完了（見るまで残る）。本体に対応する状態はない */
+  --agent-blocked: var(--rk-agent-blocked);
+  --agent-working: var(--rk-agent-working);
+  --agent-done: var(--rk-success); /* racker 独自 — 完了（見るまで残る）。本体に対応する状態はない */
 
   /* ステータスバー（画面下部の 1 行）
      ターミナルの内容から目を奪わないよう、既定の文字は本文より暗く置く。
      警告色はステータスドットと同じ色を使い、アプリ全体で「黄=注意 / 赤=危険」を揃える。 */
-  --status-bar-fg: #9aa5ce;
-  --status-bar-fg-dim: #737aa2;
-  --status-bar-model-fg: #7aa2f7;
-  --status-bar-chip-border: #3b4261;
-  --status-bar-bar-bg: #292e42;
-  --status-bar-ok: #7aa2f7;
-  --status-bar-warn: #e0af68;
-  --status-bar-critical: #f7768e;
+  --status-bar-fg: var(--rk-fg-muted);
+  --status-bar-fg-dim: var(--rk-fg-dim);
+  --status-bar-model-fg: var(--rk-accent);
+  /* border と border-strong の間の色。Tokyo Night では旧値 #3b4261 に対し #3b425f
+     (青が 2/255 違うだけ) になり、見た目は変わらない。 */
+  --status-bar-chip-border: color-mix(in srgb, var(--rk-border-strong) 80%, var(--rk-border));
+  --status-bar-bar-bg: var(--rk-bg-active);
+  --status-bar-ok: var(--rk-accent);
+  --status-bar-warn: var(--rk-warning);
+  --status-bar-critical: var(--rk-danger);
 
-  /* crashed 状態の薄赤背景（MainPane 用） */
-  --crashed-overlay-bg: rgba(247, 118, 142, 0.08);
-
-  /* インライン編集 */
-  --inline-edit-bg: #1f2335;
-  --inline-edit-border: #7aa2f7;
+  /* コンテキストメニュー・ドロップダウンの背景。
+     旧来は未定義で、dropdown-menu.css のフォールバック #1e2030 が効いていた。
+     bg-elevated (#232333) だと Tokyo Night で明るくなりすぎるため、hover と sidebar の
+     混色で旧値に寄せている。Tokyo Night では #1d2030 (赤が 1/255 違うだけ) になる。 */
+  --context-menu-bg: color-mix(in srgb, var(--rk-bg-hover) 80%, var(--rk-bg-sidebar));
 
   /* フォーカスアウトライン */
-  --focus-ring: #7aa2f7;
+  --focus-ring: var(--rk-accent);
 
   /* 透明度制御 (Phase 4 P-B-2) */
   /* JS 側から --bg-alpha を書き換えて透明度を動的制御する */
   --bg-alpha: 1.0;
 
-  /* 半透明対応のため rgba() で --bg-alpha を参照する */
+  /* 半透明対応のため rgba() で --bg-alpha を参照する。
+     ここは初期値 (Tokyo Night)。テーマ適用時は buildCssVars がテーマの色と透明度から
+     計算した rgba() で上書きする。 */
   --sidebar-bg: rgba(22, 22, 30, var(--bg-alpha));
   --sidebar-bg-elevated: rgba(35, 35, 51, var(--bg-alpha));
   --group-header-bg: rgba(26, 27, 38, var(--bg-alpha));
   --title-bar-bg: rgba(26, 27, 38, var(--bg-alpha));
   --terminal-bg: rgba(26, 27, 38, var(--bg-alpha));
 
+  /* crashed 状態の薄赤背景（MainPane 用）。テーマ適用時は buildCssVars が上書きする */
+  --crashed-overlay-bg: rgba(247, 118, 142, 0.08);
+
   /* タイトルバー文字色 */
-  --title-bar-fg: #c0caf5;
+  --title-bar-fg: var(--rk-fg);
 }

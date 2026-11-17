@@ -4,9 +4,12 @@ import { getVersion } from '@tauri-apps/api/app';
 import { useEmit } from '../architecture/chain';
 import { useSettingsView } from '../features/settings/SettingsRoot';
 import type { SettingsEvent } from '../features/settings/events';
+import { useThemeView } from '../features/theme/ThemeRoot';
+import type { ThemeEvent } from '../features/theme/events';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateSettingsSectionView } from '../features/updater/views/UpdateSettingsSectionView';
 import type { Settings } from '../types';
+import { ThemeOptionGroups } from './ThemeOptionGroups';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -54,6 +57,8 @@ function numericSettingsPatch(draft: Settings, settings: Settings): Partial<Sett
 export function buildSettingsPatch(draft: Settings, settings: Settings): Partial<Settings> {
   const patch = numericSettingsPatch(draft, settings);
 
+  if (draft.theme !== settings.theme) patch.theme = draft.theme;
+
   if (draft.fontFamily !== settings.fontFamily) patch.fontFamily = draft.fontFamily;
 
   // 未設定 (undefined) は有効扱いなので、比較も「false かどうか」で揃える
@@ -75,9 +80,92 @@ export function buildSettingsPatch(draft: Settings, settings: Settings): Partial
   return patch;
 }
 
+/**
+ * 設定ダイアログのテーマの節。Passive View。
+ *
+ * 選んだテーマは draft に入れ、保存時に他の設定と一緒に適用する。
+ * フォルダ操作と再読み込みは theme 機能へイベントとして流すだけ。
+ */
+function ThemeSettingsSection({
+  value,
+  onChange,
+  onCreateWithClaude,
+}: {
+  value: string;
+  onChange: (themeId: string) => void;
+  /**
+   * 「Claude でテーマを作る」が押された。claude タブへ移るので、親が入力中の内容を
+   * 保存してから claude タブを開くよう流し、設定ダイアログを閉じる。
+   */
+  onCreateWithClaude: () => void;
+}) {
+  const { options, errors } = useThemeView();
+  const emit = useEmit<ThemeEvent>();
+
+  // ダイアログを開いたときに themes フォルダを読み直す (手で置いたファイルを拾うため)。
+  useEffect(() => {
+    emit({ type: 'theme/reload-requested' });
+    // 開いたときの 1 回だけでよい
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="dialog-field">
+      <span className="dialog-label">テーマ（配色）</span>
+      <select
+        className="dialog-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="テーマ"
+      >
+        <ThemeOptionGroups options={options} value={value} />
+      </select>
+      <div className="settings-theme-actions">
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={() => emit({ type: 'theme/open-folder-requested' })}
+        >
+          フォルダを開く
+        </button>
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={onCreateWithClaude}
+        >
+          Claude でテーマを作る
+        </button>
+        <button
+          type="button"
+          className="dialog-btn dialog-btn--cancel"
+          onClick={() => emit({ type: 'theme/reload-requested' })}
+        >
+          再読み込み
+        </button>
+      </div>
+      {errors.length > 0 && (
+        <div className="dialog-error">
+          読み込めなかったテーマ:
+          <ul className="settings-theme-errors">
+            {errors.map((e) => (
+              <li key={e.fileName}>
+                <code>{e.fileName}</code>: {e.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <small className="dialog-hint">
+        themes フォルダに JSON を置くか、Claude に頼んで作れます。
+      </small>
+    </div>
+  );
+}
+
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const settings = useSettingsView();
   const emit = useEmit<SettingsEvent>();
+  const emitTheme = useEmit<ThemeEvent>();
   // updater の表示は Root から View モデルとして降ってくる。
   const { settingsSection } = useUpdaterView();
 
@@ -108,15 +196,25 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     setDraft(settings);
   }, [settings]);
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-
+  /** 入力中の内容のうち、変更のあったものだけを保存する。 */
+  function saveDraft() {
     const patch = buildSettingsPatch(draft, settings);
 
     if (Object.keys(patch).length > 0) {
       emit({ type: 'settings/changed', patch });
     }
+  }
 
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    saveDraft();
+    onClose();
+  }
+
+  // claude タブへ移るときも、入力中の内容は捨てずに保存してから閉じる。
+  function handleCreateWithClaude() {
+    saveDraft();
+    emitTheme({ type: 'theme/create-with-claude-requested' });
     onClose();
   }
 
@@ -127,9 +225,15 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         <Dialog.Content className="dialog-content">
           <Dialog.Title className="dialog-title">Settings</Dialog.Title>
           <Dialog.Description className="dialog-description">
-            フォント・スクロールバック・透明度を変更します。
+            テーマ・フォント・スクロールバック・透明度を変更します。
           </Dialog.Description>
           <form onSubmit={handleSubmit} className="dialog-form">
+            <ThemeSettingsSection
+              value={draft.theme}
+              onChange={(theme) => setDraft({ ...draft, theme })}
+              onCreateWithClaude={handleCreateWithClaude}
+            />
+
             <label className="dialog-field">
               <span className="dialog-label">フォントサイズ (px)</span>
               <input
@@ -137,6 +241,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 type="number"
                 min="8"
                 max="48"
+                // step を書かないと既定の 1 刻みになり、既定値 12.5 がフォームの検証で
+                // 不正扱いになって「保存」が効かない（テーマも保存できない）。範囲は clamp が守る。
+                step="any"
                 value={draft.fontSize}
                 onChange={(e) =>
                   setDraft({ ...draft, fontSize: parseFloat(e.target.value) || 14 })

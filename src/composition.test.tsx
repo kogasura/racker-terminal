@@ -71,6 +71,7 @@ vi.mock('./lib/terminalRegistry', () => ({
   forceDisposeRuntime: vi.fn(),
   fitToConvergence: vi.fn(),
   getAllRuntimes: () => [],
+  getAllRuntimeEntries: () => [],
   getRuntimeScreen: () => null,
   getRuntimeScreenIfDirty: () => null,
   recycleTextureAtlas: vi.fn(),

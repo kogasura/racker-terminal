@@ -8,12 +8,24 @@
  *
  * 以前は App.tsx に 3 つの useEffect として並んでいた。App から見ると
  * 「なぜここにあるのか」が分からない副作用だったので、対象ごとにまとめた。
+ *
+ * テーマのカタログを使うため、ThemeRoot の内側に置く。
  */
 
 import { useEffect, type ReactNode } from 'react';
-import { getAllRuntimes, getRuntimeScreen, getRuntimeScreenIfDirty, recycleTextureAtlas } from '../../lib/terminalRegistry';
+import {
+  getAllRuntimeEntries,
+  getAllRuntimes,
+  getRuntimeScreen,
+  getRuntimeScreenIfDirty,
+  recycleTextureAtlas,
+} from '../../lib/terminalRegistry';
 import { pruneScrollback, saveScrollback } from '../../lib/scrollback';
+import type { ThemeDefinition } from '../../lib/theme/types';
 import { useAppStore } from '../../store/appStore';
+import type { AppState } from '../../types';
+import { useThemeView } from '../theme/ThemeRoot';
+import { resolveRuntimeThemes } from '../theme/viewModel';
 
 /** スクロールバックの保存間隔。「直前の作業が見える」ことが目的なので粗くてよい。 */
 const SAVE_INTERVAL_MS = 30_000;
@@ -36,6 +48,41 @@ function useApplySettingsToRuntimes(): void {
       for (const r of getAllRuntimes()) r.applySettings(state.settings);
     });
   }, []);
+}
+
+/**
+ * テーマを全タブのターミナルに配る。
+ *
+ * アプリのテーマ (settings.theme)・カタログ (自作テーマの読み込み)・タブごとの
+ * 上書き (tab.themeId) のどれかが変わったら、各タブのテーマを解決し直して渡す。
+ * 変わっていないタブは runtime 側の applyTerminalTheme が何もしないので、
+ * タブの状態が変わるたびに回しても描画のコストはかからない。
+ * 透明度の変化は applySettings 側が、いま当てているテーマの背景色で反映する。
+ */
+function useApplyThemeToRuntimes(catalog: readonly ThemeDefinition[]): void {
+  useEffect(() => {
+    const apply = (state: AppState) => {
+      const plan = resolveRuntimeThemes(
+        getAllRuntimeEntries(),
+        state.tabs,
+        catalog,
+        state.settings.theme,
+      );
+      for (const [runtime, theme] of plan) runtime.applyTerminalTheme(theme);
+    };
+
+    // カタログが変わった (自作テーマを読み込んだ) ときはここで配り直す
+    apply(useAppStore.getState());
+
+    let prevSettings = useAppStore.getState().settings;
+    let prevTabs = useAppStore.getState().tabs;
+    return useAppStore.subscribe((state) => {
+      if (state.settings === prevSettings && state.tabs === prevTabs) return;
+      prevSettings = state.settings;
+      prevTabs = state.tabs;
+      apply(state);
+    });
+  }, [catalog]);
 }
 
 /**
@@ -122,7 +169,9 @@ function useSaveScrollback(): void {
 }
 
 export function TerminalUpkeepRoot({ children }: { children: ReactNode }) {
+  const { catalog } = useThemeView();
   useApplySettingsToRuntimes();
+  useApplyThemeToRuntimes(catalog);
   useRecycleTextureAtlas();
   useSaveScrollback();
   return <>{children}</>;

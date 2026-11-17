@@ -12,7 +12,7 @@ body,
   /* Phase 4 P-B-2: frameless + transparent window 対応のため transparent。
      実際の背景色は app-root / app-body 配下の sidebar / terminal 各 wrapper が var(--bg-alpha) 経由で描く。 */
   background: transparent;
-  color: #c0caf5;
+  color: var(--rk-fg);
   font-family: "MonaspiceNe NF", "Cascadia Code", "Consolas", monospace;
   overflow: hidden;
 }
@@ -28,18 +28,20 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(192, 202, 245, 0.15);
+  background: color-mix(in srgb, var(--rk-fg) 15%, transparent);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(192, 202, 245, 0.3);
+  background: color-mix(in srgb, var(--rk-fg) 30%, transparent);
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 /* ErrorBoundary: 描画に失敗したときだけ出る開発者向け画面。
-   白画面のままだと release ビルドで原因を追えないため、内容をそのまま出す。 */
+   白画面のままだと release ビルドで原因を追えないため、内容をそのまま出す。
+   色はテーマのトークン (--rk-*) を使わず固定する。テーマの読み込みや適用が壊れていても
+   この画面だけは読めるようにするため。 */
 .error-boundary {
   padding: 16px 20px;
   font-family: ui-monospace, Consolas, 'Courier New', monospace;

@@ -21,6 +21,7 @@ mod proc;
 mod pty;
 mod quick_access;
 mod scrollback;
+mod themes;
 mod wsl;
 
 use pty::PtyManager;
@@ -83,6 +84,9 @@ pub fn run() {
             scrollback::delete_scrollback,
             scrollback::prune_scrollback,
             file_link::open_file_link,
+            themes::list_user_themes,
+            themes::ensure_themes_dir,
+            themes::open_themes_dir,
             job::allow_process_breakaway,
             job::restore_process_confinement,
         ])

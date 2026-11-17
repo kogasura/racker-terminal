@@ -10,7 +10,7 @@
   border: 1px solid var(--panel-divider, rgba(255, 255, 255, 0.1));
   border-radius: 6px;
   padding: 4px 0;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px var(--rk-shadow);
   z-index: 9999;
   outline: none;
   animation: dropdown-fade-in 80ms ease;

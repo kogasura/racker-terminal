@@ -10,6 +10,8 @@ import {
   isStandardWslArgs,
 } from '../lib/profileTemplates';
 import { useWslDistrosView } from '../features/tabs/TabsRoot';
+import { useThemeView } from '../features/theme/ThemeRoot';
+import { ThemeOptionGroups } from './ThemeOptionGroups';
 
 interface FavoriteDialogProps {
   mode: 'add' | 'edit';
@@ -95,6 +97,8 @@ function initialTextFields(f: Partial<Favorite>) {
     argsText: f.args?.join('\n') ?? '',
     envText: envToText(f.env),
     defaultTabTitle: f.defaultTabTitle ?? '',
+    // select の値。空文字 = アプリの設定に従う
+    themeId: f.themeId ?? '',
   };
 }
 
@@ -146,14 +150,19 @@ function resolveArgsAndCwd(p: {
   return { args: parseArgsText(p.argsText), cwd: orUndefined(p.cwd) };
 }
 
-/** 入力値から保存する Favorite を組み立てる。空の項目は undefined に落とす。 */
-function buildFavorite(p: {
+/**
+ * 入力値から保存する Favorite を組み立てる。空の項目は undefined に落とす。
+ * テスト容易性のため export する。
+ */
+export function buildFavorite(p: {
   title: string;
   shell: string;
   cwd: string | undefined;
   args: string[];
   env: Record<string, string>;
   defaultTabTitle: string;
+  /** ターミナルの配色。空文字 = アプリの設定に従う */
+  themeId: string;
   launchClaude: boolean;
   bypassPermissions: boolean;
 }): Omit<Favorite, 'id'> {
@@ -164,6 +173,7 @@ function buildFavorite(p: {
     args: p.args.length > 0 ? p.args : undefined,
     env: Object.keys(p.env).length > 0 ? p.env : undefined,
     defaultTabTitle: orUndefined(p.defaultTabTitle),
+    themeId: orUndefined(p.themeId),
     launchClaude: p.launchClaude || undefined,
     // 権限バイパスは Claude 自動起動が前提。launchClaude OFF のときは保存しない。
     bypassPermissions: (p.launchClaude && p.bypassPermissions) || undefined,
@@ -249,6 +259,7 @@ function EnvErrorMessage({ error }: { error: string | null }) {
 
 export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDialogProps) {
   const wslDistros = useWslDistrosView();
+  const { options: themeOptions } = useThemeView();
   const templates = useMemo(() => buildProfileTemplates(wslDistros), [wslDistros]);
 
   // 初期値の導出。useState の初期値としてしか使わないので毎レンダー作り直す必要はない。
@@ -266,6 +277,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
 
   const [envText, setEnvText] = useState(init.envText);
   const [defaultTabTitle, setDefaultTabTitle] = useState(init.defaultTabTitle);
+  const [themeId, setThemeId] = useState(init.themeId);
   const [launchClaude, setLaunchClaude] = useState(init.launchClaude);
   const [bypassPermissions, setBypassPermissions] = useState(init.bypassPermissions);
   // F-S3: env パースエラー表示用 state
@@ -331,6 +343,7 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
         args,
         env,
         defaultTabTitle,
+        themeId,
         launchClaude,
         bypassPermissions,
       }),
@@ -521,6 +534,22 @@ export function FavoriteDialog({ mode, initial, onSubmit, onClose }: FavoriteDia
                 onChange={(e) => setDefaultTabTitle(e.target.value)}
                 placeholder="(空 = タイトルを使用)"
               />
+            </label>
+
+            <label className="dialog-field">
+              <span className="dialog-label">ターミナルの配色</span>
+              <select
+                className="dialog-input"
+                value={themeId}
+                onChange={(e) => setThemeId(e.target.value)}
+              >
+                <option value="">アプリの設定に従う</option>
+                <ThemeOptionGroups options={themeOptions} value={themeId} />
+              </select>
+              <small className="dialog-hint">
+                このお気に入りから開いたタブだけ、ターミナル部分の配色を変えます。
+                変更は次に開くタブから効きます。
+              </small>
             </label>
 
             <label className="dialog-field dialog-field--checkbox">

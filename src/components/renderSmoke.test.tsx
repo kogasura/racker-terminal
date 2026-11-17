@@ -366,6 +366,8 @@ describe('コンポーネントのレンダリング', () => {
   });
 
   it('useThemeCatalogRef: テーマを読み込んでも描き直さず、current は最新のカタログを指す', async () => {
+    // 前のテストが覚えさせた自作テーマのキャッシュを消し、読み込み前のカタログに入らないようにする
+    localStorage.clear();
     let renders = 0;
     let seen: ThemeCatalogRef | null = null;
     function Probe() {
@@ -375,6 +377,8 @@ describe('コンポーネントのレンダリング', () => {
     }
     render(<Probe />);
     const first = seen as ThemeCatalogRef | null;
+    // 読み込み前は自作テーマが無い
+    expect(first!.current.map((t) => t.id)).not.toContain('user:sunset');
     // 自作テーマの読み込み (Promise) が終わるのを待つ
     await act(async () => {});
 

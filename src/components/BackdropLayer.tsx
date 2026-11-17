@@ -1,11 +1,13 @@
 /**
  * 窓の動く背景。画面全体の最背面に、背景付きのテーマの SVG を描く。
  *
- * - SVG は `sandbox="allow-same-origin"`（allow-scripts なし）の iframe の srcdoc に入れる。
- *   SVG 内のスクリプトやイベント属性は動かず、文書の CSP の meta で外部からの読み込みも止まる
- *   （buildBackdropDocument）。
+ * - iframe は `sandbox="allow-same-origin"`（allow-scripts なし）で、srcdoc は CSP の meta と
+ *   style だけの空の文書（BACKDROP_DOCUMENT）。SVG 内のスクリプトやイベント属性は動かない。
+ * - SVG は、iframe が読み込めたときに、親が XML として読んだ要素を body に取り込む
+ *   （mountBackdropSvg）。HTML として読み直さないので、SVG から HTML の要素は作れない。
+ *   組み込みのシーンも自作の SVG も同じ経路で入れる。
  * - 止める・連動の値（コンテキストの使用率・エージェントの状態）は、iframe の中の文書に
- *   直接書き込む（applyBackdropSignals）。srcdoc を差し替えないので、アニメーションが
+ *   直接書き込む（applyBackdropSignals）。文書を作り直さないので、アニメーションが
  *   最初からやり直しにならない。
  * - テーマが変わったら、新しい iframe を上に重ね、読み込めたら 300ms でフェードインする。
  *   下の 1 枚はフェードが終わるまで不透明のまま残す（窓は透明なので、両方を薄めると
@@ -29,7 +31,8 @@ import { useBackdropView } from '../features/theme/ThemeRoot';
 import { backdropContext } from '../features/theme/viewModel';
 import {
   applyBackdropSignals,
-  buildBackdropDocument,
+  BACKDROP_DOCUMENT,
+  mountBackdropSvg,
   type BackdropAgent,
 } from '../lib/theme/backdropDocument';
 
@@ -57,9 +60,8 @@ export interface BackdropFramesProps {
 /** iframe 1 枚ぶん。 */
 interface Frame {
   readonly id: number;
+  /** 描く SVG。読み込めたときに iframe の文書に取り込む */
   readonly svg: string;
-  /** srcdoc。作ったら変えない */
-  readonly doc: string;
   /** 読み込めたか。読み込めたらフェードインする */
   readonly loaded: boolean;
   /** フェードインが終わったか（不透明になったか）。下地に残すのはこれが立った 1 枚 */
@@ -72,7 +74,7 @@ interface Frame {
 }
 
 function newFrame(id: number, svg: string, instant: boolean): Frame {
-  return { id, svg, doc: buildBackdropDocument(svg), loaded: false, settled: false, instant };
+  return { id, svg, loaded: false, settled: false, instant };
 }
 
 /** 並んでいる iframe と、最後に振った id。 */
@@ -160,7 +162,7 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
   const iframes = useRef(new Map<number, HTMLIFrameElement>());
   const signals = useRef({ paused, context, agent });
 
-  // 止める・連動の値が変わったら、いま並んでいる全部の文書に書き込む (srcdoc は触らない)
+  // 止める・連動の値が変わったら、いま並んでいる全部の文書に書き込む (SVG は取り込み直さない)
   useEffect(() => {
     signals.current = { paused, context, agent };
     for (const iframe of iframes.current.values()) {
@@ -179,9 +181,13 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
     };
   }, []);
 
-  const handleLoad = useCallback((id: number, instant: boolean) => {
+  const handleLoad = useCallback((id: number, svg: string, instant: boolean) => {
     const doc = iframes.current.get(id)?.contentDocument;
-    if (doc) applyBackdropSignals(doc, signals.current);
+    if (doc) {
+      // SVG を取り込んでから、止める・連動の値を書き込む (書き込む先が SVG のルートのため)
+      mountBackdropSvg(doc, svg);
+      applyBackdropSignals(doc, signals.current);
+    }
     setStack((current) => loadFrame(current, id));
     // フェードしない 1 枚は、下に外す iframe も無いので待たない
     if (instant) return;
@@ -224,9 +230,9 @@ export function BackdropFrames({ svg, paused, context, agent }: BackdropFramesPr
           className={frameClassName(frame)}
           title="背景"
           sandbox="allow-same-origin"
-          srcDoc={frame.doc}
+          srcDoc={BACKDROP_DOCUMENT}
           tabIndex={-1}
-          onLoad={() => handleLoad(frame.id, frame.instant)}
+          onLoad={() => handleLoad(frame.id, frame.svg, frame.instant)}
         />
       ))}
     </div>

@@ -54,8 +54,8 @@ interface SvgFiles {
 
 /**
  * *.svg を、SVG として読めたものと読めなかったものに分ける。
- * 読めたものは extractSvgRoot でルートの `<svg>` 要素だけにしておく（外側に書かれたものを
- * テーマに持ち込まない）。
+ * 読めたものは extractSvgRoot でルートの `<svg>` 要素だけにし、SVG 以外の要素なども
+ * 取り除いておく（描くときと同じ中身をテーマに持たせる）。
  */
 function collectSvgFiles(files: readonly UserThemeFile[]): SvgFiles {
   const readable: Record<string, string> = {};

@@ -1,12 +1,14 @@
 /**
- * 動く背景（SVG）を入れる iframe の文書を作り、親から中の文書に値を書き込む。
+ * 動く背景（SVG）を入れる iframe の文書を作り、親から中の文書に SVG と値を書き込む。
  *
  * - iframe は `sandbox="allow-same-origin"`（allow-scripts なし）で置く。SVG 内のスクリプトや
- *   イベント属性は動かない。加えて CSP の meta で外部からの読み込みも止める。
- * - 文書に入れるのは SVG のルートの `<svg>` 要素だけ（extractSvgRoot）。外側に書かれた
- *   ものは入れない。
+ *   イベント属性は動かない。加えて CSP の meta で、CSP の対象になる外部からの読み込みも止める。
+ * - srcdoc は CSP の meta と style だけを持つ空の文書（BACKDROP_DOCUMENT）。SVG を文字列として
+ *   HTML に入れると、XML と HTML の読み方の違いで HTML の要素が作れてしまう（`<link>` による
+ *   先行接続は CSP の対象外）。そこで SVG は親が XML として読み、要素のまま取り込む
+ *   （mountBackdropSvg）。HTML として読み直すことはしない。
  * - allow-same-origin なので、親から contentDocument を触れる。止める class と連動の値は
- *   srcdoc を差し替えずに書き換える（アニメーションが最初からやり直しにならない）。
+ *   文書を作り直さずに書き換える（アニメーションが最初からやり直しにならない）。
  *
  * @module theme/backdropDocument
  */
@@ -26,35 +28,46 @@ export interface BackdropSignals {
 /** 止めるときに documentElement に付ける class。 */
 const PAUSED_CLASS = 'rk-paused';
 
-const DOCUMENT_HEAD =
+/**
+ * iframe の srcdoc。CSP の meta と、全面に広げる style・止める指定だけを持ち、body は空。
+ * SVG は読み込み後に mountBackdropSvg で body に入れる。
+ */
+export const BACKDROP_DOCUMENT =
   '<!doctype html><html><head><meta charset=utf-8>' +
   `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">` +
   '<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent} ' +
   'body>svg{display:block;width:100%;height:100%} ' +
-  `.${PAUSED_CLASS} *{animation-play-state:paused !important}</style></head><body>`;
-
-const DOCUMENT_TAIL = '</body></html>';
+  `.${PAUSED_CLASS} *{animation-play-state:paused !important}</style></head><body></body></html>`;
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
+/** Node.nodeType の値。iframe の中のノードは別の realm なので、Node の定数を使わずに比べる。 */
+const ELEMENT_NODE = 1;
+const PROCESSING_INSTRUCTION_NODE = 7;
 
 /** エラー文に載せるパーサーの理由の上限（文字数）。長い理由で設定画面を埋めない。 */
 const PARSE_DETAIL_MAX_LENGTH = 160;
 
-/** SVG のルート要素だけを取り出した結果。 */
-export type SvgRootResult = { ok: true; svg: string } | { ok: false; error: string };
+type ParsedSvg = { ok: true; root: Element } | { ok: false; error: string };
 
 /**
- * SVG を XML (image/svg+xml) として読み、ルートの `<svg>` 要素だけを文字列に戻す。
+ * SVG を XML (image/svg+xml) として読み、ルートの `<svg>` 要素を取り出して中身を絞る。
  *
- * 文書に入れるのはこの戻り値だけにする。`<svg>` の外側に書かれたもの（`<?xml-stylesheet?>`
- * などの処理命令・DOCTYPE・コメント）は落ちる。`</svg>` の後ろに `<link>` などを続けた
- * ものは XML として整形式でないので、まるごと読めない扱いにする（CSP の対象外の先行接続を
- * 起こさないため）。
- * 整形式でない・ルートが SVG の名前空間の `<svg>` でない場合は、理由を日本語で返す。
- * @param svg - SVG ファイルの中身
+ * - 整形式でない・ルートが SVG の名前空間の `<svg>` でない場合は、理由を日本語で返す。
+ * - `<svg>` の外側に書かれたもの（処理命令・DOCTYPE・コメント）は、ルートの要素だけを
+ *   使うので入らない。
+ * - ルートの中から、SVG の名前空間でない要素（XHTML など）・`<foreignObject>`・処理命令を
+ *   取り除く（stripNonSvgNodes）。
  */
-export function extractSvgRoot(svg: string): SvgRootResult {
-  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+function parseSvg(svg: string): ParsedSvg {
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  } catch (e) {
+    // ブラウザは投げずに parsererror を返すが、実装によっては投げる。1 ファイルの問題に留める
+    const detail = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `SVG として読めません（${detail}）` };
+  }
   const parserError = doc.getElementsByTagName('parsererror')[0];
   if (parserError !== undefined) {
     return { ok: false, error: `SVG として読めません（${parserErrorDetail(parserError)}）` };
@@ -68,7 +81,49 @@ export function extractSvgRoot(svg: string): SvgRootResult {
         `<svg xmlns="${SVG_NAMESPACE}"> で始めてください）`,
     };
   }
-  return { ok: true, svg: new XMLSerializer().serializeToString(root) };
+  stripNonSvgNodes(root);
+  return { ok: true, root };
+}
+
+/** 取り除く要素か。SVG の名前空間でないもの（XHTML など）と、`<foreignObject>`。 */
+function isStrippedElement(el: Element): boolean {
+  return el.namespaceURI !== SVG_NAMESPACE || el.localName === 'foreignObject';
+}
+
+/**
+ * root の中から、SVG の名前空間でない要素・`<foreignObject>`・処理命令を取り除く。
+ * 深い入れ子でもスタックを使い切らないよう、再帰せずに辿る。
+ */
+function stripNonSvgNodes(root: Element): void {
+  const pending: Node[] = [root];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === PROCESSING_INSTRUCTION_NODE) {
+        child.parentNode?.removeChild(child);
+      } else if (child.nodeType === ELEMENT_NODE) {
+        if (isStrippedElement(child as Element)) child.parentNode?.removeChild(child);
+        else pending.push(child);
+      }
+    }
+  }
+}
+
+/** SVG を検証した結果。読めたら、取り込むのと同じ中身を文字列にしたもの。 */
+export type SvgRootResult = { ok: true; svg: string } | { ok: false; error: string };
+
+/**
+ * 背景の SVG として使えるかを確かめ、取り込むのと同じ中身（ルートの `<svg>` 要素を
+ * 絞ったもの）を文字列にして返す。テーマの読み込み時にエラーを出すのに使う。
+ *
+ * 戻り値の文字列は保存（テーマ・起動時のキャッシュ）用。HTML として読ませてはいけない
+ * （XML と HTML の読み方の違いで HTML の要素が作れてしまう）。描くときは mountBackdropSvg が
+ * もう一度 XML として読む。
+ * @param svg - SVG ファイルの中身
+ */
+export function extractSvgRoot(svg: string): SvgRootResult {
+  const parsed = parseSvg(svg);
+  if (!parsed.ok) return parsed;
+  return { ok: true, svg: new XMLSerializer().serializeToString(parsed.root) };
 }
 
 /**
@@ -85,13 +140,20 @@ function parserErrorDetail(parserError: Element): string {
 }
 
 /**
- * iframe の srcdoc に入れる文書を作る。
- * @param svg - 背景の SVG。ルートの `<svg>` 要素だけを入れる（extractSvgRoot）。
- *   SVG として読めなければ何も描かない（守りは加えて sandbox と CSP が受け持つ）
+ * 背景の文書 (BACKDROP_DOCUMENT を読み込んだ iframe の文書) の body に SVG を取り込む。
+ * SVG は XML として読んだ要素を importNode で入れる（HTML として読み直さない）。
+ * body の中身は入れ替える。SVG として読めなければ body を空にして false を返す。
+ * @param doc - iframe の contentDocument
+ * @param svg - 背景の SVG（組み込みのシーン・自作のどちらも）
  */
-export function buildBackdropDocument(svg: string): string {
-  const root = extractSvgRoot(svg);
-  return DOCUMENT_HEAD + (root.ok ? root.svg : '') + DOCUMENT_TAIL;
+export function mountBackdropSvg(doc: Document, svg: string): boolean {
+  const body = doc.body;
+  if (body === null) return false;
+  while (body.firstChild) body.removeChild(body.firstChild);
+  const parsed = parseSvg(svg);
+  if (!parsed.ok) return false;
+  body.appendChild(doc.importNode(parsed.root, true));
+  return true;
 }
 
 /** SMIL のアニメーション（`<animate>` など）を止める・動かす口。SVGSVGElement にある。 */

@@ -154,6 +154,7 @@ SVG ファイルはそれだけではテーマにならず、ID も付きませ�
 racker の組み込みの背景（Claude Code の公式プラグイン theme-examples のシーンを移植したもの）と同じ約束です。
 
 - **ファイルは `<svg>` 要素 1 つだけ**: XML として正しい形（タグの閉じ忘れが無い など）にし、ルートを `<svg xmlns="http://www.w3.org/2000/svg">` にする。racker が描くのはルートの `<svg>` 要素だけで、その外側に書いたもの（`<?xml-stylesheet ?>` やコメントなど）は使わない。`</svg>` の後ろに何か書くと、SVG として読めずエラーになる。
+- **SVG の要素だけで描く**: `<foreignObject>` とその中身、HTML（XHTML）など SVG 以外の名前空間の要素、`<svg>` の中の処理命令（`<?...?>`）は、取り除いてから描く。HTML の要素を混ぜても表示されない。
 - **形**: ルートの `<svg>` に `viewBox`、`width="100%" height="100%"`、`preserveAspectRatio="xMidYMid slice"` を付ける。窓の大きさが変わっても、はみ出す側を切って全面を埋めるため。`viewBox="0 0 1600 1000"` くらいの横長が描きやすい。
 - **中央は静かに、動きは端と隅に**: 窓の中央にはターミナル（claude との会話）の文字が並ぶ。中央には大きく動くものや明るくちらつくものを置かず、動きは上下の端や四隅に寄せる。
 - **動かし方**: SVG の `<style>` に書いた CSS アニメーション（`@keyframes`）で動かす。動かすのは `transform` と `opacity` にすると軽い。
@@ -234,7 +235,7 @@ Claude Code の画面の一部は、テーマの配色に従わない色（truec
 - ファイルが 64 KiB を超える、UTF-8 として読めない
 - `backdrop.svg` のファイルがフォルダに無い、読めない（256 KiB を超える など）、パス（`/` や `\`）を含む
   - SVG が読めなかったときは、その SVG のファイル名で理由が出て、参照している JSON には「`"x.svg" を読めませんでした（x.svg のエラーを参照）`」と出ます。
-- SVG ファイルが SVG として読めない（XML として正しい形でない、ルートが `<svg xmlns="http://www.w3.org/2000/svg">` でない）。例: `x.svg: SVG として読めません（error on line 1 at column 54: Extra content at the end of the document）`
+- SVG ファイルが SVG として読めない（XML として正しい形でない、ルートが `<svg xmlns="http://www.w3.org/2000/svg">` でない）。例: `x.svg: SVG として読めません（パーサーの理由）`。括弧の中には、どこが読めなかったか（行と桁など）が入ります。
 - `backdrop.glass` の値が範囲外（`blur` が 0〜40、`opacity` が 0〜1 の外）、`tint` が色として読めない
 
 理由を読んで直し、「再読み込み」を押してください。

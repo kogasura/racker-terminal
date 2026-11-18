@@ -31,6 +31,7 @@ import {
   selectMoveTargets,
   selectQuickAccess,
   selectSidebar,
+  selectSidebarToggle,
   selectTabBar,
   selectFolderTemplates,
   selectTabItem,
@@ -45,6 +46,7 @@ import {
   type TerminalPanesViewModel,
   type MoveTargetViewModel,
   type SidebarViewModel,
+  type SidebarToggleViewModel,
   type TabBarViewModel,
   type TabItemViewModel,
 } from './viewModel';
@@ -59,6 +61,7 @@ export interface TabsViewModel {
    */
   readonly commandsSuspended: boolean;
   readonly sidebar: SidebarViewModel;
+  readonly sidebarToggle: SidebarToggleViewModel;
   readonly tabBar: TabBarViewModel;
 }
 
@@ -282,6 +285,7 @@ export function TabsRoot({ children, deps }: TabsRootProps) {
   const groupIds = useAppStore(useShallow((s) => s.groups.map((g) => g.id)));
   const isDraggingTab = state.drag?.kind === DRAG_KIND.TAB;
   const activeGroupId = useAppStore((s) => s.activeGroupId);
+  const sidebarHidden = useAppStore((s) => s.settings.sidebarHidden);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const tabIds = useAppStore(
     useShallow((s) => s.groups.find((g) => g.id === activeGroupId)?.tabIds ?? []),
@@ -290,10 +294,11 @@ export function TabsRoot({ children, deps }: TabsRootProps) {
   const viewModel = useMemo<TabsViewModel>(
     () => ({
       commandsSuspended: state.input === 'suspended',
-      sidebar: selectSidebar(groupIds, isDraggingTab),
+      sidebar: selectSidebar(groupIds, isDraggingTab, sidebarHidden),
+      sidebarToggle: selectSidebarToggle(sidebarHidden),
       tabBar: selectTabBar(activeGroupId, tabIds, activeTabId),
     }),
-    [state, groupIds, isDraggingTab, activeGroupId, tabIds, activeTabId],
+    [state, groupIds, isDraggingTab, sidebarHidden, activeGroupId, tabIds, activeTabId],
   );
 
   return (

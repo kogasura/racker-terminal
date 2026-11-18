@@ -28,7 +28,9 @@ export type TabsIntent =
   /** 既定タブを開く (Ctrl+T) */
   | { readonly type: 'tabs/spawn-default-requested' }
   /** お気に入りの index 番目を開く (Ctrl+Shift+1..9 → 0..8) */
-  | { readonly type: 'tabs/spawn-favorite-requested'; readonly index: number };
+  | { readonly type: 'tabs/spawn-favorite-requested'; readonly index: number }
+  /** 左サイドバーの表示 / 非表示を切り替える (Ctrl+Shift+B) */
+  | { readonly type: 'tabs/sidebar-toggle-requested' };
 
 /**
  * ポインタ由来の操作。
@@ -81,6 +83,13 @@ export type TabsPointerIntent =
    * ポインタ由来はコンテキストメニュー表示中でも止めない。
    */
   | { readonly type: 'tabs/default-tab-open-requested' }
+  /**
+   * 左サイドバーの開閉ボタンを押した (タイトルバー左端)。
+   *
+   * Ctrl+Shift+B と同じ動きだが、キーボード由来と分けてある理由は
+   * `default-tab-open-requested` と同じ (ポインタ由来はメニュー表示中でも止めない)。
+   */
+  | { readonly type: 'tabs/sidebar-toggle-clicked' }
   /** お気に入りからタブを開く */
   | { readonly type: 'tabs/favorite-spawn-requested'; readonly favoriteId: string }
   /** お気に入りを削除する */

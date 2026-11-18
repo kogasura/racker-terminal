@@ -337,6 +337,8 @@ export function selectGroup(
 
 /** サイドバー。 */
 export interface SidebarViewModel {
+  /** サイドバーごと出すか。隠しているときはターミナルが全幅になる。 */
+  readonly visible: boolean;
   readonly groupIds: readonly string[];
   /** タブをドラッグ中か (「新規グループに追加」エリアの表示に使う)。 */
   readonly isDraggingTab: boolean;
@@ -355,8 +357,29 @@ export interface TabBarViewModel {
   readonly activeTabId: string | null;
 }
 
-export function selectSidebar(groupIds: readonly string[], isDraggingTab: boolean): SidebarViewModel {
-  return { groupIds, isDraggingTab };
+export function selectSidebar(
+  groupIds: readonly string[],
+  isDraggingTab: boolean,
+  sidebarHidden: boolean | undefined,
+): SidebarViewModel {
+  // 未設定は表示扱い (Settings.sidebarHidden の既定)
+  return { visible: sidebarHidden !== true, groupIds, isDraggingTab };
+}
+
+/** タイトルバー左端の、サイドバー開閉ボタン。 */
+export interface SidebarToggleViewModel {
+  /** サイドバーが開いているか (aria-expanded と押下中の見た目に使う)。 */
+  readonly expanded: boolean;
+  /** ボタンの読み上げ名とツールチップ。押したら何が起きるかを書く。 */
+  readonly label: string;
+}
+
+export function selectSidebarToggle(sidebarHidden: boolean | undefined): SidebarToggleViewModel {
+  const expanded = sidebarHidden !== true;
+  return {
+    expanded,
+    label: expanded ? 'サイドバーを隠す (Ctrl+Shift+B)' : 'サイドバーを表示 (Ctrl+Shift+B)',
+  };
 }
 
 export function selectTabBar(

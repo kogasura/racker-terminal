@@ -18,6 +18,7 @@ const COMMANDS: readonly TabsEvent[] = [
   { type: 'tabs/restore-requested' },
   { type: 'tabs/spawn-default-requested' },
   { type: 'tabs/spawn-favorite-requested', index: 0 },
+  { type: 'tabs/sidebar-toggle-requested' },
 ];
 
 describe('tabs machine', () => {
@@ -139,6 +140,7 @@ describe('tabs machine', () => {
       { type: 'tabs/group-create-requested' },
       { type: 'tabs/default-tab-open-requested' },
       { type: 'tabs/favorite-spawn-requested', favoriteId: 'f1' },
+      { type: 'tabs/sidebar-toggle-clicked' },
     ];
 
     it('accepting でも suspended でも効果を出す', () => {
@@ -156,6 +158,18 @@ describe('tabs machine', () => {
       // キーボード由来だけが止まる
       expect(transition(suspended, { type: 'tabs/spawn-default-requested' })).toBeNull();
       expect(transition(suspended, { type: 'tabs/default-tab-open-requested' })).not.toBeNull();
+    });
+
+    it('サイドバーの開閉は、ボタンでも Ctrl+Shift+B でも同じ効果になる', () => {
+      expect(effectsOf(initialState, { type: 'tabs/sidebar-toggle-clicked' })).toEqual([
+        { kind: 'toggle-sidebar' },
+      ]);
+      expect(effectsOf(initialState, { type: 'tabs/sidebar-toggle-requested' })).toEqual([
+        { kind: 'toggle-sidebar' },
+      ]);
+      // キーボード由来だけが止まる
+      expect(transition(suspended, { type: 'tabs/sidebar-toggle-requested' })).toBeNull();
+      expect(transition(suspended, { type: 'tabs/sidebar-toggle-clicked' })).not.toBeNull();
     });
 
     it('インライン編集の終了とフォルダを開く要求も止めない', () => {

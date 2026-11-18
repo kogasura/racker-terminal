@@ -40,6 +40,13 @@ describe('tabCommandForKey', () => {
     });
   });
 
+  it('Shift+B → サイドバーの開閉、B 単独は奪わない (Claude Code が使う)', () => {
+    expect(tabCommandForKey(key({ shiftKey: true, code: 'KeyB' }))).toEqual({
+      type: 'tabs/sidebar-toggle-requested',
+    });
+    expect(tabCommandForKey(key({ code: 'KeyB' }))).toBeNull();
+  });
+
   it('Shift+1..9 → お気に入り 0..8', () => {
     expect(tabCommandForKey(key({ shiftKey: true, code: 'Digit1' }))).toEqual({
       type: 'tabs/spawn-favorite-requested',

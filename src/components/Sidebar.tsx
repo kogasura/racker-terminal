@@ -35,10 +35,15 @@ function DropAsNewGroupArea() {
 export const Sidebar = memo(function Sidebar() {
   const { sidebar } = useTabsView();
   const emit = useEmit<TabsEvent>();
-  const { groupIds, isDraggingTab } = sidebar;
+  const { visible, groupIds, isDraggingTab } = sidebar;
 
   // B3: Settings Dialog の開閉状態
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 隠しているときは CSS で消すのではなく描かない。display:none のまま残すと
+  // dnd-kit のドロップ先 (グループ行) が大きさ 0 で残り、タブバーでの並び替えが
+  // 見えないグループへ吸い込まれうるため。
+  if (!visible) return null;
 
   return (
     <div className="sidebar">

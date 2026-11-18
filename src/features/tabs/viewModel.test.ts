@@ -8,6 +8,7 @@ import {
   selectNewTabMenu,
   selectQuickAccess,
   selectSidebar,
+  selectSidebarToggle,
   selectTabBar,
   selectTabItem,
   selectTerminalPanes,
@@ -212,7 +213,28 @@ describe('selectQuickAccess', () => {
 
 describe('selectSidebar / selectTabBar', () => {
   it('サイドバーはグループ一覧とドラッグ中かを渡す', () => {
-    expect(selectSidebar(['g1'], true)).toEqual({ groupIds: ['g1'], isDraggingTab: true });
+    expect(selectSidebar(['g1'], true, undefined)).toEqual({
+      visible: true,
+      groupIds: ['g1'],
+      isDraggingTab: true,
+    });
+  });
+
+  it('サイドバーは隠す設定のときだけ消える (未設定は表示)', () => {
+    expect(selectSidebar([], false, undefined).visible).toBe(true);
+    expect(selectSidebar([], false, false).visible).toBe(true);
+    expect(selectSidebar([], false, true).visible).toBe(false);
+  });
+
+  it('開閉ボタンは、押したら何が起きるかを名前にする', () => {
+    expect(selectSidebarToggle(undefined)).toEqual({
+      expanded: true,
+      label: 'サイドバーを隠す (Ctrl+Shift+B)',
+    });
+    expect(selectSidebarToggle(true)).toEqual({
+      expanded: false,
+      label: 'サイドバーを表示 (Ctrl+Shift+B)',
+    });
   });
 
   it('タブバーはグループが無ければ出さない', () => {

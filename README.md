@@ -88,6 +88,7 @@ Claude Code の中で同じことを知るには `/status` や `/usage` を打�
 | `Ctrl+Shift+W` | アクティブタブを閉じる |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | 次 / 前のタブへ移動 |
 | `Ctrl+Shift+1〜9` | お気に入りの 1〜9 番目を開く |
+| `Ctrl+Shift+B` | 左サイドバーの表示 / 非表示（タイトルバー左端のボタンでも切り替え可） |
 | `Ctrl+C` | 選択範囲をコピー（選択なしのときは SIGINT） |
 | `Ctrl+V` | クリップボードから貼り付け |
 | `Ctrl+Enter` | 改行を挿入（ESC+CR。Mac の `Option+Enter` 相当） |

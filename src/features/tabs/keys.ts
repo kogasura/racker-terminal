@@ -71,6 +71,12 @@ const KEY_COMMANDS: readonly {
     command: () => ({ type: 'tabs/spawn-default-requested' }),
   },
   {
+    // Ctrl+Shift+B: 左サイドバーの表示 / 非表示
+    // Ctrl+B (Shift なし) は Claude Code が「バックグラウンドで実行」に使うため奪わない
+    match: (e, codeIs) => e.shiftKey && codeIs('KeyB', 'b'),
+    command: () => ({ type: 'tabs/sidebar-toggle-requested' }),
+  },
+  {
     // Ctrl+Shift+1..9: お気に入り index 0..8 を開く
     match: (e) => favoriteIndexFromKey(e) !== null,
     command: (e) => {

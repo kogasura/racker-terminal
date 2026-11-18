@@ -327,3 +327,16 @@ describe('tabs effects', () => {
     spawn.restore();
   });
 });
+
+describe('サイドバーの開閉', () => {
+  it('押すたびに設定の sidebarHidden を反転する (未設定は表示扱い)', () => {
+    useAppStore.setState((s) => ({ settings: { ...s.settings, sidebarHidden: undefined } }));
+    const m = boot();
+
+    m.send({ type: 'tabs/sidebar-toggle-clicked' });
+    expect(useAppStore.getState().settings.sidebarHidden).toBe(true);
+
+    m.send({ type: 'tabs/sidebar-toggle-requested' });
+    expect(useAppStore.getState().settings.sidebarHidden).toBe(false);
+  });
+});

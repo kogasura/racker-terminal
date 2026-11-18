@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Window } from '@tauri-apps/api/window';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEmit } from '../architecture/chain';
-import { useNewTabMenuView } from '../features/tabs/TabsRoot';
+import { useNewTabMenuView, useTabsView } from '../features/tabs/TabsRoot';
 import type { TabsEvent } from '../features/tabs/events';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateBadgeView } from '../features/updater/views/UpdateBadgeView';
@@ -26,6 +26,9 @@ export function TitleBar() {
   const newTabMenu = useNewTabMenuView();
   const emit = useEmit<TabsEvent>();
 
+  // 左サイドバーの開閉ボタン。開いているか・何と読み上げるかは View モデルが決める。
+  const { sidebarToggle } = useTabsView();
+
   // 自動更新バッジ。状態は updater の Root から View モデルとして降ってくる。
   const { badge } = useUpdaterView();
 
@@ -45,6 +48,22 @@ export function TitleBar() {
       data-tauri-drag-region
       onMouseDown={handleDragMouseDown}
     >
+      {/* 左サイドバーの開閉。ウィンドウを半分の幅などで使うときにターミナルの幅を稼ぐ */}
+      <button
+        type="button"
+        className={`title-bar__btn--sidebar${sidebarToggle.expanded ? ' title-bar__btn--sidebar-expanded' : ''}`}
+        onClick={() => emit({ type: 'tabs/sidebar-toggle-clicked' })}
+        aria-label={sidebarToggle.label}
+        aria-expanded={sidebarToggle.expanded}
+        title={sidebarToggle.label}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" />
+          <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" />
+          <rect className="title-bar__sidebar-icon-fill" x="2" y="3" width="4" height="10" fill="currentColor" />
+        </svg>
+      </button>
+
       <div className="title-bar__title" data-tauri-drag-region>
         Racker Terminal
       </div>

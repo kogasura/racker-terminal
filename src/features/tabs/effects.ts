@@ -104,6 +104,9 @@ const handlers: HandlerMap = {
 
   'spawn-favorite': (state, effect) => state.spawnFavoriteByIndex(effect.index),
 
+  // 開閉状態は設定として保存する (再起動しても隠したまま)
+  'toggle-sidebar': (state) => state.updateSettings({ sidebarHidden: !state.settings.sidebarHidden }),
+
   'create-tab': (state) => {
     // グループが 1 つも無い起動直後は何もしない (タブバー自体が出ていない)
     if (state.activeGroupId) state.createTab(state.activeGroupId);

@@ -77,9 +77,38 @@
   flex-shrink: 0;
 }
 
+/* 左サイドバーの開閉ボタン (タイトルバー左端) */
+.title-bar__btn--sidebar {
+  width: 36px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--title-bar-fg, #c0caf5);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+
+.title-bar__btn--sidebar:hover {
+  background: var(--rk-hover-tint);
+  opacity: 1;
+}
+
+/* アイコンの左側の帯は、サイドバーが開いているときだけ塗る */
+.title-bar__sidebar-icon-fill {
+  opacity: 0;
+}
+
+.title-bar__btn--sidebar-expanded .title-bar__sidebar-icon-fill {
+  opacity: 0.45;
+}
+
 .title-bar__title {
   flex: 1;
-  padding: 0 12px;
+  padding: 0 12px 0 4px;
   font-size: 12px;
   color: var(--title-bar-fg, #c0caf5);
   overflow: hidden;

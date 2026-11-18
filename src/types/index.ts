@@ -383,6 +383,13 @@ export interface Settings {
    */
   statusBarEnabled?: boolean;
   /**
+   * 左サイドバーを隠しているか。
+   *
+   * 未設定 (undefined) は **表示**として扱う。ウィンドウを画面の半分などで使うときに
+   * ターミナルの幅を稼ぐためのもので、タイトルバー左端のボタンか Ctrl+Shift+B で切り替える。
+   */
+  sidebarHidden?: boolean;
+  /**
    * 端末の描画に GPU (WebGL) を使うか。
    *
    * 未設定 (undefined) は **有効**として扱う。GPU 描画は速いが、xterm の WebGL

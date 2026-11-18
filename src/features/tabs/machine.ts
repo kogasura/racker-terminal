@@ -81,7 +81,8 @@ export type TabsEffect =
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
-  | { readonly kind: 'spawn-favorite'; readonly index: number };
+  | { readonly kind: 'spawn-favorite'; readonly index: number }
+  | { readonly kind: 'toggle-sidebar' };
 
 export const initialState: TabsState = { input: 'accepting', drag: null };
 
@@ -155,6 +156,9 @@ const handlers: HandlerMap = {
   'tabs/spawn-favorite-requested': (state, event) =>
     accepting(state) ? dispatch(state, { kind: 'spawn-favorite', index: event.index }) : null,
 
+  'tabs/sidebar-toggle-requested': (state) =>
+    accepting(state) ? dispatch(state, { kind: 'toggle-sidebar' }) : null,
+
   // --- ポインタ由来。入力モードで止めない (events.ts の TabsPointerIntent 参照) -----
   'tabs/tab-create-requested': (state) => dispatch(state, { kind: 'create-tab' }),
 
@@ -204,6 +208,8 @@ const handlers: HandlerMap = {
 
   // Ctrl+T と同じ効果だが、こちらは入力モードで止めない
   'tabs/default-tab-open-requested': (state) => dispatch(state, { kind: 'spawn-default' }),
+
+  'tabs/sidebar-toggle-clicked': (state) => dispatch(state, { kind: 'toggle-sidebar' }),
 
   'tabs/edit-stopped': (state) => dispatch(state, { kind: 'stop-editing' }),
 

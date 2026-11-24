@@ -69,6 +69,7 @@ export type TabsEffect =
   | { readonly kind: 'stop-editing' }
   | { readonly kind: 'open-folder'; readonly templateId: string }
   | { readonly kind: 'open-quick-access'; readonly path: string }
+  | { readonly kind: 'toggle-quick-access-claude'; readonly path: string }
   | { readonly kind: 'refresh-quick-access' }
   /** 落とした先を解決して反映する。 */
   | {
@@ -218,6 +219,9 @@ const handlers: HandlerMap = {
 
   'tabs/quick-access-open-requested': (state, event) =>
     dispatch(state, { kind: 'open-quick-access', path: event.path }),
+
+  'tabs/quick-access-claude-toggled': (state, event) =>
+    dispatch(state, { kind: 'toggle-quick-access-claude', path: event.path }),
 
   'tabs/quick-access-refresh-requested': (state) =>
     dispatch(state, { kind: 'refresh-quick-access' }),

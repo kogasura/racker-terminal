@@ -1,14 +1,74 @@
 import { memo, useState } from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useEmit } from '../architecture/chain';
 import { useQuickAccessView } from '../features/tabs/TabsRoot';
+import type { QuickAccessItemViewModel } from '../features/tabs/viewModel';
 import type { TabsEvent } from '../features/tabs/events';
+import { ClaudeMark } from './ClaudeMark';
+
+/**
+ * クイックアクセスの 1 行。
+ *
+ * クリックでそのフォルダを開く。claude を起動するかはフォルダごとに右クリックで切り替え、
+ * 起動するフォルダにだけ印を付ける（既定は起動する）。
+ */
+function QuickAccessItem({ item }: { item: QuickAccessItemViewModel }) {
+  const emit = useEmit<TabsEvent>();
+  const open = () => emit({ type: 'tabs/quick-access-open-requested', path: item.path });
+
+  return (
+    // メニューの開閉は tabs の Mediator に伝える (開いている間はキーコマンドが止まる)
+    <ContextMenu.Root
+      onOpenChange={(isOpen) =>
+        emit({ type: isOpen ? 'tabs/context-menu-opened' : 'tabs/context-menu-closed' })
+      }
+    >
+      <ContextMenu.Trigger asChild>
+        <button
+          type="button"
+          className="favorite-item quick-access-item"
+          title={item.tooltip}
+          onClick={open}
+        >
+          <span className="favorite-item__icon">📁</span>
+          <span className="favorite-item__title">{item.name}</span>
+          {item.launchClaude && <ClaudeMark />}
+        </button>
+      </ContextMenu.Trigger>
+
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item className="context-menu__item" onSelect={open}>
+            開く
+          </ContextMenu.Item>
+
+          <ContextMenu.Separator className="context-menu__separator" />
+
+          <ContextMenu.CheckboxItem
+            className="context-menu__item"
+            checked={item.launchClaude}
+            onCheckedChange={() =>
+              emit({ type: 'tabs/quick-access-claude-toggled', path: item.path })
+            }
+          >
+            <span className="context-menu__check">
+              <ContextMenu.ItemIndicator>✓</ContextMenu.ItemIndicator>
+            </span>
+            開いたら claude を起動する
+          </ContextMenu.CheckboxItem>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
 
 /**
  * サイドバーの Quick Access セクション。
  *
  * Windows エクスプローラーのクイックアクセス (ピン留め + よく使うフォルダ) を並べ、
- * クリックするとそのフォルダで claude を起動するタブを開く。お気に入りに登録するほど
- * ではないフォルダを、エクスプローラーと同じ顔ぶれから 1 クリックで開くための導線。
+ * クリックするとそのフォルダでタブを開く (既定は claude を起動する。フォルダごとに
+ * 右クリックでシェルだけを開くようにできる)。お気に入りに登録するほどではない
+ * フォルダを、エクスプローラーと同じ顔ぶれから 1 クリックで開くための導線。
  *
  * 一覧はエクスプローラー側の持ち物なので、ここでは並び替えも編集もさせない。
  * ピン留めを変えたあとは ↻ で読み直す。
@@ -55,16 +115,7 @@ export const QuickAccessSection = memo(function QuickAccessSection() {
       {!collapsed && (
         <div className="favorites-list">
           {items.map((item) => (
-            <button
-              key={item.path}
-              type="button"
-              className="favorite-item quick-access-item"
-              title={item.tooltip}
-              onClick={() => emit({ type: 'tabs/quick-access-open-requested', path: item.path })}
-            >
-              <span className="favorite-item__icon">📁</span>
-              <span className="favorite-item__title">{item.name}</span>
-            </button>
+            <QuickAccessItem key={item.path} item={item} />
           ))}
         </div>
       )}

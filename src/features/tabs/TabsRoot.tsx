@@ -178,7 +178,8 @@ export function useFolderTemplatesView(): readonly FolderTemplateViewModel[] {
 /** サイドバーの Quick Access セクション。お気に入りと同じく 1 つしか無いので引数は取らない。 */
 export function useQuickAccessView(): QuickAccessViewModel {
   const folders = useAppStore((s) => s.quickAccess);
-  return useMemo(() => selectQuickAccess(folders), [folders]);
+  const shellOnlyPaths = useAppStore((s) => s.settings.quickAccessShellOnlyPaths);
+  return useMemo(() => selectQuickAccess(folders, shellOnlyPaths), [folders, shellOnlyPaths]);
 }
 
 /**

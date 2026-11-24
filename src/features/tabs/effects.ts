@@ -18,7 +18,12 @@ import { getTabDisplayTitle } from '../../types';
 import { open as pickFolder } from '@tauri-apps/plugin-dialog';
 import { buildProfileTemplates } from '../../lib/profileTemplates';
 import { buildFolderLaunch } from '../../lib/openFolder';
-import { buildQuickAccessLaunch, listQuickAccess } from '../../lib/quickAccess';
+import {
+  buildQuickAccessLaunch,
+  isQuickAccessClaude,
+  listQuickAccess,
+  toggleQuickAccessClaude,
+} from '../../lib/quickAccess';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
 import type { TabsEffect } from './machine';
@@ -215,8 +220,18 @@ const handlers: HandlerMap = {
     // 一覧に無いパスは開かない (View が出している行だけが対象)
     const folder = state.quickAccess.find((f) => f.path === effect.path);
     if (!folder) return;
-    state.createTab(undefined, buildQuickAccessLaunch(folder));
+    const launchClaude = isQuickAccessClaude(folder.path, state.settings.quickAccessShellOnlyPaths);
+    state.createTab(undefined, buildQuickAccessLaunch(folder, launchClaude));
   },
+
+  // 設定として保存する (再起動しても、一覧を読み直しても残る)
+  'toggle-quick-access-claude': (state, effect) =>
+    state.updateSettings({
+      quickAccessShellOnlyPaths: toggleQuickAccessClaude(
+        state.settings.quickAccessShellOnlyPaths,
+        effect.path,
+      ),
+    }),
 
   'refresh-quick-access': (state) => {
     void listQuickAccess().then((folders) => state.setQuickAccess(folders));

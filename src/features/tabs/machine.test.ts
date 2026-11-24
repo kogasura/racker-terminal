@@ -141,6 +141,8 @@ describe('tabs machine', () => {
       { type: 'tabs/default-tab-open-requested' },
       { type: 'tabs/favorite-spawn-requested', favoriteId: 'f1' },
       { type: 'tabs/sidebar-toggle-clicked' },
+      // 右クリックメニューの中から押す (= suspended の最中に届く) ので、止めると効かない
+      { type: 'tabs/quick-access-claude-toggled', path: 'C:/dev' },
     ];
 
     it('accepting でも suspended でも効果を出す', () => {

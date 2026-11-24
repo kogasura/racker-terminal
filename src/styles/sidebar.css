@@ -348,6 +348,14 @@
   white-space: nowrap;
 }
 
+/* クリックで claude が起動する項目の右端に付ける印 (ClaudeMark) */
+.claude-mark {
+  flex-shrink: 0;
+  color: var(--claude-mark);
+  font-size: 12px;
+  line-height: 1;
+}
+
 /* ----- QuickAccessSection (カードの見た目は Favorites と共有) ----- */
 /* ヘッダ右端の小さなボタン (読み直し) */
 .favorites-header__action {
@@ -1017,6 +1025,14 @@ select.dialog-input {
 .context-menu__sub-arrow {
   font-size: 11px;
   opacity: 0.6;
+}
+
+/* チェック付きの項目 (クイックアクセスの「claude を起動する」)。
+   チェックの有無で文字の位置がずれないよう、印の幅を常に確保する。 */
+.context-menu__check {
+  display: inline-block;
+  width: 1.2em;
+  flex-shrink: 0;
 }
 
 /* グループ名は任意の長さになりうるので省略表示する */

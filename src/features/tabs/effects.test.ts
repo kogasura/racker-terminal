@@ -289,6 +289,37 @@ describe('tabs effects', () => {
     expect(added[0].bypassPermissions).toBeUndefined();
   });
 
+  it('open-quick-access: claude を起動しない設定のフォルダはシェルだけを開く', () => {
+    useAppStore.setState((s) => ({
+      quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }],
+      settings: { ...s.settings, quickAccessShellOnlyPaths: ['C:/Users/me/dev'] },
+    }));
+    const before = new Set(Object.keys(useAppStore.getState().tabs));
+
+    boot().send({ type: 'tabs/quick-access-open-requested', path: 'C:/Users/me/dev' });
+
+    const added = Object.values(useAppStore.getState().tabs).filter((t) => !before.has(t.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ userTitle: 'dev', cwd: 'C:/Users/me/dev' });
+    expect(added[0].launchClaude).not.toBe(true);
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, quickAccessShellOnlyPaths: undefined },
+    }));
+  });
+
+  it('quick-access-claude-toggled: フォルダごとの claude 起動を設定に保存して切り替える', () => {
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, quickAccessShellOnlyPaths: undefined },
+    }));
+    const m = boot();
+
+    m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessShellOnlyPaths).toEqual(['C:/Users/me/dev']);
+
+    m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessShellOnlyPaths).toEqual([]);
+  });
+
   it('open-quick-access: 一覧に無いパスでは何も開かない', () => {
     useAppStore.setState({ quickAccess: [] });
     boot().send({ type: 'tabs/quick-access-open-requested', path: 'C:/elsewhere' });

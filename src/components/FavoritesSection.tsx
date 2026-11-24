@@ -8,6 +8,7 @@ import type { TabsEvent } from '../features/tabs/events';
 import { FavoriteDialog } from './FavoriteDialog';
 import type { Favorite } from '../types';
 import { DRAG_KIND } from '../lib/dndResolve';
+import { ClaudeMark } from './ClaudeMark';
 
 type DialogState =
   | { mode: 'add' }
@@ -18,6 +19,7 @@ type DialogState =
 function SortableFavoriteItem({
   fav,
   isDefault,
+  launchClaude,
   onSpawn,
   onEdit,
   onRemove,
@@ -26,6 +28,7 @@ function SortableFavoriteItem({
 }: {
   fav: Favorite;
   isDefault: boolean;
+  launchClaude: boolean;
   onSpawn: () => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -70,6 +73,7 @@ function SortableFavoriteItem({
         >
           <span className={iconClass}>{icon}</span>
           <span className="favorite-item__title">{fav.title}</span>
+          {launchClaude && <ClaudeMark />}
         </div>
       </ContextMenu.Trigger>
 
@@ -149,11 +153,12 @@ export const FavoritesSection = memo(function FavoritesSection() {
               items={items.map((item) => item.favorite.id)}
               strategy={verticalListSortingStrategy}
             >
-              {items.map(({ favorite, isDefault }) => (
+              {items.map(({ favorite, isDefault, launchClaude }) => (
                 <SortableFavoriteItem
                   key={favorite.id}
                   fav={favorite}
                   isDefault={isDefault}
+                  launchClaude={launchClaude}
                   onSpawn={() =>
                     emit({ type: 'tabs/favorite-spawn-requested', favoriteId: favorite.id })
                   }

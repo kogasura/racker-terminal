@@ -139,6 +139,19 @@ describe('selectFavorites', () => {
   it('既定が未設定ならどれにも印が付かない', () => {
     expect(selectFavorites(favs, undefined).items.every((i) => !i.isDefault)).toBe(true);
   });
+
+  it('claude を起動するお気に入りにだけ claude の印を付ける', () => {
+    const mixed = [
+      { id: 'f1', title: 'A', shell: 'nu', launchClaude: true },
+      { id: 'f2', title: 'B', shell: 'nu', launchClaude: false },
+      { id: 'f3', title: 'C', shell: 'nu' },
+    ] as never as Parameters<typeof selectFavorites>[0];
+    expect(selectFavorites(mixed, null).items.map((i) => i.launchClaude)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+  });
 });
 
 describe('selectNewTabMenu', () => {
@@ -196,18 +209,34 @@ describe('selectFolderTemplates', () => {
 
 describe('selectQuickAccess', () => {
   it('1 件も無ければセクションごと出さない', () => {
-    expect(selectQuickAccess([])).toEqual({ visible: false, items: [] });
+    expect(selectQuickAccess([], undefined)).toEqual({ visible: false, items: [] });
   });
 
   it('表示名を並べ、tooltip にはパスを添える (同名フォルダを見分けるため)', () => {
-    const vm = selectQuickAccess([
-      { name: 'output', path: 'C:/a/output' },
-      { name: 'output', path: 'C:/b/output' },
-    ]);
+    const vm = selectQuickAccess(
+      [
+        { name: 'output', path: 'C:/a/output' },
+        { name: 'output', path: 'C:/b/output' },
+      ],
+      undefined,
+    );
     expect(vm.visible).toBe(true);
     expect(vm.items.map((i) => i.name)).toEqual(['output', 'output']);
     expect(vm.items[0].tooltip).toContain('C:/a/output');
     expect(vm.items[1].tooltip).toContain('C:/b/output');
+  });
+
+  it('claude を起動するフォルダにだけ印を付け、tooltip でも何が起きるかを書き分ける', () => {
+    const vm = selectQuickAccess(
+      [
+        { name: 'a', path: 'C:/a' },
+        { name: 'b', path: 'C:/b' },
+      ],
+      ['C:/b'],
+    );
+    expect(vm.items.map((i) => i.launchClaude)).toEqual([true, false]);
+    expect(vm.items[0].tooltip).toBe('C:/a で claude を開く');
+    expect(vm.items[1].tooltip).toBe('C:/b を開く');
   });
 });
 

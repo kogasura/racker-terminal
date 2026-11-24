@@ -8,6 +8,7 @@
 
 import { prBadgeKind, prTooltip } from '../../lib/prStatus';
 import { buildProfileTemplates } from '../../lib/profileTemplates';
+import { isQuickAccessClaude } from '../../lib/quickAccess';
 import {
   getTabDisplayTitle,
   AGENT_STATE_LABEL,
@@ -146,6 +147,8 @@ export interface FavoriteViewModel {
   readonly favorite: Favorite;
   /** 既定のお気に入り (Ctrl+T で開くもの) か。 */
   readonly isDefault: boolean;
+  /** クリックで claude を起動するか (起動するものにだけ印を付ける)。 */
+  readonly launchClaude: boolean;
 }
 
 /** お気に入り一覧。 */
@@ -163,6 +166,7 @@ export function selectFavorites(
     items: favorites.map((favorite) => ({
       favorite,
       isDefault: favorite.id === defaultFavoriteId,
+      launchClaude: favorite.launchClaude === true,
     })),
     isEmpty: favorites.length === 0,
   };
@@ -204,6 +208,8 @@ export interface QuickAccessItemViewModel {
   readonly name: string;
   /** ホバーで出す説明。同名のフォルダを見分けられるようパスも添える。 */
   readonly tooltip: string;
+  /** クリックで claude を起動するか (起動するものにだけ印を付ける)。 */
+  readonly launchClaude: boolean;
 }
 
 /** サイドバーの Quick Access セクション。 */
@@ -213,14 +219,21 @@ export interface QuickAccessViewModel {
   readonly items: readonly QuickAccessItemViewModel[];
 }
 
-export function selectQuickAccess(folders: readonly QuickAccessFolder[]): QuickAccessViewModel {
+export function selectQuickAccess(
+  folders: readonly QuickAccessFolder[],
+  shellOnlyPaths: readonly string[] | undefined,
+): QuickAccessViewModel {
   return {
     visible: folders.length > 0,
-    items: folders.map((f) => ({
-      path: f.path,
-      name: f.name,
-      tooltip: `${f.path} で claude を開く`,
-    })),
+    items: folders.map((f) => {
+      const launchClaude = isQuickAccessClaude(f.path, shellOnlyPaths);
+      return {
+        path: f.path,
+        name: f.name,
+        tooltip: launchClaude ? `${f.path} で claude を開く` : `${f.path} を開く`,
+        launchClaude,
+      };
+    }),
   };
 }
 

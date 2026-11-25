@@ -274,24 +274,45 @@ fn is_safe_session_id(session_id: &str) -> bool {
 
 /// `projects_dir` 配下に、そのセッションの会話ログがあるか。
 ///
-/// ID の形が不正なら「無い」とは言い切れないので `None` を返す
-/// (呼び出し側は分からないときに記録を書き換えない)。
+/// `Some(false)` は「無いと言い切れる」ときだけ返す。呼び出し側はこの答えで
+/// 記録した会話を手放すので、言い切れないときは `None` にする:
+/// - ID の形が不正
+/// - ファイルの確認やディレクトリの読み取りが I/O エラーになった (9P の一時的な失敗など)
+///
+/// cwd から組み立てた slug で直接引き当て、無ければ projects 配下を 1 段だけ走査する
+/// (find_transcript と同じ順)。**WSL でも走査する**: 呼ばれるのは乗り換えの候補が
+/// あるときだけで、ログが見つかった ID は呼び出し側が控えて問い合わせ直さないため、
+/// 9P 越しの走査でも回数は限られる。走査しないと slug の表記ゆれだけで
+/// 「無い」と判断してしまう。
 pub fn transcript_exists_in(
     projects_dir: &Path,
     cwd: Option<&str>,
     session_id: &str,
-    allow_scan: bool,
 ) -> Option<bool> {
     if !is_safe_session_id(session_id) {
         return None;
     }
-    Some(find_transcript(projects_dir, cwd, session_id, allow_scan).is_some())
+    let file_name = format!("{session_id}.jsonl");
+
+    if let Some(cwd) = cwd {
+        let direct = projects_dir.join(slugify_cwd(cwd)).join(&file_name);
+        if direct.try_exists().ok()? {
+            return Some(true);
+        }
+    }
+
+    for entry in std::fs::read_dir(projects_dir).ok()? {
+        if entry.ok()?.path().join(&file_name).try_exists().ok()? {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 /// セッションの会話ログが存在するかを返す Tauri command。
 ///
 /// Claude タブに記録した ID が「`--resume` しても戻れない会話」かを見分けるのに使う。
-/// 調べられないとき (projects ディレクトリが見つからない・ID の形が不正) は `None`。
+/// 調べられないとき (projects ディレクトリが見つからない・ID の形が不正・I/O エラー) は `None`。
 #[tauri::command(async)]
 pub fn claude_transcript_exists(
     session_id: String,
@@ -299,9 +320,7 @@ pub fn claude_transcript_exists(
     distro: Option<String>,
 ) -> Option<bool> {
     let dir = projects_dir(distro.as_deref())?;
-    // WSL 側ではフォールバックの全走査をしない (9P 越しのディレクトリ走査は高い)
-    let allow_scan = distro.is_none();
-    transcript_exists_in(&dir, cwd.as_deref(), &session_id, allow_scan)
+    transcript_exists_in(&dir, cwd.as_deref(), &session_id)
 }
 
 #[cfg(test)]
@@ -534,21 +553,44 @@ mod tests {
         let dir = temp_dir("exists");
         let id = "aab34766-6f27-4fce-ba6d-3c77f2dbcfab";
         let cwd = r"C:\Users\me\dev\app";
-        assert_eq!(transcript_exists_in(&dir, Some(cwd), id, true), Some(false));
+        assert_eq!(transcript_exists_in(&dir, Some(cwd), id), Some(false));
 
         write_file(
             &dir.join(slugify_cwd(cwd)).join(format!("{id}.jsonl")),
             "{}\n",
         );
-        assert_eq!(transcript_exists_in(&dir, Some(cwd), id, false), Some(true));
+        assert_eq!(transcript_exists_in(&dir, Some(cwd), id), Some(true));
+    }
+
+    #[test]
+    fn transcript_exists_in_scans_when_slug_misses() {
+        let dir = temp_dir("exists-scan");
+        let id = "aab34766-6f27-4fce-ba6d-3c77f2dbcfab";
+        write_file(
+            &dir.join("some-other-slug").join(format!("{id}.jsonl")),
+            "{}\n",
+        );
+        // cwd の表記ゆれで slug が一致しなくても、走査で見つける
+        assert_eq!(
+            transcript_exists_in(&dir, Some("/elsewhere"), id),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn transcript_exists_in_is_unknown_when_dir_is_unreadable() {
+        let dir = temp_dir("exists-missing").join("no-such-projects-dir");
+        let id = "aab34766-6f27-4fce-ba6d-3c77f2dbcfab";
+        // 読めないディレクトリは「無い」と言い切らない
+        assert_eq!(transcript_exists_in(&dir, None, id), None);
     }
 
     #[test]
     fn transcript_exists_in_refuses_unsafe_ids() {
         let dir = temp_dir("exists-unsafe");
         write_file(&dir.join("x.jsonl"), "{}\n");
-        assert_eq!(transcript_exists_in(&dir, None, "../x", true), None);
-        assert_eq!(transcript_exists_in(&dir, None, "", true), None);
-        assert_eq!(transcript_exists_in(&dir, None, r"a\b", true), None);
+        assert_eq!(transcript_exists_in(&dir, None, "../x"), None);
+        assert_eq!(transcript_exists_in(&dir, None, ""), None);
+        assert_eq!(transcript_exists_in(&dir, None, r"a\b"), None);
     }
 }

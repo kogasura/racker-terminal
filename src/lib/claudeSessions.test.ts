@@ -727,7 +727,7 @@ describe('relaunchedSessionCandidates', () => {
   // 会話ログは無い）で、PTY 起動の 9 分後に自分で claude を打ち直した（MANUAL）。
   const RECORDED = 'aab34766-6f27-4fce-ba6d-3c77f2dbcfab';
   const MANUAL = '7df4caf0-ba89-4e46-883d-2f4c45cfa556';
-  const CWD = 'C:\Users\me\dev\racker-terminal';
+  const CWD = 'C:\\Users\\me\\dev\\racker-terminal';
   const LIVE_SINCE = 1_795_569_285_000;
 
   const baseTab = {
@@ -818,9 +818,9 @@ describe('claudeTranscriptExists', () => {
 
   it('Rust の答えをそのまま返し、引数を渡す', async () => {
     vi.mocked(invoke).mockResolvedValue(false);
-    await expect(claudeTranscriptExists(SID, 'C:\dev', undefined)).resolves.toBe(false);
+    await expect(claudeTranscriptExists(SID, 'C:\\dev', undefined)).resolves.toBe(false);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('claude_transcript_exists', {
-      sessionId: SID, cwd: 'C:\dev', distro: undefined,
+      sessionId: SID, cwd: 'C:\\dev', distro: undefined,
     });
   });
 

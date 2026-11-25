@@ -1,22 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
 import { invoke } from '@tauri-apps/api/core';
-import { resolveRelaunchedTabs } from './ClaudeSessionsRoot';
-import {
-  adoptableTabIds,
-  matchSessionsToTabs,
-  type ClaudeSession,
-} from '../../lib/claudeSessions';
+import { reflectSessions } from './ClaudeSessionsRoot';
+import type { ClaudeSession } from '../../lib/claudeSessions';
 import { planClaudeLaunch } from '../../lib/claudeLaunch';
 import { useAppStore } from '../../store/appStore';
 
 const RECORDED = 'aab34766-6f27-4fce-ba6d-3c77f2dbcfab';
 const MANUAL = '7df4caf0-ba89-4e46-883d-2f4c45cfa556';
 const CWD = 'C:\\Users\\me\\dev\\racker-terminal';
+/** タブの PTY が起動した時刻（時計を固定して決める） */
+const LIVE_SINCE = 1_795_569_285_000;
+/** 打ち直した claude が始まった時刻（PTY 起動の 9 分後） */
+const RELAUNCHED_AT = LIVE_SINCE + 540_000;
 
 /** invoke のうち claude_transcript_exists だけに答える。 */
 function transcriptExistsReturns(value: boolean | null): void {
@@ -32,6 +32,8 @@ function transcriptCalls(): number {
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
+  vi.useFakeTimers();
+  vi.setSystemTime(LIVE_SINCE);
   useAppStore.setState({
     groups: [],
     tabs: {},
@@ -44,9 +46,13 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 /**
  * 起動時の `--resume RECORDED` が失敗したあと、同じタブで自分で claude を打ち直した状態を作る。
- * 返すのは巡回 1 回ぶんの材料。
+ * PTY は LIVE_SINCE に起動し、時計は打ち直した直後まで進めておく。
  */
 function relaunchedTabScenario() {
   const g = useAppStore.getState().createGroup('G');
@@ -57,29 +63,23 @@ function relaunchedTabScenario() {
     shell: 'nu',
   });
   useAppStore.getState().setTabStatus(tabId, 'live', 'pty-1');
-  const liveSince = useAppStore.getState().tabs[tabId].liveSince!;
+  vi.setSystemTime(RELAUNCHED_AT + 1_000);
   const session: ClaudeSession = {
     sessionId: MANUAL,
     cwd: CWD,
     status: 'busy',
-    startedAt: liveSince + 540_000,
+    startedAt: RELAUNCHED_AT,
+    updatedAt: RELAUNCHED_AT,
   };
   return { tabId, session };
 }
 
-/** ClaudeSessionsRoot の巡回 1 回ぶん（照合 → 乗り換え判定 → 反映）を通す。 */
-async function pollOnce(sessions: ClaudeSession[], known = new Set<string>()) {
-  const tabs = Object.values(useAppStore.getState().tabs);
-  const forMatch = tabs.map((t) => ({
-    id: t.id, cwd: t.cwd, args: t.args, claudeSessionId: t.claudeSessionId, shell: t.shell,
-  }));
-  const matches = matchSessionsToTabs(sessions, forMatch);
-  const adoptable = adoptableTabIds(sessions, forMatch, matches);
-  const relaunched = await resolveRelaunchedTabs(tabs, matches, adoptable, known);
-  useAppStore.getState().applyClaudeSessions(matches, { adoptable, relaunched });
+/** ClaudeSessionsRoot の巡回 1 回ぶんを、本体と同じ関数で通す。 */
+function pollOnce(sessions: ClaudeSession[], known = new Set<string>()) {
+  return reflectSessions(sessions, [], known, () => false);
 }
 
-describe('resolveRelaunchedTabs — --resume が失敗して打ち直した Claude タブ', () => {
+describe('reflectSessions — --resume が失敗して打ち直した Claude タブ', () => {
   it('記録した会話のログが無ければ、いま動いている会話へ乗り換え、次の起動でそれを resume する', async () => {
     const { tabId, session } = relaunchedTabScenario();
     transcriptExistsReturns(false);
@@ -97,18 +97,32 @@ describe('resolveRelaunchedTabs — --resume が失敗して打ち直した Clau
     });
   });
 
+  it('乗り換えたあとの巡回では問い合わせず、タブも書き換えない（I/O と再レンダーを増やさない）', async () => {
+    const { tabId, session } = relaunchedTabScenario();
+    transcriptExistsReturns(false);
+    const known = new Set<string>();
+
+    await pollOnce([session], known);
+    const afterFirst = useAppStore.getState().tabs[tabId];
+    await pollOnce([session], known);
+    await pollOnce([session], known);
+
+    expect(transcriptCalls()).toBe(1);
+    expect(useAppStore.getState().tabs[tabId]).toBe(afterFirst);
+  });
+
+  it('PTY の起動と同時刻に始まった claude も、タブの中で始まったものとして扱う', async () => {
+    const { tabId, session } = relaunchedTabScenario();
+    transcriptExistsReturns(false);
+
+    await pollOnce([{ ...session, startedAt: LIVE_SINCE }]);
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(MANUAL);
+  });
+
   it('記録した会話のログが残っていれば乗り換えない（--resume で戻れるほうを優先する）', async () => {
     const { tabId, session } = relaunchedTabScenario();
     transcriptExistsReturns(true);
-
-    await pollOnce([session]);
-
-    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(RECORDED);
-  });
-
-  it('ログの有無を調べられなければ乗り換えない', async () => {
-    const { tabId, session } = relaunchedTabScenario();
-    transcriptExistsReturns(null);
 
     await pollOnce([session]);
 
@@ -126,12 +140,25 @@ describe('resolveRelaunchedTabs — --resume が失敗して打ち直した Clau
     expect(transcriptCalls()).toBe(1);
   });
 
+  it('ログの有無を調べられなければ乗り換えず、次の巡回で問い合わせ直す', async () => {
+    const { tabId, session } = relaunchedTabScenario();
+    transcriptExistsReturns(null);
+    const known = new Set<string>();
+
+    await pollOnce([session], known);
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(RECORDED);
+
+    // 一時的に調べられなかっただけなら、次に分かった時点で直る
+    transcriptExistsReturns(false);
+    await pollOnce([session], known);
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(MANUAL);
+  });
+
   it('タブを開く前から別の場所で動いていた claude には乗り換えない', async () => {
     const { tabId, session } = relaunchedTabScenario();
     transcriptExistsReturns(false);
-    const liveSince = useAppStore.getState().tabs[tabId].liveSince!;
 
-    await pollOnce([{ ...session, startedAt: liveSince - 60_000 }]);
+    await pollOnce([{ ...session, startedAt: LIVE_SINCE - 60_000 }]);
 
     expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(RECORDED);
     expect(transcriptCalls()).toBe(0);
@@ -156,5 +183,16 @@ describe('resolveRelaunchedTabs — --resume が失敗して打ち直した Clau
 
     expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe(RECORDED);
     expect(transcriptCalls()).toBe(0);
+  });
+
+  it('問い合わせのあいだに巡回が止められたら、何も反映しない', async () => {
+    const { tabId, session } = relaunchedTabScenario();
+    transcriptExistsReturns(false);
+    const before = useAppStore.getState().tabs[tabId];
+
+    const result = await reflectSessions([session], [], new Set(), () => true);
+
+    expect(result).toBeNull();
+    expect(useAppStore.getState().tabs[tabId]).toBe(before);
   });
 });

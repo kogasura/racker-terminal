@@ -84,8 +84,9 @@ function canReadTranscript(
  * 「記録した ID の会話ログが本当に無いか」だけをファイルで確かめる。
  * 候補が無い tick (ほぼすべて) では何も問い合わせない。
  *
- * `knownTranscripts` は「ログがあった」と分かった ID の控え。会話ログは消えないので、
- * 一度見つかった ID を毎 tick 問い合わせ直さずに済む（WSL では 9P 越しになる）。
+ * `knownTranscripts` は「ログがあった」と分かった ID の控え。アプリの起動中に会話ログが
+ * 消えることはまず無いので、一度見つかった ID を毎 tick 問い合わせ直さずに済む
+ * （WSL では 9P 越しになる）。
  *
  * テストのため export している。
  */
@@ -103,6 +104,61 @@ export async function resolveRelaunchedTabs(
     if (exists === true) knownTranscripts.add(c.recordedId);
     return exists;
   });
+}
+
+/**
+ * 巡回 1 回ぶんの「照合 → 乗り換え判定 → store へ反映」。
+ *
+ * ClaudeSessionsRoot の巡回から呼ぶ本体で、テストも同じ関数を通す
+ * (配線の書き漏れ — relaunched を渡し忘れる等 — をテストで拾うため)。
+ *
+ * 途中で `isCancelled()` が true になったら何も反映せず null を返す。
+ *
+ * @param raw       listClaudeSessions の結果（取得失敗の null は呼び出し側で弾くこと）
+ * @param distros   この巡回で見に行った WSL distro
+ */
+export async function reflectSessions(
+  raw: ClaudeSession[],
+  distros: string[],
+  knownTranscripts: Set<string>,
+  isCancelled: () => boolean,
+): Promise<{
+  matches: Map<string, ClaudeSession>;
+  covered: Set<string>;
+  activeTabId: string | null;
+} | null> {
+  // 照合の **前に** 亡霊セッションを落とす。WSL では claude が強制終了しても
+  // セッションファイルが消えず、数ヶ月前の死んだ json が残り続けるため、
+  // ここで落とさないと状態ドットの表示も resume の対象も同じだけ引きずられる。
+  const sessions = freshSessions(raw, Date.now());
+
+  // await の前後で store が変化しうるので、照合には最新のタブ一覧を使う
+  const after = useAppStore.getState();
+  const tabsForMatch = Object.values(after.tabs).map((t) => ({
+    id: t.id,
+    cwd: t.cwd,
+    args: t.args,
+    claudeSessionId: t.claudeSessionId,
+    // `-d` を書いていない WSL タブ（既定 distro）を Windows 側と混同しないために要る
+    shell: t.shell,
+  }));
+  const matches = matchSessionsToTabs(sessions, tabsForMatch);
+  // 表示（状態ドット）は従来どおり緩い cwd 一致のまま、
+  // 復元の根拠になる書き込みだけを adoptable で絞る。
+  // covered には「この巡回で実際に見に行った範囲」を渡す。WSL を間引いた tick では
+  // distros が空になるので、見ていない WSL タブを「消えた」と誤判定せずに済む。
+  const covered = coveredTabIds(tabsForMatch, distros);
+  const adoptable = adoptableTabIds(sessions, tabsForMatch, matches);
+  // 起動時の --resume が失敗して自分で claude を打ち直した Claude タブを、
+  // いま話している会話へ乗り換えさせる（relaunchedSessionCandidates 参照）。
+  // 候補があるときだけファイルを見に行く。
+  const relaunched = await resolveRelaunchedTabs(
+    Object.values(after.tabs), matches, adoptable, knownTranscripts,
+  );
+  if (isCancelled()) return null;
+  // 待っているあいだに store が動いていても、反映は set の中で最新の tabs に対して行われる
+  useAppStore.getState().applyClaudeSessions(matches, { adoptable, covered, relaunched });
+  return { matches, covered, activeTabId: after.activeTabId };
 }
 
 export function ClaudeSessionsRoot({ children }: { children: ReactNode }) {
@@ -169,40 +225,11 @@ export function ClaudeSessionsRoot({ children }: { children: ReactNode }) {
       // 逆に失敗まで通すと、invoke が一度こけただけで全タブが「消えた」扱いになる。
       if (cancelled || raw === null) return;
 
-      // 照合の **前に** 亡霊セッションを落とす。WSL では claude が強制終了しても
-      // セッションファイルが消えず、数ヶ月前の死んだ json が残り続けるため、
-      // ここで落とさないと状態ドットの表示も resume の対象も同じだけ引きずられる。
-      const sessions = freshSessions(raw, Date.now());
-
-      // await の前後で store が変化しうるので、照合には最新のタブ一覧を使う
-      const after = useAppStore.getState();
-      const tabsForMatch = Object.values(after.tabs).map((t) => ({
-        id: t.id,
-        cwd: t.cwd,
-        args: t.args,
-        claudeSessionId: t.claudeSessionId,
-        // `-d` を書いていない WSL タブ（既定 distro）を Windows 側と混同しないために要る
-        shell: t.shell,
-      }));
-      const matches = matchSessionsToTabs(sessions, tabsForMatch);
-      // 表示（状態ドット）は従来どおり緩い cwd 一致のまま、
-      // 復元の根拠になる書き込みだけを adoptable で絞る。
-      // covered には「この巡回で実際に見に行った範囲」を渡す。WSL を間引いた tick では
-      // distros が空になるので、見ていない WSL タブを「消えた」と誤判定せずに済む。
-      const covered = coveredTabIds(tabsForMatch, distros);
-      const adoptable = adoptableTabIds(sessions, tabsForMatch, matches);
-      // 起動時の --resume が失敗して自分で claude を打ち直した Claude タブを、
-      // いま話している会話へ乗り換えさせる（relaunchedSessionCandidates 参照）。
-      // 候補があるときだけファイルを見に行くので、通常の tick は待たずに進む。
-      const relaunched = await resolveRelaunchedTabs(
-        Object.values(after.tabs), matches, adoptable, knownTranscripts,
-      );
-      if (cancelled) return;
-      // 待っているあいだに store が動いていても、反映は set の中で最新の tabs に対して行われる
-      useAppStore.getState().applyClaudeSessions(matches, { adoptable, covered, relaunched });
+      const reflected = await reflectSessions(raw, distros, knownTranscripts, () => cancelled);
+      if (reflected === null) return;
 
       // ついでにアクティブタブの会話ログも読み、ステータスバーへ流す。
-      await pollTranscript(currentTick, after.activeTabId, covered, matches);
+      await pollTranscript(currentTick, reflected.activeTabId, reflected.covered, reflected.matches);
     };
 
     const tick = async () => {

@@ -222,13 +222,17 @@ function hasSamePrFields(tab: Tab, next: ReturnType<typeof prFields>): boolean {
  * 「他所の会話を勝手に開く」という破壊的な結果になりうる。そこで採用してよいと
  * 判断できたタブ（applyClaudeSessions の adoptable）だけがこの値を受け取る。
  */
-function adoptedClaudeFields(tab: Tab, session: ClaudeSessionInfo, now: number): ClaudeRecordPatch {
+function adoptedClaudeFields(
+  tab: Tab,
+  session: ClaudeSessionInfo,
+  opts: { now: number; relaunched: boolean },
+): ClaudeRecordPatch {
   return {
-    claudeSessionId: claudeSessionIdFor(tab, session),
+    claudeSessionId: claudeSessionIdFor(tab, session, opts.relaunched),
     claudeSessionCwd: session.cwd,
     claudeSessionDistro: session.distro,
     claudeSessionLive: true,
-    claudeSeenAt: nextSeenAt(tab, now),
+    claudeSeenAt: nextSeenAt(tab, opts.now),
     // 別のセッションを採用したなら、切り離しの指定はもう関係ない
     claudeSessionOptOutId: undefined,
   };
@@ -276,7 +280,11 @@ function isOptedOutSession(tab: Tab, session: ClaudeSessionInfo): boolean {
  * **タブの種別で優先順位が逆になる。**
  *
  * - Claude タブ (launchClaude=true): racker が `--session-id` で発番した ID が正。
- *   同じフォルダで別の claude が動いていても、そちらへ乗り換えない
+ *   同じフォルダで別の claude が動いていても、そちらへ乗り換えない。
+ *   **例外は relaunched のときだけ**: 記録した ID の会話ログが存在せず
+ *   (`--resume` しても必ず失敗する)、このタブの中で claude が立ち上げ直されたと
+ *   確かめられた場合 (claudeSessions.relaunchedSessionTabs)。起動時の `--resume` が
+ *   失敗して自分で `claude` を打ち直したタブで、いま話している会話を手放さないため
  * - 手動起動タブ: **いま観測できているセッションが正**。ユーザーが `/exit` して
  *   同じタブで claude を起動し直すと別のセッションになるため、最初に掴んだ ID を
  *   持ち続けると「死んだ会話を resume する」ことになる（採用の可否は adoptable が
@@ -285,8 +293,12 @@ function isOptedOutSession(tab: Tab, session: ClaudeSessionInfo): boolean {
  * どちらの場合も、セッションが ID を申告していなければ既存の値を残す
  * （書き込み途中の壊れた json を読んだだけで記録を失わないため）。
  */
-function claudeSessionIdFor(tab: Tab, session: ClaudeSessionInfo): string | undefined {
-  if (tab.launchClaude === true) return tab.claudeSessionId ?? session.sessionId;
+function claudeSessionIdFor(
+  tab: Tab,
+  session: ClaudeSessionInfo,
+  relaunched: boolean,
+): string | undefined {
+  if (tab.launchClaude === true && !relaunched) return tab.claudeSessionId ?? session.sessionId;
   return session.sessionId ?? tab.claudeSessionId;
 }
 
@@ -300,6 +312,18 @@ function claudeSessionIdFor(tab: Tab, session: ClaudeSessionInfo): string | unde
  * 1 分に 1 回なら、再レンダーはタブあたり毎分 1 回で済む。
  */
 const SEEN_AT_REFRESH_MS = 60_000;
+
+/**
+ * setTabStatus 後の liveSince。
+ *
+ * 'live' へ**入った瞬間**の時刻を記録し、'live' のまま呼ばれ直しても動かさない
+ * (動かすと、そのあとに打ち直した claude が「タブより前から動いていた」側に見える)。
+ * 'live' 以外では PTY が無いので消す。
+ */
+function nextLiveSince(tab: Tab, status: TabStatus): number | undefined {
+  if (status !== 'live') return undefined;
+  return tab.status === 'live' && tab.liveSince !== undefined ? tab.liveSince : Date.now();
+}
 
 /** 前回の観測から SEEN_AT_REFRESH_MS 経っていなければ、前の値をそのまま返す（参照据え置き）。 */
 function nextSeenAt(tab: Tab, now: number): number {
@@ -390,13 +414,15 @@ function tabWithClaudeSessionGone(tab: Tab): Tab {
  * セッション情報 1 件をタブへ反映した結果を返す。
  * 変更が無ければ元の tab をそのまま返すので、呼び出し側は参照比較で変更有無を判定できる。
  *
+ * @param opts.relaunched true なら Claude タブでも観測したセッションの ID に乗り換える
+ *   (claudeSessionIdFor 参照)。canAdopt が false のときは無関係
  * @param opts.canAdopt false なら表示（agentState / waitingFor / claudeStatus）だけ
  *   更新し、復元の根拠になるフィールドには一切触れない
  */
 function tabWithClaudeSession(
   tab: Tab,
   session: ClaudeSessionInfo | undefined,
-  opts: { isActive: boolean; canAdopt: boolean; now: number },
+  opts: { isActive: boolean; canAdopt: boolean; relaunched: boolean; now: number },
 ): Tab {
   // セッションが見つからない = claude が終了した / 検出できない。
   // 画面パターン判定へフォールバックできるようフラグを落とす。
@@ -406,7 +432,7 @@ function tabWithClaudeSession(
   // ユーザーが切り離したセッションは、たとえ照合が成立しても採用し直さない
   const canAdopt = opts.canAdopt && !isOptedOutSession(tab, session);
   const patch = canAdopt
-    ? adoptedClaudeFields(tab, session, opts.now)
+    ? adoptedClaudeFields(tab, session, opts)
     : staleRecordFields(tab, session);
 
   if (hasSameClaudeSession(tab, session, nextAgentState, patch)) return tab;
@@ -508,6 +534,12 @@ export type ApplyClaudeSessionsOptions = {
    * 未指定なら全タブ観測済みとして扱う（従来動作）。
    */
   covered?: ReadonlySet<string>;
+  /**
+   * Claude タブ (launchClaude=true) のうち、記録した ID を捨てて観測中のセッションへ
+   * 乗り換えてよいタブ。判定は claudeSessions.relaunchedSessionTabs と会話ログの
+   * 有無で呼び出し側が行う。未指定なら乗り換えない（従来動作）。
+   */
+  relaunched?: ReadonlySet<string>;
 };
 
 /**
@@ -541,10 +573,22 @@ function nextTabForClaudeSessions(
   if (isOutOfPollScope(tabId, matches, ctx.opts?.covered)) return tab;
   return tabWithClaudeSession(tab, matches.get(tabId), {
     isActive: tabId === ctx.activeTabId,
-    // adoptable 未指定なら従来どおり全採用（1 引数の呼び出しを壊さない）
-    canAdopt: ctx.opts?.adoptable?.has(tabId) ?? true,
+    ...adoptionFlags(tabId, ctx.opts),
     now: ctx.now,
   });
+}
+
+/** オプション未指定時の既定値を寄せる（1 引数の呼び出しを壊さない）。 */
+function adoptionFlags(
+  tabId: string,
+  opts: ApplyClaudeSessionsOptions | undefined,
+): { canAdopt: boolean; relaunched: boolean } {
+  return {
+    // adoptable 未指定なら従来どおり全採用
+    canAdopt: opts?.adoptable?.has(tabId) ?? true,
+    // relaunched 未指定なら Claude タブは乗り換えない（従来どおり）
+    relaunched: opts?.relaunched?.has(tabId) ?? false,
+  };
 }
 
 /** groupId が現存すればそれを返す。未指定 / 不在なら undefined。 */
@@ -1314,6 +1358,7 @@ export const useAppStore = create<Store>()(
             ...tab,
             status,
             ptyId: status === 'live' ? ptyId : undefined,
+            liveSince: nextLiveSince(tab, status),
           },
         },
       };

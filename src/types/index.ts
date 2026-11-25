@@ -124,6 +124,15 @@ export interface Tab {
    */
   ptyId?: string;
   /**
+   * いまの PTY が起動した時刻 (ms)。status が 'live' の間だけ設定される。
+   * ランタイム状態のため persist 対象外。
+   *
+   * 「このタブの中であとから立ち上げ直された claude か」を見分けるのに使う
+   * (claudeSessions.relaunchedSessionCandidates 参照)。タブを開く前から別の場所で
+   * 動いていた claude を、このタブの会話と取り違えないための手掛かり。
+   */
+  liveSince?: number;
+  /**
    * Claude タブのエージェント状態。launchClaude=true のタブにのみ設定される。
    * ランタイム状態のため persist 対象外（再起動直後は undefined = 未検出）。
    *

@@ -25,6 +25,10 @@ import {
   adoptableTabIds,
   coveredTabIds,
   listClaudeSessions,
+  relaunchedSessionCandidates,
+  relaunchedSessionTabs,
+  claudeTranscriptExists,
+  type RelaunchTab,
 } from './claudeSessions';
 
 describe('agentStateFromStatus', () => {
@@ -715,5 +719,115 @@ describe('null 混入への耐性（正規化を通っていない値が来て�
   it('83: cwd が null のセッションは一致しない（落ちずに false）', () => {
     const tab = { id: 't1', cwd: 'C:\\dev', shell: 'nu' };
     expect(cwdMatches(tab, nullish(null, null))).toBe(false);
+  });
+});
+
+describe('relaunchedSessionCandidates', () => {
+  // 実際に起きた状態と同じ形: 起動時の --resume が失敗した Claude タブ（記録 RECORDED の
+  // 会話ログは無い）で、PTY 起動の 9 分後に自分で claude を打ち直した（MANUAL）。
+  const RECORDED = 'aab34766-6f27-4fce-ba6d-3c77f2dbcfab';
+  const MANUAL = '7df4caf0-ba89-4e46-883d-2f4c45cfa556';
+  const CWD = 'C:\\Users\\me\\dev\\racker-terminal';
+  const LIVE_SINCE = 1_795_569_285_000;
+
+  const baseTab = {
+    id: 't1',
+    launchClaude: true as const,
+    claudeSessionId: RECORDED,
+    claudeSessionCwd: CWD,
+    liveSince: LIVE_SINCE,
+  };
+  const relaunched: ClaudeSession = { sessionId: MANUAL, cwd: CWD, startedAt: LIVE_SINCE + 540_000 };
+
+  function candidates(
+    tab: RelaunchTab = baseTab,
+    session: ClaudeSession | null = relaunched,
+    adoptable: string[] = ['t1'],
+  ) {
+    const matches = new Map<string, ClaudeSession>();
+    if (session) matches.set(tab.id, session);
+    return relaunchedSessionCandidates([tab], matches, new Set(adoptable));
+  }
+
+  it('タブの中で打ち直した claude は候補になり、記録した ID の場所を返す', () => {
+    expect(candidates()).toEqual([
+      { tabId: 't1', recordedId: RECORDED, cwd: CWD, distro: undefined },
+    ]);
+  });
+
+  it('WSL のタブでは記録した distro を返す（会話ログを探す場所になる）', () => {
+    const tab = { ...baseTab, claudeSessionCwd: '/home/me/app', claudeSessionDistro: 'Ubuntu' };
+    expect(candidates(tab)[0]).toMatchObject({ cwd: '/home/me/app', distro: 'Ubuntu' });
+  });
+
+  it('手動起動タブ（launchClaude が true でない）は対象外（もともと観測側に乗り換える）', () => {
+    expect(candidates({ ...baseTab, launchClaude: false })).toEqual([]);
+  });
+
+  it('記録した ID のセッションが動いている（ID で結びついた）なら対象外', () => {
+    expect(candidates(baseTab, { ...relaunched, sessionId: RECORDED })).toEqual([]);
+  });
+
+  it('照合されたセッションが無い・ID を申告していないなら対象外', () => {
+    expect(candidates(baseTab, null)).toEqual([]);
+    expect(candidates(baseTab, { ...relaunched, sessionId: undefined })).toEqual([]);
+  });
+
+  it('1 対 1 が成立していない（adoptable でない）なら対象外', () => {
+    expect(candidates(baseTab, relaunched, [])).toEqual([]);
+  });
+
+  it('タブを開く前から動いていた claude（別のターミナル等）は対象外', () => {
+    expect(candidates(baseTab, { ...relaunched, startedAt: LIVE_SINCE - 1 })).toEqual([]);
+  });
+
+  it('時刻が分からないときは確かめられないので対象外', () => {
+    expect(candidates(baseTab, { ...relaunched, startedAt: undefined })).toEqual([]);
+    expect(candidates({ ...baseTab, liveSince: undefined })).toEqual([]);
+  });
+
+  it('記録した ID が UUID の形をしていない・無いなら対象外', () => {
+    expect(candidates({ ...baseTab, claudeSessionId: 'not-a-uuid' })).toEqual([]);
+    expect(candidates({ ...baseTab, claudeSessionId: undefined })).toEqual([]);
+  });
+});
+
+describe('relaunchedSessionTabs', () => {
+  const c = (tabId: string) => ({ tabId, recordedId: `${tabId}-id`, cwd: undefined, distro: undefined });
+
+  it('会話ログが無い（false）と分かったタブだけを返す', async () => {
+    const answers: Record<string, boolean | null> = { a: false, b: true, c: null };
+    const result = await relaunchedSessionTabs([c('a'), c('b'), c('c')], async (x) => answers[x.tabId]);
+    // true（ログあり＝--resume で戻れる）と null（調べられない）は乗り換えない
+    expect([...result]).toEqual(['a']);
+  });
+
+  it('候補が無ければ何も問い合わせない', async () => {
+    const exists = vi.fn();
+    await expect(relaunchedSessionTabs([], exists)).resolves.toEqual(new Set());
+    expect(exists).not.toHaveBeenCalled();
+  });
+});
+
+describe('claudeTranscriptExists', () => {
+  const SID = '3f359448-17ed-4b3c-add4-5d85007efc91';
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it('Rust の答えをそのまま返し、引数を渡す', async () => {
+    vi.mocked(invoke).mockResolvedValue(false);
+    await expect(claudeTranscriptExists(SID, 'C:\\dev', undefined)).resolves.toBe(false);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('claude_transcript_exists', {
+      sessionId: SID, cwd: 'C:\\dev', distro: undefined,
+    });
+  });
+
+  it('調べられなかった（null）・invoke の失敗は null（乗り換えない側）', async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    await expect(claudeTranscriptExists(SID, undefined, undefined)).resolves.toBeNull();
+    vi.mocked(invoke).mockRejectedValue(new Error('boom'));
+    await expect(claudeTranscriptExists(SID, undefined, undefined)).resolves.toBeNull();
   });
 });

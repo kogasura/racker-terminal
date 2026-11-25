@@ -77,6 +77,7 @@ pub fn run() {
             launch::get_launch_path,
             claude_sessions::list_claude_sessions,
             claude_transcript::get_claude_transcript_meta,
+            claude_transcript::claude_transcript_exists,
             claude_usage::get_claude_usage,
             git_pr::get_pr_status,
             scrollback::save_scrollback,

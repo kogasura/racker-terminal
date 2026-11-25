@@ -25,7 +25,11 @@ import {
   coveredTabIds,
   collectWslDistros,
   shouldPollWsl,
+  relaunchedSessionCandidates,
+  relaunchedSessionTabs,
+  claudeTranscriptExists,
   type ClaudeSession,
+  type RelaunchTab,
 } from '../../lib/claudeSessions';
 import { getTranscriptMeta, shouldPollTranscript, type ClaudeTranscriptMeta } from '../../lib/claudeMeta';
 import { useAppStore } from '../../store/appStore';
@@ -73,6 +77,33 @@ function canReadTranscript(
   return covered.has(activeTabId) || matches.has(activeTabId);
 }
 
+/**
+ * 記録した ID を捨てて、いま動いている会話へ乗り換えてよい Claude タブを求める。
+ *
+ * 候補の絞り込みは純関数 (relaunchedSessionCandidates) に任せ、ここでは
+ * 「記録した ID の会話ログが本当に無いか」だけをファイルで確かめる。
+ * 候補が無い tick (ほぼすべて) では何も問い合わせない。
+ *
+ * `knownTranscripts` は「ログがあった」と分かった ID の控え。会話ログは消えないので、
+ * 一度見つかった ID を毎 tick 問い合わせ直さずに済む（WSL では 9P 越しになる）。
+ *
+ * テストのため export している。
+ */
+export async function resolveRelaunchedTabs(
+  tabs: RelaunchTab[],
+  matches: ReadonlyMap<string, ClaudeSession>,
+  adoptable: ReadonlySet<string>,
+  knownTranscripts: Set<string>,
+): Promise<Set<string>> {
+  const candidates = relaunchedSessionCandidates(tabs, matches, adoptable)
+    .filter((c) => !knownTranscripts.has(c.recordedId));
+  if (candidates.length === 0) return new Set();
+  return relaunchedSessionTabs(candidates, async (c) => {
+    const exists = await claudeTranscriptExists(c.recordedId, c.cwd, c.distro);
+    if (exists === true) knownTranscripts.add(c.recordedId);
+    return exists;
+  });
+}
 
 export function ClaudeSessionsRoot({ children }: { children: ReactNode }) {
   // 巡回は長命な effect の中で回るので、最新の emit を ref 越しに読む
@@ -85,6 +116,8 @@ export function ClaudeSessionsRoot({ children }: { children: ReactNode }) {
     let cancelled = false;
     // WSL 側を間引くための通し番号（shouldPollWsl 参照）
     let tickCount = 0;
+    // 会話ログがあると分かった claude セッション ID (resolveRelaunchedTabs 参照)
+    const knownTranscripts = new Set<string>();
     // 前回が終わるまで次を出さない。WSL 側は `\\wsl.localhost\` 越しで
     // 1 回に数秒かかることがあり、2 秒間隔だと要求が積み上がってしまう。
     let running = false;
@@ -157,10 +190,16 @@ export function ClaudeSessionsRoot({ children }: { children: ReactNode }) {
       // covered には「この巡回で実際に見に行った範囲」を渡す。WSL を間引いた tick では
       // distros が空になるので、見ていない WSL タブを「消えた」と誤判定せずに済む。
       const covered = coveredTabIds(tabsForMatch, distros);
-      after.applyClaudeSessions(matches, {
-        adoptable: adoptableTabIds(sessions, tabsForMatch, matches),
-        covered,
-      });
+      const adoptable = adoptableTabIds(sessions, tabsForMatch, matches);
+      // 起動時の --resume が失敗して自分で claude を打ち直した Claude タブを、
+      // いま話している会話へ乗り換えさせる（relaunchedSessionCandidates 参照）。
+      // 候補があるときだけファイルを見に行くので、通常の tick は待たずに進む。
+      const relaunched = await resolveRelaunchedTabs(
+        Object.values(after.tabs), matches, adoptable, knownTranscripts,
+      );
+      if (cancelled) return;
+      // 待っているあいだに store が動いていても、反映は set の中で最新の tabs に対して行われる
+      useAppStore.getState().applyClaudeSessions(matches, { adoptable, covered, relaunched });
 
       // ついでにアクティブタブの会話ログも読み、ステータスバーへ流す。
       await pollTranscript(currentTick, after.activeTabId, covered, matches);

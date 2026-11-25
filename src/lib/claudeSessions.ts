@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { applyIdleTransition, type AgentState } from '../types';
+import { applyIdleTransition, type AgentState, type Tab } from '../types';
 import { isWslShell, parseWslArgs } from './profileTemplates';
 
 /**
@@ -511,6 +511,128 @@ export function coveredTabIds(tabs: TabForMatch[], polledDistros: readonly strin
     if (!isWsl || (distro !== undefined && polled.has(distro))) result.add(tab.id);
   }
   return result;
+}
+
+/** relaunchedSessionCandidates が見るタブ情報。 */
+export type RelaunchTab = Pick<
+  Tab,
+  'id' | 'launchClaude' | 'claudeSessionId' | 'claudeSessionCwd' | 'claudeSessionDistro' | 'liveSince'
+>;
+
+/** 「記録した ID の会話ログが無ければ乗り換える」候補。 */
+export interface RelaunchCandidate {
+  tabId: string;
+  /** タブに記録されている（いま動いていない）セッション ID */
+  recordedId: string;
+  /** recordedId の会話ログを探すときの作業ディレクトリ・distro */
+  cwd: string | undefined;
+  distro: string | undefined;
+}
+
+/**
+ * このタブの中で claude が立ち上げ直されたか。
+ *
+ * セッションの開始時刻が、いまの PTY の起動時刻より後なら「このタブが開いてから
+ * 始まった claude」と言える。タブを開く前から別のターミナルで動いていた claude
+ * (たとえば VS Code で同じフォルダを開いている) は、ここで落ちる。
+ * どちらかの時刻が分からなければ「確かめられない」として落とす（安全側）。
+ */
+function startedInsideTab(tab: RelaunchTab, session: ClaudeSession): boolean {
+  return (
+    session.startedAt !== undefined &&
+    tab.liveSince !== undefined &&
+    session.startedAt >= tab.liveSince
+  );
+}
+
+/**
+ * Claude タブ (launchClaude=true) で、記録した ID とは**別の**会話がいま動いている候補を返す。
+ *
+ * 背景: Claude タブは racker が発番した ID を正として持ち続け、同じフォルダの
+ * 別の claude には乗り換えない（appStore.claudeSessionIdFor）。ところが、起動時の
+ * `--resume` が失敗して（会話ログが無い）自分で `claude` を打ち直したタブでは、
+ * 記録が「存在しない会話」を指したまま、いま話している会話の側を live として
+ * 観測し続ける。そのまま再起動すると、今の会話は戻らず `--resume` がまた失敗する。
+ *
+ * ここでは**ファイルを見ずに決められる条件**だけを確かめる:
+ *
+ * 1. Claude タブで、記録した ID が UUID の形をしている
+ * 2. 照合されたセッションが記録した ID と違う（= 記録した会話はいま動いていない。
+ *    動いていればステージ 1 の ID 一致で必ず結びつく）
+ * 3. その組が adoptable（同じフォルダにセッション 1 件・タブ 1 枚の 1 対 1）
+ * 4. そのセッションが、このタブの PTY が起動したあとに始まった（startedInsideTab）
+ *
+ * 残る「記録した ID の会話ログが存在しない」は呼び出し側が確かめる
+ * (relaunchedSessionTabs)。ログが残っている会話は `--resume` で戻れるので、
+ * そちらを優先して乗り換えない。
+ */
+export function relaunchedSessionCandidates(
+  tabs: RelaunchTab[],
+  matches: ReadonlyMap<string, ClaudeSession>,
+  adoptable: ReadonlySet<string>,
+): RelaunchCandidate[] {
+  const result: RelaunchCandidate[] = [];
+  for (const tab of tabs) {
+    const session = matches.get(tab.id);
+    if (session === undefined || !isRelaunchCandidate(tab, session, adoptable)) continue;
+    result.push({
+      tabId: tab.id,
+      recordedId: tab.claudeSessionId as string,  // isRelaunchCandidate が UUID を確かめ済み
+      cwd: tab.claudeSessionCwd ?? session.cwd,
+      distro: tab.claudeSessionDistro ?? session.distro,
+    });
+  }
+  return result;
+}
+
+/** relaunchedSessionCandidates の条件 1〜4 をすべて満たすか。 */
+function isRelaunchCandidate(
+  tab: RelaunchTab,
+  session: ClaudeSession,
+  adoptable: ReadonlySet<string>,
+): boolean {
+  return (
+    tab.launchClaude === true &&
+    isSessionId(tab.claudeSessionId) &&
+    session.sessionId !== undefined &&
+    session.sessionId !== tab.claudeSessionId &&
+    adoptable.has(tab.id) &&
+    startedInsideTab(tab, session)
+  );
+}
+
+/**
+ * 候補のうち、**記録した ID の会話ログが存在しない**タブだけを返す。
+ *
+ * `transcriptExists` が null（調べられなかった）を返したタブは乗り換えない。
+ * 分からないときに記録を書き換えると、戻れたはずの会話を手放すことになるため。
+ */
+export async function relaunchedSessionTabs(
+  candidates: readonly RelaunchCandidate[],
+  transcriptExists: (c: RelaunchCandidate) => Promise<boolean | null>,
+): Promise<Set<string>> {
+  const result = new Set<string>();
+  for (const c of candidates) {
+    if ((await transcriptExists(c)) === false) result.add(c.tabId);
+  }
+  return result;
+}
+
+/**
+ * 会話ログ (`~/.claude/projects/<slug>/<id>.jsonl`) が存在するかを Rust に問い合わせる。
+ * 調べられなかったとき（Claude 未使用・WSL に届かない・invoke の失敗）は null。
+ */
+export async function claudeTranscriptExists(
+  sessionId: string,
+  cwd: string | undefined,
+  distro: string | undefined,
+): Promise<boolean | null> {
+  try {
+    return (await invoke<boolean | null>('claude_transcript_exists', { sessionId, cwd, distro })) ?? null;
+  } catch (e) {
+    console.warn('[claudeSessions] claude_transcript_exists failed:', e);
+    return null;
+  }
 }
 
 /**

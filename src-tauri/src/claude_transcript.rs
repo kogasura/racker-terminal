@@ -260,6 +260,50 @@ pub fn get_claude_transcript_meta(
     read_transcript_meta(&path)
 }
 
+/// セッション ID が「そのままファイル名に使ってよい形」か。
+///
+/// フロントから届いた値で `<id>.jsonl` を組み立てるため、区切り文字や `..` を
+/// 含む値で `projects` の外を指せないよう、UUID に使われる文字だけを許す。
+fn is_safe_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id.len() <= 64
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// `projects_dir` 配下に、そのセッションの会話ログがあるか。
+///
+/// ID の形が不正なら「無い」とは言い切れないので `None` を返す
+/// (呼び出し側は分からないときに記録を書き換えない)。
+pub fn transcript_exists_in(
+    projects_dir: &Path,
+    cwd: Option<&str>,
+    session_id: &str,
+    allow_scan: bool,
+) -> Option<bool> {
+    if !is_safe_session_id(session_id) {
+        return None;
+    }
+    Some(find_transcript(projects_dir, cwd, session_id, allow_scan).is_some())
+}
+
+/// セッションの会話ログが存在するかを返す Tauri command。
+///
+/// Claude タブに記録した ID が「`--resume` しても戻れない会話」かを見分けるのに使う。
+/// 調べられないとき (projects ディレクトリが見つからない・ID の形が不正) は `None`。
+#[tauri::command(async)]
+pub fn claude_transcript_exists(
+    session_id: String,
+    cwd: Option<String>,
+    distro: Option<String>,
+) -> Option<bool> {
+    let dir = projects_dir(distro.as_deref())?;
+    // WSL 側ではフォールバックの全走査をしない (9P 越しのディレクトリ走査は高い)
+    let allow_scan = distro.is_none();
+    transcript_exists_in(&dir, cwd.as_deref(), &session_id, allow_scan)
+}
+
 #[cfg(test)]
 mod tests {
     // assert_eq! は展開すると if/else になるため、アサーションを並べただけの
@@ -483,5 +527,28 @@ mod tests {
         write_file(&dir.join("slug").join("abc.jsonl"), "");
 
         assert!(find_transcript(&dir, None, "zzz", true).is_none());
+    }
+
+    #[test]
+    fn transcript_exists_in_reports_presence_and_absence() {
+        let dir = temp_dir("exists");
+        let id = "aab34766-6f27-4fce-ba6d-3c77f2dbcfab";
+        let cwd = r"C:\Users\me\dev\app";
+        assert_eq!(transcript_exists_in(&dir, Some(cwd), id, true), Some(false));
+
+        write_file(
+            &dir.join(slugify_cwd(cwd)).join(format!("{id}.jsonl")),
+            "{}\n",
+        );
+        assert_eq!(transcript_exists_in(&dir, Some(cwd), id, false), Some(true));
+    }
+
+    #[test]
+    fn transcript_exists_in_refuses_unsafe_ids() {
+        let dir = temp_dir("exists-unsafe");
+        write_file(&dir.join("x.jsonl"), "{}\n");
+        assert_eq!(transcript_exists_in(&dir, None, "../x", true), None);
+        assert_eq!(transcript_exists_in(&dir, None, "", true), None);
+        assert_eq!(transcript_exists_in(&dir, None, r"a\b", true), None);
     }
 }

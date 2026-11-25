@@ -998,6 +998,41 @@ describe('appStore', () => {
         useAppStore.getState().setTabStatus('non-existent', 'live'),
       ).not.toThrow();
     });
+
+    it('live に入った時刻を liveSince に記録し、live のまま呼ばれ直しても動かさない', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        useAppStore.getState().setTabStatus(tabId, 'live', 'pty-1');
+        expect(useAppStore.getState().tabs[tabId].liveSince).toBe(1_000);
+
+        vi.setSystemTime(5_000);
+        useAppStore.getState().setTabStatus(tabId, 'live', 'pty-1');
+        expect(useAppStore.getState().tabs[tabId].liveSince).toBe(1_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('live を抜けたら liveSince を消し、次に live へ入った時刻で取り直す', () => {
+      const groupId = useAppStore.getState().createGroup();
+      const tabId = useAppStore.getState().createTab(groupId);
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        useAppStore.getState().setTabStatus(tabId, 'live', 'pty-1');
+        useAppStore.getState().setTabStatus(tabId, 'crashed');
+        expect(useAppStore.getState().tabs[tabId].liveSince).toBeUndefined();
+
+        vi.setSystemTime(9_000);
+        useAppStore.getState().setTabStatus(tabId, 'live', 'pty-2');
+        expect(useAppStore.getState().tabs[tabId].liveSince).toBe(9_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // --- moveTab ---
@@ -2196,6 +2231,56 @@ describe('applyClaudeSessions — 復元の根拠', () => {
     expect(tab.claudeSessionLive).toBe(true);
   });
 
+  it('relaunched に含まれる Claude タブは、観測中のセッション ID へ乗り換える', () => {
+    // 起動時の --resume が失敗し（会話ログが無い）、自分で claude を打ち直したタブ
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, {
+      launchClaude: true,
+      claudeSessionId: 'racker-issued-but-empty',
+    });
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'relaunched-by-hand', status: 'busy', cwd: 'C:\\work' }]]),
+      { adoptable: new Set([tabId]), relaunched: new Set([tabId]) },
+    );
+
+    const tab = useAppStore.getState().tabs[tabId];
+    expect(tab.claudeSessionId).toBe('relaunched-by-hand');
+    expect(tab.claudeSessionLive).toBe(true);
+    // Claude タブであることは変わらない（次回も自動で claude が立つ）
+    expect(tab.launchClaude).toBe(true);
+  });
+
+  it('relaunched に含まれていても adoptable でなければ乗り換えない', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, {
+      launchClaude: true,
+      claudeSessionId: 'racker-issued',
+    });
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { sessionId: 'someone-else', status: 'busy', cwd: 'C:\\work' }]]),
+      { adoptable: new Set<string>(), relaunched: new Set([tabId]) },
+    );
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('racker-issued');
+  });
+
+  it('relaunched に含まれていても、セッションが ID を申告しなければ記録を残す', () => {
+    const g = useAppStore.getState().createGroup('G');
+    const tabId = useAppStore.getState().createTab(g, {
+      launchClaude: true,
+      claudeSessionId: 'racker-issued',
+    });
+
+    useAppStore.getState().applyClaudeSessions(
+      new Map([[tabId, { status: 'busy', cwd: 'C:\\work' }]]),
+      { adoptable: new Set([tabId]), relaunched: new Set([tabId]) },
+    );
+
+    expect(useAppStore.getState().tabs[tabId].claudeSessionId).toBe('racker-issued');
+  });
+
   it('adoptable に含まれないタブには復元用フィールドを書かない（表示だけ従来どおり反映する）', () => {
     const tabId = makeInactiveTab();
 
@@ -2669,6 +2754,8 @@ describe('persist partialize — ランタイム状態が保存対象外であ�
     // status / ptyId は含まれない
     expect((serializedTab as Record<string, unknown>).status).toBeUndefined();
     expect((serializedTab as Record<string, unknown>).ptyId).toBeUndefined();
+    // liveSince も PTY の寿命にひもづくランタイム状態なので保存しない
+    expect((serializedTab as Record<string, unknown>).liveSince).toBeUndefined();
     // userTitle / shell / cwd / env は保存される
     expect((serializedTab as Record<string, unknown>).id).toBe(tabId);
     expect((serializedTab as Record<string, unknown>).groupId).toBe(groupId);

@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { Window } from '@tauri-apps/api/window';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEmit } from '../architecture/chain';
-import { useNewTabMenuView, useTabsView } from '../features/tabs/TabsRoot';
+import { useTabsView } from '../features/tabs/TabsRoot';
 import type { TabsEvent } from '../features/tabs/events';
 import { useUpdaterView } from '../features/updater/UpdaterRoot';
 import { UpdateBadgeView } from '../features/updater/views/UpdateBadgeView';
@@ -14,7 +13,6 @@ import { UpdateBadgeView } from '../features/updater/views/UpdateBadgeView';
  * (data-tauri-drag-region 属性のみだと WebView2 環境で稼働しないケースがあるため)。
  * 最小化・最大化トグル・閉じるボタンを提供する。
  * Phase 4 P-B-2 で追加。
- * Phase 4 P-H で新規タブ split button を追加。
  *
  * F-S2: Window.getCurrent() を useMemo でメモ化し、描画ごとの再呼び出しを防ぐ。
  */
@@ -22,8 +20,6 @@ export function TitleBar() {
   // F-S2: Window.getCurrent() は描画ごとに呼ばれないよう useMemo でメモ化する
   const win = useMemo(() => Window.getCurrent(), []);
 
-  // 新規タブメニュー。並べるもの (星の種類・ショートカット表示) は View モデルが決める。
-  const newTabMenu = useNewTabMenuView();
   const emit = useEmit<TabsEvent>();
 
   // 左サイドバーの開閉ボタン。開いているか・何と読み上げるかは View モデルが決める。
@@ -70,75 +66,6 @@ export function TitleBar() {
 
       {/* 自動更新バッジ: 出すかどうかも文言も View モデルが決めている */}
       <UpdateBadgeView vm={badge} />
-
-      {/* 新規タブ split button */}
-      <div className="title-bar__new-tab-group">
-        {/* + ボタン: spawnDefaultOrNew */}
-        <button
-          type="button"
-          className="title-bar__btn--new-tab"
-          onClick={() => emit({ type: 'tabs/default-tab-open-requested' })}
-          aria-label="新しいタブ"
-          title="新しいタブ (Ctrl+T)"
-        >
-          +
-        </button>
-
-        {/* ▼ ボタン: DropdownMenu トリガー */}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              type="button"
-              className="title-bar__btn--new-tab-arrow"
-              aria-label="新規タブメニューを開く"
-            >
-              ▼
-            </button>
-          </DropdownMenu.Trigger>
-
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="dropdown-menu__content"
-              align="end"
-              sideOffset={4}
-            >
-              {/* 「新しいタブ (既定)」 */}
-              <DropdownMenu.Item
-                className="dropdown-menu__item"
-                onSelect={() => emit({ type: 'tabs/default-tab-open-requested' })}
-              >
-                新しいタブ (既定)
-                <span className="dropdown-menu__shortcut">Ctrl+T</span>
-              </DropdownMenu.Item>
-
-              {/* お気に入り一覧 (0 件のときはセパレータ・一覧ともに非表示) */}
-              {newTabMenu.hasFavorites && (
-                <>
-                  <DropdownMenu.Separator className="dropdown-menu__separator" />
-                  {newTabMenu.items.map((item) => (
-                    <DropdownMenu.Item
-                      key={item.favoriteId}
-                      className="dropdown-menu__item"
-                      onSelect={() =>
-                        emit({
-                          type: 'tabs/favorite-spawn-requested',
-                          favoriteId: item.favoriteId,
-                        })
-                      }
-                    >
-                      <span className="dropdown-menu__fav-icon">{item.icon}</span>
-                      {item.title}
-                      {item.shortcut && (
-                        <span className="dropdown-menu__shortcut">{item.shortcut}</span>
-                      )}
-                    </DropdownMenu.Item>
-                  ))}
-                </>
-              )}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </div>
 
       <div className="title-bar__actions">
         <button

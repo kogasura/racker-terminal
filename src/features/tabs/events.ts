@@ -77,17 +77,10 @@ export type TabsPointerIntent =
   /** 指定グループに新しいタブを足す (グループの右クリックメニュー) */
   | { readonly type: 'tabs/tab-create-in-group-requested'; readonly groupId: string }
   /**
-   * 既定のタブを開く (タイトルバーの + / メニューの「新しいタブ (既定)」)。
-   *
-   * Ctrl+T と同じ動きだが、あちらはキーボード由来なのでイベントを分けている。
-   * ポインタ由来はコンテキストメニュー表示中でも止めない。
-   */
-  | { readonly type: 'tabs/default-tab-open-requested' }
-  /**
    * 左サイドバーの開閉ボタンを押した (タイトルバー左端)。
    *
-   * Ctrl+Shift+B と同じ動きだが、キーボード由来と分けてある理由は
-   * `default-tab-open-requested` と同じ (ポインタ由来はメニュー表示中でも止めない)。
+   * Ctrl+Shift+B と同じ動きだが、キーボード由来なのでイベントを分けている。
+   * ポインタ由来はコンテキストメニュー表示中でも止めない。
    */
   | { readonly type: 'tabs/sidebar-toggle-clicked' }
   /** お気に入りからタブを開く */

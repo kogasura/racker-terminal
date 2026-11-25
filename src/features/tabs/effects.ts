@@ -254,7 +254,7 @@ const handlers: HandlerMap = {
     // 既存タイトルの最大値を見る必要がある (nextNewGroupTitle)。
     const id = state.createGroup(nextNewGroupTitle(state.groups));
     // 作ったグループをそのまま選択する。選択が前のグループに残っていると、
-    // 直後の Ctrl+T やタイトルバーの + が古いグループにタブを作ってしまう。
+    // 直後の Ctrl+T や横タブバーの + が古いグループにタブを作ってしまう。
     state.setActiveGroup(id);
   },
 };

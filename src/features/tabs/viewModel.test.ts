@@ -5,7 +5,6 @@ import {
   selectGroup,
   selectFolderTemplates,
   selectMoveTargets,
-  selectNewTabMenu,
   selectQuickAccess,
   selectSidebar,
   selectSidebarToggle,
@@ -151,32 +150,6 @@ describe('selectFavorites', () => {
       false,
       false,
     ]);
-  });
-});
-
-describe('selectNewTabMenu', () => {
-  function favs(n: number) {
-    return Array.from({ length: n }, (_, i) => ({
-      id: `f${i + 1}`,
-      title: `Fav ${i + 1}`,
-      shell: 'nu',
-    })) as never as Parameters<typeof selectNewTabMenu>[0];
-  }
-
-  it('0 件ならセパレータごと出さない', () => {
-    expect(selectNewTabMenu([], null)).toEqual({ hasFavorites: false, items: [] });
-  });
-
-  it('既定のお気に入りだけ塗りつぶしの星にする', () => {
-    const vm = selectNewTabMenu(favs(2), 'f2');
-    expect(vm.items.map((i) => i.icon)).toEqual(['★', '⭐']);
-  });
-
-  it('ショートカット表示は先頭 9 件まで', () => {
-    const vm = selectNewTabMenu(favs(10), null);
-    expect(vm.items[0].shortcut).toBe('Ctrl+Shift+1');
-    expect(vm.items[8].shortcut).toBe('Ctrl+Shift+9');
-    expect(vm.items[9].shortcut).toBeUndefined();
   });
 });
 

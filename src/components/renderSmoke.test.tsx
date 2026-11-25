@@ -18,6 +18,7 @@ import type { ClaudeStatusEvent } from '../features/claudeStatus/events';
 import { useEmit } from '../architecture/chain';
 import { StatusBar } from './StatusBar';
 import { TabBar } from './TabBar';
+import { TitleBar } from './TitleBar';
 import { Sidebar } from './Sidebar';
 import { DragDropProvider } from './DragDropProvider';
 import { BUILTIN_THEMES } from '../lib/theme/builtinThemes';
@@ -26,6 +27,16 @@ import { BUILTIN_THEMES } from '../lib/theme/builtinThemes';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn().mockResolvedValue('0.0.0-test') }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@tauri-apps/api/window', () => ({
+  Window: {
+    getCurrent: () => ({
+      minimize: vi.fn().mockResolvedValue(undefined),
+      toggleMaximize: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      startDragging: vi.fn().mockResolvedValue(undefined),
+    }),
+  },
+}));
 
 /**
  * コンポーネントのレンダリング・スモークテスト。
@@ -306,6 +317,16 @@ describe('コンポーネントのレンダリング', () => {
         </DragDropProvider>,
       ),
     ).not.toThrow();
+  });
+
+  it('TitleBar: 新規タブの + / ▼ は出さず、サイドバー開閉とウィンドウ操作は残す', () => {
+    const { container } = render(<TitleBar />);
+    const labels = [...container.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'));
+    // タブは左サイドバーから開くので、タイトルバーからの追加導線は廃止した
+    expect(labels).not.toContain('新しいタブ');
+    expect(labels).not.toContain('新規タブメニューを開く');
+    expect(labels).toEqual(expect.arrayContaining(['Minimize', 'Maximize', 'Close']));
+    expect(container.querySelector('.title-bar__btn--sidebar')).not.toBeNull();
   });
 
   it('TabBar: グループが無ければバーごと消える', () => {

@@ -27,7 +27,6 @@ import {
   EMPTY_DRAG_OVERLAY,
   selectFavorites,
   selectGroup,
-  selectNewTabMenu,
   selectMoveTargets,
   selectQuickAccess,
   selectSidebar,
@@ -41,7 +40,6 @@ import {
   type FavoritesViewModel,
   type GroupViewModel,
   type FolderTemplateViewModel,
-  type NewTabMenuViewModel,
   type QuickAccessViewModel,
   type TerminalPanesViewModel,
   type MoveTargetViewModel,
@@ -190,16 +188,6 @@ export function useQuickAccessView(): QuickAccessViewModel {
  */
 export function useWslDistrosView(): string[] {
   return useAppStore(useShallow((s) => s.wslDistros));
-}
-
-/** タイトルバーの新規タブメニュー。 */
-export function useNewTabMenuView(): NewTabMenuViewModel {
-  const favorites = useAppStore(useShallow((s) => s.favorites));
-  const defaultFavoriteId = useAppStore((s) => s.settings.defaultFavoriteId);
-  return useMemo(
-    () => selectNewTabMenu(favorites, defaultFavoriteId),
-    [favorites, defaultFavoriteId],
-  );
 }
 
 /**

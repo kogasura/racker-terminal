@@ -164,6 +164,8 @@ describe('コンポーネントのレンダリング', () => {
         ...useAppStore.getState().settings,
         statusBarEnabled: undefined,
         theme: 'tokyo-night',
+        quickAccessShellOnlyPaths: undefined,
+        quickAccessBypassPaths: undefined,
       },
     });
   });
@@ -373,6 +375,56 @@ describe('コンポーネントのレンダリング', () => {
       (t) => t.cwd === 'C:/Users/me/dev',
     );
     expect(opened).toMatchObject({ userTitle: 'dev', launchClaude: true });
+  });
+
+  it('Sidebar: クイックアクセスの右クリックで権限バイパスを切り替え、次に開くタブに付く', () => {
+    useAppStore.setState((s) => ({
+      quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }],
+      settings: { ...s.settings, quickAccessShellOnlyPaths: [], quickAccessBypassPaths: [] },
+    }));
+    const { container } = render(
+      <DragDropProvider>
+        <Sidebar />
+      </DragDropProvider>,
+    );
+    const row = container.querySelector<HTMLButtonElement>('.quick-access-item')!;
+
+    fireEvent.contextMenu(row);
+    const item = [...document.body.querySelectorAll('[role="menuitemcheckbox"]')].find((el) =>
+      el.textContent?.includes('権限プロンプトをバイパスする'),
+    );
+    expect(item, 'バイパスの切り替えがメニューに無い').toBeTruthy();
+    expect(item!.getAttribute('aria-checked')).toBe('false');
+    act(() => fireEvent.click(item!));
+
+    expect(useAppStore.getState().settings.quickAccessBypassPaths).toEqual(['C:/Users/me/dev']);
+    act(() => row.click());
+    const opened = Object.values(useAppStore.getState().tabs).find(
+      (t) => t.cwd === 'C:/Users/me/dev',
+    );
+    expect(opened).toMatchObject({ launchClaude: true, bypassPermissions: true });
+  });
+
+  it('Sidebar: claude を起動しないフォルダでは、権限バイパスの切り替えを押せない', () => {
+    useAppStore.setState((s) => ({
+      quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }],
+      settings: {
+        ...s.settings,
+        quickAccessShellOnlyPaths: ['C:/Users/me/dev'],
+        quickAccessBypassPaths: [],
+      },
+    }));
+    const { container } = render(
+      <DragDropProvider>
+        <Sidebar />
+      </DragDropProvider>,
+    );
+
+    fireEvent.contextMenu(container.querySelector('.quick-access-item')!);
+    const item = [...document.body.querySelectorAll('[role="menuitemcheckbox"]')].find((el) =>
+      el.textContent?.includes('権限プロンプトをバイパスする'),
+    );
+    expect(item?.hasAttribute('data-disabled')).toBe(true);
   });
 
   it('SettingsDialog が描画できる', () => {

@@ -8,7 +8,7 @@
 
 import { prBadgeKind, prTooltip } from '../../lib/prStatus';
 import { buildProfileTemplates } from '../../lib/profileTemplates';
-import { isQuickAccessClaude } from '../../lib/quickAccess';
+import { quickAccessMode, type QuickAccessSettings } from '../../lib/quickAccess';
 import {
   getTabDisplayTitle,
   AGENT_STATE_LABEL,
@@ -210,6 +210,8 @@ export interface QuickAccessItemViewModel {
   readonly tooltip: string;
   /** クリックで claude を起動するか (起動するものにだけ印を付ける)。 */
   readonly launchClaude: boolean;
+  /** claude を権限バイパス付きで起動するか。claude を起動しないフォルダでは常に false。 */
+  readonly bypass: boolean;
 }
 
 /** サイドバーの Quick Access セクション。 */
@@ -219,19 +221,25 @@ export interface QuickAccessViewModel {
   readonly items: readonly QuickAccessItemViewModel[];
 }
 
+function quickAccessTooltip(path: string, launchClaude: boolean, bypass: boolean): string {
+  if (!launchClaude) return `${path} を開く`;
+  return bypass ? `${path} で claude を開く（権限バイパス）` : `${path} で claude を開く`;
+}
+
 export function selectQuickAccess(
   folders: readonly QuickAccessFolder[],
-  shellOnlyPaths: readonly string[] | undefined,
+  settings: QuickAccessSettings,
 ): QuickAccessViewModel {
   return {
     visible: folders.length > 0,
     items: folders.map((f) => {
-      const launchClaude = isQuickAccessClaude(f.path, shellOnlyPaths);
+      const { launchClaude, bypass } = quickAccessMode(f.path, settings);
       return {
         path: f.path,
         name: f.name,
-        tooltip: launchClaude ? `${f.path} で claude を開く` : `${f.path} を開く`,
+        tooltip: quickAccessTooltip(f.path, launchClaude, bypass),
         launchClaude,
+        bypass,
       };
     }),
   };

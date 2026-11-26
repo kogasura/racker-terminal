@@ -177,7 +177,15 @@ export function useFolderTemplatesView(): readonly FolderTemplateViewModel[] {
 export function useQuickAccessView(): QuickAccessViewModel {
   const folders = useAppStore((s) => s.quickAccess);
   const shellOnlyPaths = useAppStore((s) => s.settings.quickAccessShellOnlyPaths);
-  return useMemo(() => selectQuickAccess(folders, shellOnlyPaths), [folders, shellOnlyPaths]);
+  const bypassPaths = useAppStore((s) => s.settings.quickAccessBypassPaths);
+  return useMemo(
+    () =>
+      selectQuickAccess(folders, {
+        quickAccessShellOnlyPaths: shellOnlyPaths,
+        quickAccessBypassPaths: bypassPaths,
+      }),
+    [folders, shellOnlyPaths, bypassPaths],
+  );
 }
 
 /**

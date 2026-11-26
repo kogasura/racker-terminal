@@ -20,9 +20,10 @@ import { buildProfileTemplates } from '../../lib/profileTemplates';
 import { buildFolderLaunch } from '../../lib/openFolder';
 import {
   buildQuickAccessLaunch,
-  isQuickAccessClaude,
-  listQuickAccess,
+  quickAccessMode,
   toggleQuickAccessClaude,
+  listQuickAccess,
+  toggleQuickAccessPath,
 } from '../../lib/quickAccess';
 import { selectNextTabId, selectPrevTabId, useAppStore } from '../../store/appStore';
 import type { TabsEvent } from './events';
@@ -106,8 +107,6 @@ const handlers: HandlerMap = {
   restore: (state) => state.restoreLastClosedTab(),
 
   'spawn-default': (state) => state.spawnDefaultOrNew(),
-
-  'spawn-favorite': (state, effect) => state.spawnFavoriteByIndex(effect.index),
 
   // 開閉状態は設定として保存する (再起動しても隠したまま)
   'toggle-sidebar': (state) => state.updateSettings({ sidebarHidden: !state.settings.sidebarHidden }),
@@ -220,15 +219,20 @@ const handlers: HandlerMap = {
     // 一覧に無いパスは開かない (View が出している行だけが対象)
     const folder = state.quickAccess.find((f) => f.path === effect.path);
     if (!folder) return;
-    const launchClaude = isQuickAccessClaude(folder.path, state.settings.quickAccessShellOnlyPaths);
-    state.createTab(undefined, buildQuickAccessLaunch(folder, launchClaude));
+    state.createTab(
+      undefined,
+      buildQuickAccessLaunch(folder, quickAccessMode(folder.path, state.settings)),
+    );
   },
 
   // 設定として保存する (再起動しても、一覧を読み直しても残る)
   'toggle-quick-access-claude': (state, effect) =>
+    state.updateSettings(toggleQuickAccessClaude(state.settings, effect.path)),
+
+  'toggle-quick-access-bypass': (state, effect) =>
     state.updateSettings({
-      quickAccessShellOnlyPaths: toggleQuickAccessClaude(
-        state.settings.quickAccessShellOnlyPaths,
+      quickAccessBypassPaths: toggleQuickAccessPath(
+        state.settings.quickAccessBypassPaths,
         effect.path,
       ),
     }),

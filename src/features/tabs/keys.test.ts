@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { favoriteIndexFromKey, tabCommandForKey } from './keys';
+import { tabCommandForKey } from './keys';
 
 // キーと コマンドの対応表。純粋関数なので DOM も store も要らない。
 // 判定順に意味がある (Ctrl+Shift+T を Ctrl+T より先に見る) ので、そこを固定する。
@@ -47,15 +47,10 @@ describe('tabCommandForKey', () => {
     expect(tabCommandForKey(key({ code: 'KeyB' }))).toBeNull();
   });
 
-  it('Shift+1..9 → お気に入り 0..8', () => {
-    expect(tabCommandForKey(key({ shiftKey: true, code: 'Digit1' }))).toEqual({
-      type: 'tabs/spawn-favorite-requested',
-      index: 0,
-    });
-    expect(tabCommandForKey(key({ shiftKey: true, code: 'Numpad9' }))).toEqual({
-      type: 'tabs/spawn-favorite-requested',
-      index: 8,
-    });
+  it('Shift+1..9 は奪わない（お気に入りのショートカットは廃止した。ターミナルへ流す）', () => {
+    expect(tabCommandForKey(key({ shiftKey: true, code: 'Digit1' }))).toBeNull();
+    expect(tabCommandForKey(key({ shiftKey: true, code: 'Numpad9' }))).toBeNull();
+    expect(tabCommandForKey(key({ shiftKey: true, code: '', key: '1' }))).toBeNull();
   });
 
   it('割り当ての無いキーは null', () => {
@@ -71,24 +66,5 @@ describe('tabCommandForKey', () => {
     expect(tabCommandForKey(key({ code: '', key: 't' }))).toEqual({
       type: 'tabs/spawn-default-requested',
     });
-    expect(tabCommandForKey(key({ shiftKey: true, code: '', key: '1' }))).toEqual({
-      type: 'tabs/spawn-favorite-requested',
-      index: 0,
-    });
-  });
-});
-
-describe('favoriteIndexFromKey', () => {
-  it('Shift が無ければ対象外', () => {
-    expect(favoriteIndexFromKey(key({ code: 'Digit1' }))).toBeNull();
-  });
-
-  it('0 は対象外 (1..9 のみ)', () => {
-    expect(favoriteIndexFromKey(key({ shiftKey: true, code: 'Digit0' }))).toBeNull();
-  });
-
-  it('Digit / Numpad どちらでも取れる', () => {
-    expect(favoriteIndexFromKey(key({ shiftKey: true, code: 'Digit5' }))).toBe(4);
-    expect(favoriteIndexFromKey(key({ shiftKey: true, code: 'Numpad5' }))).toBe(4);
   });
 });

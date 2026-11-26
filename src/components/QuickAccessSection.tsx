@@ -9,8 +9,8 @@ import { ClaudeMark } from './ClaudeMark';
 /**
  * クイックアクセスの 1 行。
  *
- * クリックでそのフォルダを開く。claude を起動するかはフォルダごとに右クリックで切り替え、
- * 起動するフォルダにだけ印を付ける（既定は起動する）。
+ * クリックでそのフォルダを開く。claude を起動するか・権限バイパスを付けるかはフォルダごとに
+ * 右クリックで切り替え、claude を起動するフォルダにだけ印を付ける（既定は起動する・バイパスなし）。
  */
 function QuickAccessItem({ item }: { item: QuickAccessItemViewModel }) {
   const emit = useEmit<TabsEvent>();
@@ -55,6 +55,21 @@ function QuickAccessItem({ item }: { item: QuickAccessItemViewModel }) {
               <ContextMenu.ItemIndicator>✓</ContextMenu.ItemIndicator>
             </span>
             開いたら claude を起動する
+          </ContextMenu.CheckboxItem>
+
+          {/* claude を起動しないフォルダでは意味が無いので押せなくする */}
+          <ContextMenu.CheckboxItem
+            className="context-menu__item"
+            checked={item.bypass}
+            disabled={!item.launchClaude}
+            onCheckedChange={() =>
+              emit({ type: 'tabs/quick-access-bypass-toggled', path: item.path })
+            }
+          >
+            <span className="context-menu__check">
+              <ContextMenu.ItemIndicator>✓</ContextMenu.ItemIndicator>
+            </span>
+            権限プロンプトをバイパスする
           </ContextMenu.CheckboxItem>
         </ContextMenu.Content>
       </ContextMenu.Portal>

@@ -17,7 +17,6 @@ const COMMANDS: readonly TabsEvent[] = [
   { type: 'tabs/navigate-requested', direction: 'next' },
   { type: 'tabs/restore-requested' },
   { type: 'tabs/spawn-default-requested' },
-  { type: 'tabs/spawn-favorite-requested', index: 0 },
   { type: 'tabs/sidebar-toggle-requested' },
 ];
 
@@ -55,9 +54,6 @@ describe('tabs machine', () => {
       expect(effectsOf(initialState, { type: 'tabs/spawn-default-requested' })).toEqual([
         { kind: 'spawn-default' },
       ]);
-      expect(
-        effectsOf(initialState, { type: 'tabs/spawn-favorite-requested', index: 8 }),
-      ).toEqual([{ kind: 'spawn-favorite', index: 8 }]);
     });
 
     it('suspended ならどのコマンドも捨てる', () => {
@@ -142,6 +138,7 @@ describe('tabs machine', () => {
       { type: 'tabs/sidebar-toggle-clicked' },
       // 右クリックメニューの中から押す (= suspended の最中に届く) ので、止めると効かない
       { type: 'tabs/quick-access-claude-toggled', path: 'C:/dev' },
+      { type: 'tabs/quick-access-bypass-toggled', path: 'C:/dev' },
     ];
 
     it('accepting でも suspended でも効果を出す', () => {

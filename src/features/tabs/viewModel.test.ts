@@ -182,7 +182,7 @@ describe('selectFolderTemplates', () => {
 
 describe('selectQuickAccess', () => {
   it('1 件も無ければセクションごと出さない', () => {
-    expect(selectQuickAccess([], undefined)).toEqual({ visible: false, items: [] });
+    expect(selectQuickAccess([], {})).toEqual({ visible: false, items: [] });
   });
 
   it('表示名を並べ、tooltip にはパスを添える (同名フォルダを見分けるため)', () => {
@@ -191,7 +191,7 @@ describe('selectQuickAccess', () => {
         { name: 'output', path: 'C:/a/output' },
         { name: 'output', path: 'C:/b/output' },
       ],
-      undefined,
+      {},
     );
     expect(vm.visible).toBe(true);
     expect(vm.items.map((i) => i.name)).toEqual(['output', 'output']);
@@ -205,11 +205,25 @@ describe('selectQuickAccess', () => {
         { name: 'a', path: 'C:/a' },
         { name: 'b', path: 'C:/b' },
       ],
-      ['C:/b'],
+      { quickAccessShellOnlyPaths: ['C:/b'] },
     );
     expect(vm.items.map((i) => i.launchClaude)).toEqual([true, false]);
     expect(vm.items[0].tooltip).toBe('C:/a で claude を開く');
     expect(vm.items[1].tooltip).toBe('C:/b を開く');
+  });
+
+  it('バイパスを付けるフォルダは tooltip で知らせ、claude を起動しないフォルダでは付かない', () => {
+    const vm = selectQuickAccess(
+      [
+        { name: 'a', path: 'C:/a' },
+        { name: 'b', path: 'C:/b' },
+        { name: 'c', path: 'C:/c' },
+      ],
+      { quickAccessShellOnlyPaths: ['C:/c'], quickAccessBypassPaths: ['C:/a', 'C:/c'] },
+    );
+    expect(vm.items.map((i) => i.bypass)).toEqual([true, false, false]);
+    expect(vm.items[0].tooltip).toBe('C:/a で claude を開く（権限バイパス）');
+    expect(vm.items[2].tooltip).toBe('C:/c を開く');
   });
 });
 

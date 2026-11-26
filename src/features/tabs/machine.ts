@@ -70,6 +70,7 @@ export type TabsEffect =
   | { readonly kind: 'open-folder'; readonly templateId: string }
   | { readonly kind: 'open-quick-access'; readonly path: string }
   | { readonly kind: 'toggle-quick-access-claude'; readonly path: string }
+  | { readonly kind: 'toggle-quick-access-bypass'; readonly path: string }
   | { readonly kind: 'refresh-quick-access' }
   /** 落とした先を解決して反映する。 */
   | {
@@ -82,7 +83,6 @@ export type TabsEffect =
   | { readonly kind: 'navigate'; readonly direction: NavigateDirection }
   | { readonly kind: 'restore' }
   | { readonly kind: 'spawn-default' }
-  | { readonly kind: 'spawn-favorite'; readonly index: number }
   | { readonly kind: 'toggle-sidebar' };
 
 export const initialState: TabsState = { input: 'accepting', drag: null };
@@ -154,9 +154,6 @@ const handlers: HandlerMap = {
   'tabs/spawn-default-requested': (state) =>
     accepting(state) ? dispatch(state, { kind: 'spawn-default' }) : null,
 
-  'tabs/spawn-favorite-requested': (state, event) =>
-    accepting(state) ? dispatch(state, { kind: 'spawn-favorite', index: event.index }) : null,
-
   'tabs/sidebar-toggle-requested': (state) =>
     accepting(state) ? dispatch(state, { kind: 'toggle-sidebar' }) : null,
 
@@ -219,6 +216,9 @@ const handlers: HandlerMap = {
 
   'tabs/quick-access-claude-toggled': (state, event) =>
     dispatch(state, { kind: 'toggle-quick-access-claude', path: event.path }),
+
+  'tabs/quick-access-bypass-toggled': (state, event) =>
+    dispatch(state, { kind: 'toggle-quick-access-bypass', path: event.path }),
 
   'tabs/quick-access-refresh-requested': (state) =>
     dispatch(state, { kind: 'refresh-quick-access' }),

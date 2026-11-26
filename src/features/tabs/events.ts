@@ -27,8 +27,6 @@ export type TabsIntent =
   | { readonly type: 'tabs/restore-requested' }
   /** 既定タブを開く (Ctrl+T) */
   | { readonly type: 'tabs/spawn-default-requested' }
-  /** お気に入りの index 番目を開く (Ctrl+Shift+1..9 → 0..8) */
-  | { readonly type: 'tabs/spawn-favorite-requested'; readonly index: number }
   /** 左サイドバーの表示 / 非表示を切り替える (Ctrl+Shift+B) */
   | { readonly type: 'tabs/sidebar-toggle-requested' };
 
@@ -100,6 +98,8 @@ export type TabsPointerIntent =
   | { readonly type: 'tabs/quick-access-open-requested'; readonly path: string }
   /** クイックアクセスのフォルダで claude を起動するかを切り替える (右クリックメニュー) */
   | { readonly type: 'tabs/quick-access-claude-toggled'; readonly path: string }
+  /** クイックアクセスのフォルダで claude に権限バイパスを付けるかを切り替える (右クリックメニュー) */
+  | { readonly type: 'tabs/quick-access-bypass-toggled'; readonly path: string }
   /** クイックアクセスの一覧を読み直したい (エクスプローラー側でピン留めを変えたあと) */
   | { readonly type: 'tabs/quick-access-refresh-requested' }
   /** 既定のお気に入りを切り替える (既定なら解除、そうでなければ設定) */

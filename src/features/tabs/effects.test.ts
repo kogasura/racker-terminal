@@ -87,15 +87,6 @@ describe('tabs effects', () => {
     restore.restore();
   });
 
-  it('spawn-favorite: index をそのまま渡す', () => {
-    const fav = stubAction('spawnFavoriteByIndex');
-    const m = boot();
-    m.send({ type: 'tabs/spawn-favorite-requested', index: 0 });
-    m.send({ type: 'tabs/spawn-favorite-requested', index: 8 });
-    expect(fav.calls).toEqual([[0], [8]]);
-    fav.restore();
-  });
-
   it('create-tab: 選択中グループにタブを足す', () => {
     boot().send({ type: 'tabs/tab-create-requested' });
     const group = useAppStore.getState().groups.find((g) => g.id === 'g1');
@@ -285,7 +276,7 @@ describe('tabs effects', () => {
       cwd: 'C:/Users/me/dev',
       launchClaude: true,
     });
-    // 1 クリックで開く導線なので、権限バイパスは付けない
+    // 1 クリックで開く導線なので、既定では権限バイパスを付けない
     expect(added[0].bypassPermissions).toBeUndefined();
   });
 
@@ -318,6 +309,36 @@ describe('tabs effects', () => {
 
     m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
     expect(useAppStore.getState().settings.quickAccessShellOnlyPaths).toEqual([]);
+  });
+
+  it('quick-access-bypass-toggled: フォルダごとの権限バイパスを設定に保存して切り替える', () => {
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, quickAccessBypassPaths: undefined },
+    }));
+    const m = boot();
+
+    m.send({ type: 'tabs/quick-access-bypass-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessBypassPaths).toEqual(['C:/Users/me/dev']);
+
+    m.send({ type: 'tabs/quick-access-bypass-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessBypassPaths).toEqual([]);
+  });
+
+  it('open-quick-access: バイパスを付けたフォルダは、バイパス付きの claude タブを開く', () => {
+    useAppStore.setState((s) => ({
+      quickAccess: [{ name: 'dev', path: 'C:/Users/me/dev' }],
+      settings: { ...s.settings, quickAccessBypassPaths: ['C:/Users/me/dev'] },
+    }));
+    const before = new Set(Object.keys(useAppStore.getState().tabs));
+
+    boot().send({ type: 'tabs/quick-access-open-requested', path: 'C:/Users/me/dev' });
+
+    const added = Object.values(useAppStore.getState().tabs).filter((t) => !before.has(t.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ launchClaude: true, bypassPermissions: true });
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, quickAccessBypassPaths: undefined },
+    }));
   });
 
   it('open-quick-access: 一覧に無いパスでは何も開かない', () => {

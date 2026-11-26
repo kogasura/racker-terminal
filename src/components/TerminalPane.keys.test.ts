@@ -121,14 +121,6 @@ describe('handleCtrlKey', () => {
       ]);
     });
 
-    it('Ctrl+Shift+1..9', () => {
-      expect(dispatch(key({ shiftKey: true, code: 'Digit1' })).emitted).toEqual([
-        { type: 'tabs/spawn-favorite-requested', index: 0 },
-      ]);
-      expect(dispatch(key({ shiftKey: true, code: 'Numpad9' })).emitted).toEqual([
-        { type: 'tabs/spawn-favorite-requested', index: 8 },
-      ]);
-    });
   });
 
   describe('ターミナル面の操作はここで実行する', () => {

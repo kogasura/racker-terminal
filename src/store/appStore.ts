@@ -928,13 +928,6 @@ interface AppActions {
   spawnDefaultOrNew: () => string;
 
   /**
-   * index 番目 (0-indexed) のお気に入りで新規タブを spawn する。
-   * - 存在しない index は null を返す
-   * Phase 4 P-H で追加。
-   */
-  spawnFavoriteByIndex: (index: number) => string | null;
-
-  /**
    * インストール済 WSL distro 一覧を更新する。
    * App 起動時に listWslDistros() から取得した値をセットする。
    * persist 対象外（ランタイム状態）。
@@ -1628,12 +1621,6 @@ export const useAppStore = create<Store>()(
     }
     // defaultFavoriteId 未設定 or favorite が削除済 → plain Terminal タブ
     return get().createTab(undefined, { userTitle: 'Terminal' });
-  },
-
-  spawnFavoriteByIndex: (index) => {
-    const { favorites } = get();
-    if (index < 0 || index >= favorites.length) return null;
-    return get().spawnFavorite(favorites[index].id);
   },
 
   setWslDistros: (distros) => set({ wslDistros: distros }),

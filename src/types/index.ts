@@ -427,6 +427,15 @@ export interface Settings {
    * （ピン留めを外して付け直しても設定が残る）。パスの比較は大文字小文字を区別しない。
    */
   quickAccessShellOnlyPaths?: string[];
+  /**
+   * claude を権限バイパス（`--dangerously-skip-permissions`）付きで起動するクイックアクセスの
+   * フォルダ（パスの一覧）。
+   *
+   * 既定は付けないので、付けるフォルダだけを持つ。未設定は空扱い。パスでの紐づけと
+   * 比較の仕方は quickAccessShellOnlyPaths と同じ。claude を起動しないフォルダでは使わない
+   * （載っていても、シェルだけを開く設定が優先する）。
+   */
+  quickAccessBypassPaths?: string[];
 }
 
 /**

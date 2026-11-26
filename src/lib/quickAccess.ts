@@ -9,7 +9,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { buildWslArgs } from './profileTemplates';
-import type { QuickAccessFolder } from '../types';
+import type { QuickAccessFolder, Settings } from '../types';
 
 /**
  * クイックアクセスのフォルダ一覧を取得する。
@@ -44,29 +44,47 @@ function samePath(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-/**
- * クイックアクセスのフォルダをクリックしたときに claude を起動するか。
- *
- * 既定は起動する。`shellOnlyPaths`（設定の quickAccessShellOnlyPaths）に
- * 載っているフォルダだけ、シェルだけを開く。
- */
-export function isQuickAccessClaude(
-  path: string,
-  shellOnlyPaths: readonly string[] | undefined,
-): boolean {
-  return !(shellOnlyPaths ?? []).some((p) => samePath(p, path));
+function listed(paths: readonly string[] | undefined, path: string): boolean {
+  return (paths ?? []).some((p) => samePath(p, path));
+}
+
+/** フォルダごとの起動方法を決める設定（どちらもパスの一覧で持つ）。 */
+export type QuickAccessSettings = Pick<
+  Settings,
+  'quickAccessShellOnlyPaths' | 'quickAccessBypassPaths'
+>;
+
+/** クイックアクセスのフォルダをクリックしたときの起動方法。 */
+export interface QuickAccessMode {
+  /** claude を起動するか。 */
+  readonly launchClaude: boolean;
+  /** 権限バイパスを付けるか。claude を起動しないフォルダでは常に false。 */
+  readonly bypass: boolean;
 }
 
 /**
- * フォルダの claude 起動を切り替えた後の quickAccessShellOnlyPaths を返す純関数。
- * 載っていれば外し (claude を起動する側へ)、載っていなければ足す (シェルだけ側へ)。
+ * クイックアクセスのフォルダをクリックしたときの起動方法を返す純関数。
+ *
+ * - claude は既定で起動する。quickAccessShellOnlyPaths に載っているフォルダだけ、シェルだけを開く。
+ * - 権限バイパスは既定で付けない。quickAccessBypassPaths に載っているフォルダだけ付ける
+ *   （任意のフォルダを 1 クリックで開く導線なので、緩めるのは明示したフォルダに限る）。
  */
-export function toggleQuickAccessClaude(
-  shellOnlyPaths: readonly string[] | undefined,
+export function quickAccessMode(path: string, settings: QuickAccessSettings): QuickAccessMode {
+  const launchClaude = !listed(settings.quickAccessShellOnlyPaths, path);
+  return { launchClaude, bypass: launchClaude && listed(settings.quickAccessBypassPaths, path) };
+}
+
+/**
+ * パスの一覧でフォルダを切り替えた後の一覧を返す純関数
+ * （quickAccessShellOnlyPaths / quickAccessBypassPaths の両方に使う）。
+ * 載っていれば外し、載っていなければ足す。外すときは大文字小文字の表記ゆれも外す。
+ */
+export function toggleQuickAccessPath(
+  paths: readonly string[] | undefined,
   path: string,
 ): string[] {
-  const current = shellOnlyPaths ?? [];
-  if (isQuickAccessClaude(path, current)) return [...current, path];
+  const current = paths ?? [];
+  if (!listed(current, path)) return [...current, path];
   return current.filter((p) => !samePath(p, path));
 }
 
@@ -78,6 +96,8 @@ export interface QuickAccessLaunch {
   cwd?: string;
   args?: string[];
   launchClaude: boolean;
+  /** 権限バイパス。付けないときは undefined（お気に入りのタブと同じ持ち方）。 */
+  bypassPermissions?: true;
 }
 
 /**
@@ -89,23 +109,26 @@ export interface QuickAccessLaunch {
  *   同じ理由で distro の中に開く（そこで自分で claude を打つことがあるため）。
  * - それ以外 → 既定のシェルで、そのフォルダを cwd にして開く。
  *
- * `launchClaude` が false ならシェルだけを開く（移動してから自分で claude を打つ用途）。
- *
- * 権限バイパスは付けない。任意のフォルダを 1 クリックで開く導線なので、
- * 明示的に設定したお気に入りと同じ扱いにはしない。
+ * `mode.launchClaude` が false ならシェルだけを開く（移動してから自分で claude を打つ用途）。
+ * `mode.bypass` が true なら claude を権限バイパス付きで起動する（タブに残るので、
+ * 再起動後の再開にも付く）。
  */
 export function buildQuickAccessLaunch(
   folder: QuickAccessFolder,
-  launchClaude: boolean,
+  mode: QuickAccessMode,
 ): QuickAccessLaunch {
+  const claude = {
+    launchClaude: mode.launchClaude,
+    ...(mode.launchClaude && mode.bypass ? { bypassPermissions: true as const } : {}),
+  };
   const wsl = parseWslUncPath(folder.path);
   if (wsl) {
     return {
       userTitle: folder.name,
       shell: 'wsl.exe',
       args: buildWslArgs(wsl.distro, wsl.dir),
-      launchClaude,
+      ...claude,
     };
   }
-  return { userTitle: folder.name, cwd: folder.path, launchClaude };
+  return { userTitle: folder.name, cwd: folder.path, ...claude };
 }

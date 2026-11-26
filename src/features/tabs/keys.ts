@@ -22,19 +22,6 @@ export function makeCodeIs(e: KeyboardEvent): CodeIs {
 }
 
 /**
- * Ctrl+Shift+1..9 のお気に入り index (0..8) を取り出す。該当しなければ null。
- * `e.code` は `Digit1`..`Digit9` / `Numpad1`..`Numpad9` を許容する。
- */
-export function favoriteIndexFromKey(e: KeyboardEvent): number | null {
-  if (!e.shiftKey) return null;
-  // 合成キー (e.code 空) では e.key の数字にフォールバックする
-  const m =
-    e.code.match(/^(?:Digit|Numpad)([1-9])$/) ?? (e.code === '' ? e.key.match(/^([1-9])$/) : null);
-  if (!m) return null;
-  return parseInt(m[1], 10) - 1; // 1-9 → 0-8
-}
-
-/**
  * キーとコマンドの対応表。
  *
  * **先頭から順に評価し、最初に match したものだけを採用する**ので並び順に意味がある
@@ -75,14 +62,6 @@ const KEY_COMMANDS: readonly {
     // Ctrl+B (Shift なし) は Claude Code が「バックグラウンドで実行」に使うため奪わない
     match: (e, codeIs) => e.shiftKey && codeIs('KeyB', 'b'),
     command: () => ({ type: 'tabs/sidebar-toggle-requested' }),
-  },
-  {
-    // Ctrl+Shift+1..9: お気に入り index 0..8 を開く
-    match: (e) => favoriteIndexFromKey(e) !== null,
-    command: (e) => {
-      const index = favoriteIndexFromKey(e);
-      return index === null ? null : { type: 'tabs/spawn-favorite-requested', index };
-    },
   },
 ];
 

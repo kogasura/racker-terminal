@@ -32,7 +32,7 @@ export interface EffectDeps {
 
 /** themes フォルダで claude を開く。クイックアクセスと同じ開き方にする。テスト用に export する。 */
 export function openClaudeTab(path: string): void {
-  useAppStore.getState().createTab(undefined, buildQuickAccessLaunch({ name: 'themes', path }, true));
+  useAppStore.getState().createTab(undefined, buildQuickAccessLaunch({ name: 'themes', path }, { launchClaude: true, bypass: false }));
 }
 
 const defaultDeps: EffectDeps = { listUserThemes, ensureThemesDir, openThemesDir, openClaudeTab };

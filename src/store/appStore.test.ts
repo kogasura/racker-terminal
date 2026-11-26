@@ -1465,52 +1465,6 @@ describe('appStore', () => {
       expect(tab.shell).toBeUndefined();
     });
   });
-
-  // --- spawnFavoriteByIndex ---
-  describe('spawnFavoriteByIndex', () => {
-    it('index 0 で favorites[0] の favorite が spawn される', () => {
-      useAppStore.getState().createGroup();
-      const fav0 = useAppStore.getState().addFavorite({ title: 'WSL', shell: 'wsl.exe' });
-      useAppStore.getState().addFavorite({ title: 'PowerShell', shell: 'pwsh.exe' });
-
-      const tabId = useAppStore.getState().spawnFavoriteByIndex(0);
-
-      expect(tabId).toBeTruthy();
-      const tab = useAppStore.getState().tabs[tabId!];
-      expect(tab.shell).toBe('wsl.exe');
-      const fav = useAppStore.getState().favorites.find((f) => f.id === fav0);
-      expect(tab.userTitle).toBe(fav?.defaultTabTitle ?? fav?.title);
-    });
-
-    it('index 1 で favorites[1] の favorite が spawn される', () => {
-      useAppStore.getState().createGroup();
-      useAppStore.getState().addFavorite({ title: 'WSL', shell: 'wsl.exe' });
-      useAppStore.getState().addFavorite({ title: 'PowerShell', shell: 'pwsh.exe' });
-
-      const tabId = useAppStore.getState().spawnFavoriteByIndex(1);
-
-      expect(tabId).toBeTruthy();
-      const tab = useAppStore.getState().tabs[tabId!];
-      expect(tab.shell).toBe('pwsh.exe');
-    });
-
-    it('favorites が空の場合は null を返す', () => {
-      const result = useAppStore.getState().spawnFavoriteByIndex(0);
-      expect(result).toBeNull();
-    });
-
-    it('index が favorites.length 以上の場合は null を返す', () => {
-      useAppStore.getState().addFavorite({ title: 'WSL' });
-      const result = useAppStore.getState().spawnFavoriteByIndex(1);
-      expect(result).toBeNull();
-    });
-
-    it('index が負の場合は null を返す', () => {
-      useAppStore.getState().addFavorite({ title: 'WSL' });
-      const result = useAppStore.getState().spawnFavoriteByIndex(-1);
-      expect(result).toBeNull();
-    });
-  });
 });
 
 // --- selectFallbackTab ---

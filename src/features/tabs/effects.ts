@@ -21,6 +21,7 @@ import { buildFolderLaunch } from '../../lib/openFolder';
 import {
   buildQuickAccessLaunch,
   quickAccessMode,
+  toggleQuickAccessClaude,
   listQuickAccess,
   toggleQuickAccessPath,
 } from '../../lib/quickAccess';
@@ -226,12 +227,7 @@ const handlers: HandlerMap = {
 
   // 設定として保存する (再起動しても、一覧を読み直しても残る)
   'toggle-quick-access-claude': (state, effect) =>
-    state.updateSettings({
-      quickAccessShellOnlyPaths: toggleQuickAccessPath(
-        state.settings.quickAccessShellOnlyPaths,
-        effect.path,
-      ),
-    }),
+    state.updateSettings(toggleQuickAccessClaude(state.settings, effect.path)),
 
   'toggle-quick-access-bypass': (state, effect) =>
     state.updateSettings({

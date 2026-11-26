@@ -120,7 +120,6 @@ describe('handleCtrlKey', () => {
         { type: 'tabs/restore-requested' },
       ]);
     });
-
   });
 
   describe('ターミナル面の操作はここで実行する', () => {

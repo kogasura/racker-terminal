@@ -39,8 +39,25 @@ export function parseWslUncPath(path: string): { distro: string; dir: string } |
   return { distro: m[1], dir: dir === '' ? '/' : dir };
 }
 
-/** Windows のパスは大文字小文字を区別しないので、比較はそろえてから行う。 */
+/**
+ * 同じフォルダを指すか。
+ *
+ * Windows のパスは大文字小文字を区別しないので、そろえてから比べる。WSL の UNC パスは
+ * 中身が Linux のパスで大文字小文字を区別するため、distro 名だけをそろえ、Linux 側は
+ * そのまま比べる（`Work` と `work` は別フォルダ。取り違えると、権限バイパスを付けて
+ * いないフォルダで付いてしまう）。
+ */
 function samePath(a: string, b: string): boolean {
+  const wa = parseWslUncPath(a);
+  const wb = parseWslUncPath(b);
+  if (wa || wb) {
+    return (
+      wa !== null &&
+      wb !== null &&
+      wa.distro.toLowerCase() === wb.distro.toLowerCase() &&
+      wa.dir === wb.dir
+    );
+  }
   return a.toLowerCase() === b.toLowerCase();
 }
 
@@ -88,6 +105,27 @@ export function toggleQuickAccessPath(
   return current.filter((p) => !samePath(p, path));
 }
 
+/**
+ * フォルダの claude 起動を切り替えたあとの設定を返す純関数。
+ *
+ * シェルだけを開く側へ切り替えるときは、そのフォルダの権限バイパスも外す。
+ * 残しておくと、シェルだけの間はメニューで見えない (押せない) まま、claude 起動を
+ * 戻した瞬間に黙ってバイパス付きに戻ってしまうため。
+ */
+export function toggleQuickAccessClaude(
+  settings: QuickAccessSettings,
+  path: string,
+): Required<QuickAccessSettings> {
+  const shellOnly = toggleQuickAccessPath(settings.quickAccessShellOnlyPaths, path);
+  const bypass = settings.quickAccessBypassPaths ?? [];
+  return {
+    quickAccessShellOnlyPaths: shellOnly,
+    quickAccessBypassPaths: listed(shellOnly, path)
+      ? bypass.filter((p) => !samePath(p, path))
+      : [...bypass],
+  };
+}
+
 /** buildQuickAccessLaunch が返す、createTab へ渡すためのタブ設定。 */
 export interface QuickAccessLaunch {
   userTitle: string;
@@ -117,6 +155,7 @@ export function buildQuickAccessLaunch(
   folder: QuickAccessFolder,
   mode: QuickAccessMode,
 ): QuickAccessLaunch {
+  // quickAccessMode を通さず手で組んだ mode が来ても、シェルだけのタブにバイパスは残さない
   const claude = {
     launchClaude: mode.launchClaude,
     ...(mode.launchClaude && mode.bypass ? { bypassPermissions: true as const } : {}),

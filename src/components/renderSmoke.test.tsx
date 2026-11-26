@@ -164,6 +164,8 @@ describe('コンポーネントのレンダリング', () => {
         ...useAppStore.getState().settings,
         statusBarEnabled: undefined,
         theme: 'tokyo-night',
+        quickAccessShellOnlyPaths: undefined,
+        quickAccessBypassPaths: undefined,
       },
     });
   });

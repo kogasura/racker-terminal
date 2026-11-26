@@ -3,6 +3,7 @@ import {
   buildQuickAccessLaunch,
   parseWslUncPath,
   quickAccessMode,
+  toggleQuickAccessClaude,
   toggleQuickAccessPath,
 } from './quickAccess';
 
@@ -142,6 +143,20 @@ describe('quickAccessMode', () => {
     ).toEqual(CLAUDE);
   });
 
+  it('WSL のフォルダは Linux 側の大文字小文字を区別する (別フォルダにバイパスを付けない)', () => {
+    const upper = String.raw`\\wsl.localhost\Ubuntu-22.04\home\me\Work`;
+    const lower = String.raw`\\wsl.localhost\Ubuntu-22.04\home\me\work`;
+    expect(quickAccessMode(lower, { quickAccessBypassPaths: [upper] })).toEqual(CLAUDE);
+    expect(quickAccessMode(upper, { quickAccessBypassPaths: [upper] }).bypass).toBe(true);
+    // distro 名とホスト部分は Windows 側の名前なので、表記ゆれを許す
+    const otherCase = String.raw`\\WSL.LOCALHOST\ubuntu-22.04\home\me\Work`;
+    expect(quickAccessMode(otherCase, { quickAccessBypassPaths: [upper] }).bypass).toBe(true);
+    // WSL と Windows のパスは取り違えない
+    expect(quickAccessMode(String.raw`C:\home\me\Work`, { quickAccessBypassPaths: [upper] })).toEqual(
+      CLAUDE,
+    );
+  });
+
   it('シェルだけを開くフォルダでは、バイパスの一覧に載っていても付けない', () => {
     expect(
       quickAccessMode(DEV, { quickAccessShellOnlyPaths: [DEV], quickAccessBypassPaths: [DEV] }),
@@ -161,5 +176,23 @@ describe('toggleQuickAccessPath', () => {
   it('外すときは表記ゆれ (大文字小文字) があっても外れ、他のフォルダは残す', () => {
     const other = String.raw`D:\work`;
     expect(toggleQuickAccessPath([DEV.toUpperCase(), other], DEV)).toEqual([other]);
+  });
+});
+
+describe('toggleQuickAccessClaude', () => {
+  const DEV = String.raw`C:\Users\me\dev`;
+  const OTHER = String.raw`D:\work`;
+
+  it('シェルだけにするときは、そのフォルダの権限バイパスも外す (他のフォルダは残す)', () => {
+    expect(
+      toggleQuickAccessClaude({ quickAccessBypassPaths: [DEV.toUpperCase(), OTHER] }, DEV),
+    ).toEqual({ quickAccessShellOnlyPaths: [DEV], quickAccessBypassPaths: [OTHER] });
+  });
+
+  it('claude 起動に戻してもバイパスは戻らない (付け直すまで OFF のまま)', () => {
+    const off = toggleQuickAccessClaude({ quickAccessBypassPaths: [DEV] }, DEV);
+    const on = toggleQuickAccessClaude(off, DEV);
+    expect(on).toEqual({ quickAccessShellOnlyPaths: [], quickAccessBypassPaths: [] });
+    expect(quickAccessMode(DEV, on)).toEqual(CLAUDE);
   });
 });

@@ -47,6 +47,12 @@ beforeEach(() => {
     activeGroupId: 'g1',
     favorites: [],
     closedTabs: [],
+    // クイックアクセスのフォルダごとの設定はテスト間で持ち越さない
+    settings: {
+      ...useAppStore.getState().settings,
+      quickAccessShellOnlyPaths: undefined,
+      quickAccessBypassPaths: undefined,
+    },
   });
 });
 
@@ -293,15 +299,9 @@ describe('tabs effects', () => {
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ userTitle: 'dev', cwd: 'C:/Users/me/dev' });
     expect(added[0].launchClaude).not.toBe(true);
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, quickAccessShellOnlyPaths: undefined },
-    }));
   });
 
   it('quick-access-claude-toggled: フォルダごとの claude 起動を設定に保存して切り替える', () => {
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, quickAccessShellOnlyPaths: undefined },
-    }));
     const m = boot();
 
     m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
@@ -311,10 +311,20 @@ describe('tabs effects', () => {
     expect(useAppStore.getState().settings.quickAccessShellOnlyPaths).toEqual([]);
   });
 
-  it('quick-access-bypass-toggled: フォルダごとの権限バイパスを設定に保存して切り替える', () => {
+  it('quick-access-claude-toggled: シェルだけにしたフォルダは権限バイパスも外れ、戻しても復活しない', () => {
     useAppStore.setState((s) => ({
-      settings: { ...s.settings, quickAccessBypassPaths: undefined },
+      settings: { ...s.settings, quickAccessBypassPaths: ['C:/Users/me/dev', 'C:/other'] },
     }));
+    const m = boot();
+
+    m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessBypassPaths).toEqual(['C:/other']);
+
+    m.send({ type: 'tabs/quick-access-claude-toggled', path: 'C:/Users/me/dev' });
+    expect(useAppStore.getState().settings.quickAccessBypassPaths).toEqual(['C:/other']);
+  });
+
+  it('quick-access-bypass-toggled: フォルダごとの権限バイパスを設定に保存して切り替える', () => {
     const m = boot();
 
     m.send({ type: 'tabs/quick-access-bypass-toggled', path: 'C:/Users/me/dev' });
@@ -336,9 +346,6 @@ describe('tabs effects', () => {
     const added = Object.values(useAppStore.getState().tabs).filter((t) => !before.has(t.id));
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ launchClaude: true, bypassPermissions: true });
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, quickAccessBypassPaths: undefined },
-    }));
   });
 
   it('open-quick-access: 一覧に無いパスでは何も開かない', () => {
